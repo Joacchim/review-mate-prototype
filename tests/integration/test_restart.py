@@ -48,6 +48,44 @@ async def test_subscribe_resumes_from_offset_after_restart(tmp_path):  # AC-8
     await m2.shutdown()
 
 
+async def test_restart_tolerates_corrupt_trailing_line(tmp_path):  # AC-7/8 + resilience
+    root = tmp_path / "sessions"
+    m1 = SessionManager(root=root)
+    sid = await m1.create()
+    await m1.get(sid).submit(_add("kept.py"), Origin.BROWSER)
+    last_seq = m1.get(sid).snapshot().seq
+    await m1.shutdown()
+    # simulate a crash mid-append: a partial trailing line
+    with (root / sid / "events.jsonl").open("a") as f:
+        f.write('{"type":"highlight_added","seq":99,partial')
+
+    m2 = SessionManager(root=root)
+    await m2.restore_all()
+    snap = m2.get(sid).snapshot()
+    assert [h.file for h in snap.highlights] == ["kept.py"] and snap.seq == last_seq
+    await m2.shutdown()
+
+
+async def test_restart_skips_a_corrupt_session_and_boots_the_rest(tmp_path):
+    root = tmp_path / "sessions"
+    m1 = SessionManager(root=root)
+    good = await m1.create()
+    bad = await m1.create()
+    await m1.get(good).submit(_add("good.py"), Origin.BROWSER)
+    await m1.shutdown()
+    # corrupt a NON-trailing line of `bad` (real mid-file corruption → that session is unrestorable)
+    log = (root / bad / "events.jsonl")
+    lines = log.read_text().splitlines()
+    lines.insert(0, "{ this is not valid json")
+    log.write_text("\n".join(lines) + "\n")
+
+    m2 = SessionManager(root=root)
+    await m2.restore_all()  # must not raise — one bad session can't stop the boot
+    assert m2.get(good) is not None
+    assert m2.get(bad) is None  # skipped
+    await m2.shutdown()
+
+
 async def test_list_reflects_persisted_sessions(tmp_path):
     root = tmp_path / "sessions"
     m1 = SessionManager(root=root)
