@@ -1,0 +1,144 @@
+"""Session state — the canonical contract every review-mate unit reads and writes.
+
+The six document types named by the review-mate design (MR metadata, files, highlights, cards,
+access-requests, review threads) plus a small envelope. Pure data: no IO, no host/MCP/UI logic.
+"""
+from __future__ import annotations
+
+from enum import Enum
+
+from pydantic import BaseModel, Field
+
+
+class SessionStatus(str, Enum):
+    ACTIVE = "active"
+    ENDED = "ended"
+
+
+class Side(str, Enum):
+    OLD = "old"
+    NEW = "new"
+
+
+class Origin(str, Enum):
+    """Who is acting — the axis the write-authority partitioning turns on."""
+    BROWSER = "browser"
+    AGENT = "agent"
+    SYSTEM = "system"  # the host/workspace seams (loader)
+
+
+class ChangeType(str, Enum):
+    ADDED = "added"
+    MODIFIED = "modified"
+    DELETED = "deleted"
+    RENAMED = "renamed"
+
+
+class CardStatus(str, Enum):
+    STREAMING = "streaming"
+    COMPLETE = "complete"
+
+
+class AccessStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+
+
+class HighlightStatus(str, Enum):
+    OPEN = "open"
+    RESOLVED = "resolved"
+
+
+class LineRange(BaseModel):
+    start: int
+    end: int
+
+
+class MRMetadata(BaseModel):
+    host: str
+    project: str
+    iid: int
+    title: str
+    source_branch: str
+    target_branch: str
+    sha: str
+    author: str
+    url: str
+    # host-neutral capability advertisement (design D6) — what the active provider supports
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+
+
+class FileEntry(BaseModel):
+    path: str
+    old_path: str | None = None
+    change_type: ChangeType
+    language: str | None = None
+    hunks: list[dict] = Field(default_factory=list)
+
+
+class Highlight(BaseModel):
+    id: str
+    file: str
+    side: Side
+    line_range: LineRange
+    anchor: str | None = None          # selected text / blob anchor (not raw editor offset)
+    question: str | None = None
+    author: Origin = Origin.BROWSER
+    created_at: str = ""
+    status: HighlightStatus = HighlightStatus.OPEN
+
+
+class Card(BaseModel):
+    id: str
+    highlight_id: str                  # the pivot anchor
+    body: str                          # markdown
+    citations: list[str] = Field(default_factory=list)
+    author: Origin = Origin.AGENT
+    status: CardStatus = CardStatus.COMPLETE
+    created_at: str = ""
+
+
+class AccessRequest(BaseModel):
+    id: str
+    repo: str
+    reason: str
+    status: AccessStatus = AccessStatus.PENDING
+    decided_at: str | None = None
+
+
+class ThreadComment(BaseModel):
+    id: str
+    author: str
+    body: str
+    created_at: str = ""
+
+
+class ReviewThread(BaseModel):
+    id: str
+    anchor: dict | None = None         # {file, side, line} or None for an MR-level thread
+    comments: list[ThreadComment] = Field(default_factory=list)
+    resolved: bool = False
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+
+
+class SessionState(BaseModel):
+    id: str
+    status: SessionStatus = SessionStatus.ACTIVE
+    created_at: str = ""
+    seq: int = 0                       # last applied event sequence
+    mr: MRMetadata | None = None
+    files: list[FileEntry] = Field(default_factory=list)
+    highlights: list[Highlight] = Field(default_factory=list)
+    cards: list[Card] = Field(default_factory=list)
+    access_requests: list[AccessRequest] = Field(default_factory=list)
+    threads: list[ReviewThread] = Field(default_factory=list)
+
+
+class SessionSummary(BaseModel):
+    """A light listing entry (no document bodies)."""
+    id: str
+    status: SessionStatus
+    created_at: str
+    seq: int
+    title: str | None = None
