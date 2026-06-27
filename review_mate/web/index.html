@@ -28,7 +28,9 @@
   .shell.hl .files,.shell.hr .rail{overflow:hidden;border:0;padding:0}
   .diff{overflow:auto;padding:0 0 60px}
   /* file tree */
+  .treehdr{display:flex;align-items:center;gap:6px;padding:7px 10px;font-size:11px;color:var(--fg2);border-bottom:1px solid var(--line);cursor:pointer;user-select:none}
   .tree{padding:6px 0;font-size:13px}
+  .node.file.nodiff{color:var(--fg2)} .node.file.nodiff .ct{color:var(--line2)}
   .node{display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;white-space:nowrap}
   .node:hover{background:var(--panel2)}
   .node.file.on{background:var(--panel2);color:var(--accent)}
@@ -74,6 +76,13 @@
   .msg.user{background:#1d2a44;margin-left:22px} .msg.agent{background:var(--panel2);margin-right:22px}
   .chatbox{display:flex;gap:6px;margin-top:8px}
   .chatbox input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line2);color:var(--fg);border-radius:6px;padding:6px 9px;font:inherit}
+  /* rendered markdown inside cards + chat */
+  .md>div{margin:0 0 6px} .md>div:last-child{margin-bottom:0}
+  .md code{font-family:var(--mono);font-size:.85em;background:var(--bg);border:1px solid var(--line2);border-radius:4px;padding:0 4px}
+  .md pre.md{background:var(--bg);border:1px solid var(--line2);border-radius:6px;padding:8px 10px;overflow-x:auto;margin:6px 0}
+  .md pre.md code{border:0;background:none;padding:0;white-space:pre}
+  .md ul{margin:4px 0;padding-left:18px} .md li{margin:2px 0}
+  .md a{color:var(--accent)} .md strong{color:var(--fg)}
   /* landing / queue */
   .land{max-width:760px;margin:40px auto;padding:0 20px}
   .land h2{font-weight:600;margin:0 0 4px} .land p{color:var(--fg2);margin:0 0 18px}

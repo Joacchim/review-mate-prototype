@@ -109,6 +109,28 @@ async def test_queue_endpoint_empty_without_provider(tmp_path):
     await manager.shutdown()
 
 
+class _TreeProvider(_FakeSource):
+    async def get_repo_tree(self, project, ref):
+        return ["a.py", "pkg/b.py", "pkg/c.py"]
+
+    async def get_file(self, project, path, ref):
+        return f"# {path}\nline1\nline2\n"
+
+
+async def test_repo_tree_and_file_endpoints(tmp_path):
+    manager = SessionManager(root=tmp_path / "sessions", mr_source=_TreeProvider())
+    app = create_app(manager=manager, provider=_TreeProvider(),
+                     resolve_ref=lambda s: MRRef(host="gl", project="g/p", iid=7))
+    from httpx import ASGITransport
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        sid = (await c.post("/api/sessions", json={"ref": "g/p!7"})).json()["id"]
+        tree = (await c.get(f"/api/sessions/{sid}/repo-tree")).json()
+        assert tree == ["a.py", "pkg/b.py", "pkg/c.py"]
+        f = (await c.get(f"/api/sessions/{sid}/file", params={"path": "pkg/b.py"})).json()
+        assert f["path"] == "pkg/b.py" and "line1" in f["content"]
+    await manager.shutdown()
+
+
 async def test_create_session_from_ref_string(tmp_path):
     manager = SessionManager(root=tmp_path / "sessions", mr_source=_FakeSource())
     resolve = lambda s: MRRef(host="gl", project="g/p", iid=7) if "!" in s else None

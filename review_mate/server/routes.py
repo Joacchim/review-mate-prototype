@@ -43,6 +43,31 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None) -> li
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
 
+    async def repo_tree(request: Request) -> JSONResponse:
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        mr = actor.snapshot().mr
+        if provider is None or mr is None or not hasattr(provider, "get_repo_tree"):
+            return JSONResponse([])
+        try:
+            return JSONResponse(await provider.get_repo_tree(mr.project, mr.sha))
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
+    async def get_file(request: Request) -> JSONResponse:
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        mr = actor.snapshot().mr
+        path = request.query_params.get("path", "")
+        if provider is None or mr is None or not path or not hasattr(provider, "get_file"):
+            return JSONResponse({"error": "unavailable"}, status_code=400)
+        try:
+            return JSONResponse({"path": path, "content": await provider.get_file(mr.project, path, mr.sha)})
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
     async def list_sessions(request: Request) -> JSONResponse:
         return JSONResponse([s.model_dump(mode="json") for s in manager.list()])
 
@@ -96,6 +121,8 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None) -> li
 
     return [
         Route("/api/queue", review_queue, methods=["GET"]),
+        Route("/api/sessions/{id}/repo-tree", repo_tree, methods=["GET"]),
+        Route("/api/sessions/{id}/file", get_file, methods=["GET"]),
         Route("/api/sessions", create_session, methods=["POST"]),
         Route("/api/sessions", list_sessions, methods=["GET"]),
         Route("/api/sessions/{id}", get_session, methods=["GET"]),

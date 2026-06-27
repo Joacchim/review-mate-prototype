@@ -9,9 +9,43 @@ const collapsedDirs = new Set();
 let splitMode = localStorage.getItem("rm-split") === "1";
 let chatDraft = "";
 let chatFocused = false;
+let repoTree = null;                 // all repo paths (lazy-loaded when "show all" is on)
+let showAll = localStorage.getItem("rm-showall") === "1";
+const fileContents = {};             // path -> content (cache for non-diff file views)
+let viewingPath = null;              // a non-diff file currently shown (plain view)
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+// minimal, safe markdown (escape first, then a small subset) — Claude writes markdown
+function mdInline(s) {
+  return s
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+function md(src) {
+  const lines = esc(src || "").split("\n");
+  let html = "", inList = false, inCode = false, code = "";
+  const closeList = () => { if (inList) { html += "</ul>"; inList = false; } };
+  for (const ln of lines) {
+    if (/^\s*```/.test(ln)) {
+      if (!inCode) { inCode = true; code = ""; }
+      else { html += `<pre class="md"><code>${code}</code></pre>`; inCode = false; }
+      continue;
+    }
+    if (inCode) { code += (code ? "\n" : "") + ln; continue; }
+    const m = ln.match(/^\s*[-*]\s+(.*)/);
+    if (m) { if (!inList) { html += "<ul>"; inList = true; } html += `<li>${mdInline(m[1])}</li>`; continue; }
+    closeList();
+    if (ln.trim() === "") continue;
+    html += `<div>${mdInline(ln)}</div>`;
+  }
+  closeList();
+  if (inCode) html += `<pre class="md"><code>${code}</code></pre>`;
+  return html;
+}
 
 // --- boot -------------------------------------------------------------------
 
@@ -113,28 +147,50 @@ function render() {
 
 // --- file tree (nested, foldable) -------------------------------------------
 
-function buildTree(files) {
+function buildTree(entries) {
   const root = { dirs: {}, files: [] };
-  files.forEach((f) => {
-    const parts = f.path.split("/");
+  entries.forEach((e) => {
+    const parts = e.path.split("/");
     let node = root;
     for (let i = 0; i < parts.length - 1; i++) {
       node.dirs[parts[i]] = node.dirs[parts[i]] || { dirs: {}, files: [] };
       node = node.dirs[parts[i]];
     }
-    node.files.push({ name: parts[parts.length - 1], file: f });
+    node.files.push({ name: parts[parts.length - 1], entry: e });
   });
   return root;
+}
+
+async function loadRepoTree() {
+  try {
+    const t = await fetch(`/api/sessions/${SID}/repo-tree`).then((r) => r.json());
+    repoTree = Array.isArray(t) ? t : [];
+  } catch (e) { repoTree = []; }
 }
 
 function renderTree() {
   const el = $("files");
   el.innerHTML = "";
-  if (!state.files.length) { el.innerHTML = '<div class="empty" style="padding:12px">no files</div>'; return; }
-  const tree = buildTree(state.files);
+  const hdr = document.createElement("label");
+  hdr.className = "treehdr";
+  hdr.innerHTML = `<input type="checkbox" ${showAll ? "checked" : ""}> show all repo files`;
+  hdr.querySelector("input").onchange = async (e) => {
+    showAll = e.target.checked;
+    localStorage.setItem("rm-showall", showAll ? "1" : "0");
+    if (showAll && repoTree === null) { hdr.lastChild.textContent = " loading repo…"; await loadRepoTree(); }
+    renderTree();
+  };
+  el.appendChild(hdr);
+
+  const diffPaths = new Set(state.files.map((f) => f.path));
+  const entries = state.files.map((f) => ({ path: f.path, change_type: f.change_type, diff: true }));
+  if (showAll && repoTree) {
+    repoTree.forEach((p) => { if (!diffPaths.has(p)) entries.push({ path: p, diff: false }); });
+  }
+  if (!entries.length) { el.appendChild(empty("no files")); return; }
   const wrap = document.createElement("div");
   wrap.className = "tree";
-  renderNode(tree, "", 0, wrap);
+  renderNode(buildTree(entries), "", 0, wrap);
   el.appendChild(wrap);
 }
 
@@ -153,15 +209,32 @@ function renderNode(node, path, depth, out) {
     renderNode(node.dirs[name], dpath, depth + 1, kids);
     out.appendChild(kids);
   });
-  node.files.sort((a, b) => a.name.localeCompare(b.name)).forEach(({ name, file }) => {
+  node.files.sort((a, b) => a.name.localeCompare(b.name)).forEach(({ name, entry }) => {
     const row = document.createElement("div");
-    row.className = "node file" + (file.path === currentFile ? " on" : "");
+    row.className = "node file" + (entry.path === currentFile ? " on" : "") + (entry.diff ? "" : " nodiff");
     row.style.paddingLeft = `${10 + depth * 14 + 14}px`;
-    const c = (file.change_type || "")[0] || "~";
-    row.innerHTML = `<span class="ct ${file.change_type || ""}">${c}</span>${esc(name)}`;
-    row.onclick = () => { currentFile = file.path; render(); };
+    const c = entry.diff ? ((entry.change_type || "")[0] || "~") : "·";
+    row.innerHTML = `<span class="ct ${entry.change_type || ""}">${c}</span>${esc(name)}`;
+    row.onclick = () => selectFile(entry);
     out.appendChild(row);
   });
+}
+
+function selectFile(entry) {
+  currentFile = entry.path;
+  if (entry.diff) { viewingPath = null; render(); }
+  else {
+    viewingPath = entry.path; render();
+    if (!(entry.path in fileContents)) fetchFile(entry.path);
+  }
+}
+
+async function fetchFile(path) {
+  try {
+    const d = await fetch(`/api/sessions/${SID}/file?path=${encodeURIComponent(path)}`).then((r) => r.json());
+    fileContents[path] = (d && typeof d.content === "string") ? d.content : `(could not load: ${d.error || "error"})`;
+  } catch (e) { fileContents[path] = "(failed to load)"; }
+  if (viewingPath === path) renderDiff();
 }
 
 // --- diff -------------------------------------------------------------------
@@ -181,6 +254,7 @@ function highlightExact(path, lo, hi) {
 function renderDiff() {
   const el = $("diff");
   el.innerHTML = "";
+  if (viewingPath) { renderFileView(el, viewingPath); return; }
   const file = state.files.find((f) => f.path === currentFile);
   if (!file) { el.innerHTML = '<div class="empty" style="padding:16px">select a file</div>'; return; }
   const name = document.createElement("div");
@@ -193,6 +267,27 @@ function renderDiff() {
     (splitMode ? splitRows : unifiedRows)(h.diff || "", hl, table);
   });
   wireSelection(table, file.path);
+  el.appendChild(table);
+}
+
+function renderFileView(el, path) {
+  const name = document.createElement("div");
+  name.className = "fname";
+  name.textContent = path + "  ·  related file (not in the diff) · click or drag to ask for context";
+  el.appendChild(name);
+  const content = fileContents[path];
+  if (content === undefined) { el.appendChild(empty("loading " + path + "…")); return; }
+  const hl = highlightLines(path);
+  const table = document.createElement("table");
+  table.className = "hunk";
+  content.split("\n").forEach((line, i) => {
+    const n = i + 1;
+    const tr = document.createElement("tr");
+    tr.className = "line ctx" + (hl.has(n) ? " hl" : "");
+    tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${esc(line)}</td>`;
+    table.appendChild(tr);
+  });
+  wireSelection(table, path);
   el.appendChild(table);
 }
 
@@ -308,7 +403,7 @@ function renderRail() {
       `<span class="num">#${i + 1}</span><button class="x" title="discard">×</button>` +
       `<div class="loc">${esc(loc)}</div>` +
       (hl.question ? `<div class="q">${esc(hl.question)}</div>` : "") +
-      (card ? `<div class="card">${esc(card.body)}</div>`
+      (card ? `<div class="card md">${md(card.body)}</div>`
             : `<div class="pending">waiting for context…</div>`);
     box.querySelector(".loc").onclick = () => goToHighlight(hl);
     box.querySelector(".x").onclick = () => post({ type: "remove_highlight", highlight_id: hl.id });
@@ -340,7 +435,7 @@ function renderChat(el) {
   state.messages.forEach((m) => {
     const d = document.createElement("div");
     d.className = "msg " + (m.role === "user" ? "user" : "agent");
-    d.innerHTML = `<div class="who">${m.role}</div>${esc(m.body)}`;
+    d.innerHTML = `<div class="who">${m.role}</div><div class="md">${md(m.body)}</div>`;
     msgs.appendChild(d);
   });
   wrap.appendChild(msgs);

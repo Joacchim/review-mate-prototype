@@ -67,6 +67,28 @@ class GitLabProvider:
                 unique.append(r)
         return unique
 
+    async def get_repo_tree(self, project: str, ref: str, max_pages: int = 30) -> list[str]:
+        """All blob paths in the repo at `ref` (for browsing beyond the diff). Capped for safety."""
+        pid = quote(project, safe="")
+        paths: list[str] = []
+        for page in range(1, max_pages + 1):
+            rows = await self._get(f"/projects/{pid}/repository/tree",
+                                   params={"ref": ref, "recursive": "true",
+                                           "per_page": 100, "page": page})
+            paths.extend(r["path"] for r in rows if r.get("type") == "blob")
+            if len(rows) < 100:
+                break
+        return paths
+
+    async def get_file(self, project: str, path: str, ref: str) -> str:
+        """Raw content of one file at `ref` (for viewing related, non-diff code)."""
+        pid = quote(project, safe="")
+        resp = await self._client.get(
+            f"/projects/{pid}/repository/files/{quote(path, safe='')}/raw",
+            params={"ref": ref}, headers={"Authorization": f"Bearer {self.token}"})
+        resp.raise_for_status()
+        return resp.text
+
     async def review_queue_items(self) -> list[dict]:
         """The review queue with display fields for a picker: project, iid, title, url."""
         seen, items = set(), []
