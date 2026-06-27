@@ -18,17 +18,30 @@ from review_mate.session.manager import SessionManager
 from review_mate.session.state import Origin
 
 
-def build_routes(manager: SessionManager, resolve_ref=None) -> list:
+def build_routes(manager: SessionManager, resolve_ref=None, provider=None) -> list:
     async def create_session(request: Request) -> JSONResponse:
         body = await _maybe_json(request)
         raw = body.get("ref") if isinstance(body, dict) else None
         ref: MRRef | None = None
         if isinstance(raw, dict):
             ref = MRRef(**raw)
-        elif isinstance(raw, str) and resolve_ref is not None:
+        elif isinstance(raw, str) and raw.strip() and resolve_ref is not None:
             ref = resolve_ref(raw)
-        sid = await manager.create(ref=ref)
+            if ref is None:
+                return JSONResponse({"error": f"could not parse reference: {raw!r}"}, status_code=400)
+        try:
+            sid = await manager.create(ref=ref)
+        except Exception as exc:  # a bad ref / GitLab failure shouldn't 500 the UI
+            return JSONResponse({"error": f"failed to load MR: {exc}"}, status_code=502)
         return JSONResponse({"id": sid, "ref_resolved": ref is not None})
+
+    async def review_queue(request: Request) -> JSONResponse:
+        if provider is None or not hasattr(provider, "review_queue_items"):
+            return JSONResponse([])  # no host configured → empty queue (baseline still runs)
+        try:
+            return JSONResponse(await provider.review_queue_items())
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
 
     async def list_sessions(request: Request) -> JSONResponse:
         return JSONResponse([s.model_dump(mode="json") for s in manager.list()])
@@ -82,6 +95,7 @@ def build_routes(manager: SessionManager, resolve_ref=None) -> list:
             pass
 
     return [
+        Route("/api/queue", review_queue, methods=["GET"]),
         Route("/api/sessions", create_session, methods=["POST"]),
         Route("/api/sessions", list_sessions, methods=["GET"]),
         Route("/api/sessions/{id}", get_session, methods=["GET"]),

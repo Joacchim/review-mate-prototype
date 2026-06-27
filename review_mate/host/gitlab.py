@@ -67,6 +67,20 @@ class GitLabProvider:
                 unique.append(r)
         return unique
 
+    async def review_queue_items(self) -> list[dict]:
+        """The review queue with display fields for a picker: project, iid, title, url."""
+        seen, items = set(), []
+        for key in ("reviewer_username", "assignee_username"):
+            rows = await self._get("/merge_requests",
+                                   params={"scope": "all", key: self.username, "state": "opened"})
+            for it in rows:
+                ref = parse_reference(it.get("web_url", ""), self.host)
+                if ref and (ref.project, ref.iid) not in seen:
+                    seen.add((ref.project, ref.iid))
+                    items.append({"host": ref.host, "project": ref.project, "iid": ref.iid,
+                                  "title": it.get("title", ""), "url": it.get("web_url", "")})
+        return items
+
     async def issue_related_mrs(self, project: str, issue_iid: int) -> list[MRRef]:
         items = await self._get(
             f"/projects/{quote(project, safe='')}/issues/{issue_iid}/related_merge_requests"

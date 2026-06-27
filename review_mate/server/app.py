@@ -28,20 +28,21 @@ def build_manager_from_env():
     """
     provider, resolve_ref = build_provider_from_env()
     if provider is None:
-        return SessionManager(), None
+        return SessionManager(), None, None
     manager = SessionManager(mr_source=provider, workspace=WorkspaceManager())
-    return manager, resolve_ref
+    return manager, resolve_ref, provider
 
 
 def create_app(manager: SessionManager | None = None,
                static_dir: Path | None = None,
                with_mcp: bool = True,
-               resolve_ref=None) -> Starlette:
+               resolve_ref=None,
+               provider=None) -> Starlette:
     if manager is None:
-        manager, resolve_ref = build_manager_from_env()
+        manager, resolve_ref, provider = build_manager_from_env()
     web = static_dir or _WEB_DIR
 
-    routes = build_routes(manager, resolve_ref=resolve_ref)
+    routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider)
 
     mcp_app = None
     if with_mcp:
