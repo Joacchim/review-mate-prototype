@@ -49,9 +49,12 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
         return (await bridge.emit_card(session_id, highlight_id, body, citations)).model_dump()
 
     @mcp.tool()
-    async def update_card(session_id: str, card_id: str, body: str | None = None) -> dict:
-        """Update a previously emitted card."""
-        return (await bridge.update_card(session_id, card_id, body=body)).model_dump()
+    async def update_card(session_id: str, card_id: str, body: str | None = None,
+                          status: str | None = None) -> dict:
+        """Update a previously emitted card; status is 'streaming' or 'complete'."""
+        from review_mate.session.state import CardStatus
+        st = CardStatus(status) if status else None
+        return (await bridge.update_card(session_id, card_id, body=body, status=st)).model_dump()
 
     @mcp.tool()
     async def request_access(session_id: str, repo: str, reason: str) -> dict:
