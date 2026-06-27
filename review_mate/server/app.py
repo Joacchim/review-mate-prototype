@@ -9,8 +9,20 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.routing import Mount
 from starlette.staticfiles import StaticFiles
+
+
+class _NoCacheUI(BaseHTTPMiddleware):
+    """Serve the UI assets uncached so a browser never runs a stale app.js/index.html."""
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if not path.startswith("/api") and not path.startswith("/mcp"):
+            response.headers["Cache-Control"] = "no-store, must-revalidate"
+        return response
 
 from review_mate.host.config import build_provider_from_env
 from review_mate.server.routes import build_routes
@@ -64,6 +76,6 @@ def create_app(manager: SessionManager | None = None,
             yield
         await manager.shutdown()
 
-    app = Starlette(routes=routes, lifespan=lifespan)
+    app = Starlette(routes=routes, lifespan=lifespan, middleware=[Middleware(_NoCacheUI)])
     app.state.manager = manager
     return app
