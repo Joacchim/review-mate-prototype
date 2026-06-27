@@ -12,8 +12,7 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 from starlette.staticfiles import StaticFiles
 
-from review_mate.host.base import parse_reference
-from review_mate.host.config import build_gitlab_provider, resolve_gitlab_config
+from review_mate.host.config import build_provider_from_env
 from review_mate.server.routes import build_routes
 from review_mate.session.manager import SessionManager
 from review_mate.workspace.manager import WorkspaceManager
@@ -22,13 +21,16 @@ _WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 
 def build_manager_from_env():
-    """Wire a live SessionManager from GitLab config when present; else the self-contained baseline."""
-    config = resolve_gitlab_config()
-    if config is None:
+    """Wire a live SessionManager when a host is configured; else the self-contained baseline.
+
+    Host selection lives in the host layer (build_provider_from_env), so this composition root
+    names no specific host.
+    """
+    provider, resolve_ref = build_provider_from_env()
+    if provider is None:
         return SessionManager(), None
-    provider = build_gitlab_provider(config)
     manager = SessionManager(mr_source=provider, workspace=WorkspaceManager())
-    return manager, (lambda s: parse_reference(s, config.host))
+    return manager, resolve_ref
 
 
 def create_app(manager: SessionManager | None = None,

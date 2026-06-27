@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from review_mate.host.base import GITLAB_CAPABILITIES
+from review_mate.host.base import GITLAB_CAPABILITIES, parse_reference
 from review_mate.host.gitlab import GitLabProvider, GitLabWriter
 
 
@@ -67,3 +67,17 @@ def build_gitlab_writer(config: GitLabConfig,
                         client: httpx.AsyncClient | None = None) -> GitLabWriter:
     return GitLabWriter(base_url=config.base_url, token=config.token,
                         capabilities=dict(GITLAB_CAPABILITIES), client=client)
+
+
+def build_provider_from_env(client: httpx.AsyncClient | None = None):
+    """Host-agnostic entry: select and build a provider from the environment.
+
+    The composition root calls this without naming any host; host selection lives here. Returns
+    (provider, resolve_ref) or (None, None) when no host is configured. A second host slots in by
+    extending this function, touching no other unit.
+    """
+    config = resolve_gitlab_config()
+    if config is None:
+        return None, None
+    provider = build_gitlab_provider(config, client)
+    return provider, (lambda s: parse_reference(s, config.host))
