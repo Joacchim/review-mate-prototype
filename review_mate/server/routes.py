@@ -12,17 +12,23 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from review_mate.seams import MRRef
 from review_mate.session.commands import parse_command
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import Origin
 
 
-def build_routes(manager: SessionManager) -> list:
+def build_routes(manager: SessionManager, resolve_ref=None) -> list:
     async def create_session(request: Request) -> JSONResponse:
         body = await _maybe_json(request)
-        ref = body.get("ref") if isinstance(body, dict) else None
+        raw = body.get("ref") if isinstance(body, dict) else None
+        ref: MRRef | None = None
+        if isinstance(raw, dict):
+            ref = MRRef(**raw)
+        elif isinstance(raw, str) and resolve_ref is not None:
+            ref = resolve_ref(raw)
         sid = await manager.create(ref=ref)
-        return JSONResponse({"id": sid})
+        return JSONResponse({"id": sid, "ref_resolved": ref is not None})
 
     async def list_sessions(request: Request) -> JSONResponse:
         return JSONResponse([s.model_dump(mode="json") for s in manager.list()])

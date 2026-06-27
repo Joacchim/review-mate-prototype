@@ -44,6 +44,7 @@ class GitLabProvider:
             source_branch=mr["source_branch"], target_branch=mr["target_branch"],
             sha=mr["sha"], author=(mr.get("author") or {}).get("username", ""),
             url=mr.get("web_url", ""), capabilities=self.capabilities(),
+            diff_refs=mr.get("diff_refs") or {},
         )
         return MRPayload(
             mr=metadata,
@@ -150,9 +151,14 @@ class GitLabWriter:
 def _position(position: dict) -> dict:
     pos = {"position_type": "text", "new_path": position.get("new_path"),
            "new_line": position.get("new_line")}
-    sha = position.get("sha")
+    for key in ("base_sha", "head_sha", "start_sha"):
+        if position.get(key):
+            pos[key] = position[key]
+    sha = position.get("sha")  # fallback when diff_refs are unknown
     if sha:
-        pos.update(base_sha=sha, head_sha=sha, start_sha=sha)
+        pos.setdefault("base_sha", sha)
+        pos.setdefault("head_sha", sha)
+        pos.setdefault("start_sha", sha)
     return pos
 
 

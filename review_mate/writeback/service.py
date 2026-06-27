@@ -25,9 +25,13 @@ class Writeback:
         hl = next((h for h in snap.highlights if h.id == highlight_id), None)
         if hl is None:
             raise KeyError(highlight_id)
+        refs = snap.mr.diff_refs if snap.mr else {}
         position = {
             "new_path": hl.file,
             "new_line": hl.line_range.start,
-            "sha": snap.mr.sha if snap.mr else None,
+            "base_sha": refs.get("base_sha"),
+            "head_sha": refs.get("head_sha"),
+            "start_sha": refs.get("start_sha"),
+            "sha": snap.mr.sha if snap.mr else None,  # fallback when diff_refs absent
         }
         return await self._writer.post_comment(ref, position, body)

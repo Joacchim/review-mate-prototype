@@ -67,6 +67,8 @@ class MRMetadata(BaseModel):
     url: str
     # host-neutral capability advertisement (design D6) — what the active provider supports
     capabilities: dict[str, bool] = Field(default_factory=dict)
+    # diff version anchors (base/head/start sha) for precise write-back positions
+    diff_refs: dict[str, str] = Field(default_factory=dict)
 
 
 class FileEntry(BaseModel):
