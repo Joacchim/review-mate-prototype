@@ -6,7 +6,11 @@ review-kb (so discovery compounds), and tracks the grant for the session.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Awaitable, Callable
+
+logger = logging.getLogger(__name__)
 
 from review_mate.kb.store import ReviewKB
 from review_mate.seams import CheckoutHandle, RepoRef, Workspace
@@ -58,4 +62,13 @@ class CrossRepoBroker:
             return
         async for event in actor.subscribe(since=actor.snapshot().seq):
             if isinstance(event, AccessDecided) and event.status is AccessStatus.APPROVED:
-                await self.grant_access(session_id, event.request_id)
+                # run the grant (which shells out to git) off the consumer so a slow/failed
+                # materialize neither stalls nor silently kills the watch loop
+                asyncio.create_task(self._safe_grant(session_id, event.request_id))
+
+    async def _safe_grant(self, session_id: str, request_id: str) -> None:
+        try:
+            await self.grant_access(session_id, request_id)
+        except Exception:
+            logger.warning("cross-repo grant failed for %s/%s", session_id, request_id,
+                           exc_info=True)

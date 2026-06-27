@@ -85,6 +85,7 @@ function renderDiff() {
   (file.hunks || []).forEach((h) => {
     let newLine = 0;
     (h.diff || "").split("\n").forEach((raw) => {
+      if (raw === "") return;  // trailing element from the final newline — not a real diff row
       const tr = document.createElement("tr");
       if (raw.startsWith("@@")) {
         tr.className = "hh";

@@ -37,16 +37,16 @@ class EventLog:
     def replay(self) -> Iterator["ev.Event"]:
         if not self.path.exists():
             return
-        with self.path.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    yield ev.parse_event(line)
-                except Exception:
-                    # only a truncated trailing line should fail to parse — stop here
-                    break
+        lines = [ln for ln in self.path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        last = len(lines) - 1
+        for i, line in enumerate(lines):
+            try:
+                yield ev.parse_event(line)
+            except Exception as exc:
+                if i == last:
+                    return  # tolerate a truncated trailing line — that event was never acked
+                # mid-file corruption is real data loss, not a crash artifact — do not hide it
+                raise RuntimeError(f"corrupt event in {self.path} at line {i + 1}") from exc
 
     def close(self) -> None:
         self._f.close()

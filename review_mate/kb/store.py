@@ -6,11 +6,14 @@ The context-skill consults it; the crossrepo-broker enriches it (each approval â
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from review_mate.config import review_mate_home
+
+logger = logging.getLogger(__name__)
 
 
 class RepoInfo(BaseModel):
@@ -101,9 +104,18 @@ class ReviewKB:
     # --- persistence --------------------------------------------------------
 
     def _load(self) -> _KBData:
-        if self.path.exists():
+        if not self.path.exists():
+            return _KBData()
+        try:
             return _KBData.model_validate_json(self.path.read_text())
-        return _KBData()
+        except Exception:
+            # a corrupt KB must not take down every component that opens it; quarantine and reset
+            logger.warning("corrupt review-kb at %s â€” quarantining and starting fresh", self.path,
+                           exc_info=True)
+            self.path.replace(self.path.with_suffix(".json.corrupt"))
+            return _KBData()
 
     def _save(self) -> None:
-        self.path.write_text(self._data.model_dump_json(indent=2))
+        tmp = self.path.with_suffix(".json.tmp")
+        tmp.write_text(self._data.model_dump_json(indent=2))
+        tmp.replace(self.path)  # atomic: a crash mid-write never leaves a half-written KB

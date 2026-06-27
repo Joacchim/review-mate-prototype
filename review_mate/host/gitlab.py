@@ -24,7 +24,8 @@ class GitLabProvider:
         self.username = username
         self.host = host
         self._client = client or httpx.AsyncClient(
-            base_url=base_url, headers={"PRIVATE-TOKEN": token}
+            base_url=base_url, headers={"PRIVATE-TOKEN": token},
+            timeout=httpx.Timeout(15.0, connect=5.0),
         )
 
     def capabilities(self) -> dict[str, bool]:
@@ -88,7 +89,8 @@ class GitLabWriter:
         self.token = token
         self._caps = dict(capabilities)
         self._client = client or httpx.AsyncClient(
-            base_url=base_url, headers={"PRIVATE-TOKEN": token}
+            base_url=base_url, headers={"PRIVATE-TOKEN": token},
+            timeout=httpx.Timeout(15.0, connect=5.0),
         )
 
     def capabilities(self) -> dict[str, bool]:
@@ -187,5 +189,8 @@ def _to_thread(discussion: dict) -> ReviewThread:
     first = notes[0] if notes else {}
     pos = first.get("position") or {}
     anchor = {"file": pos.get("new_path"), "line": pos.get("new_line")} if pos else None
+    # GitLab v4 carries `resolved` per-note (no discussion-level field); a thread is resolved when
+    # any of its resolvable notes is resolved.
+    resolved = any(n.get("resolved") for n in notes)
     return ReviewThread(id=str(discussion.get("id")), anchor=anchor, comments=comments,
-                        resolved=bool(first.get("resolved", False)))
+                        resolved=resolved)

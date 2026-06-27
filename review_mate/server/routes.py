@@ -72,8 +72,13 @@ def build_routes(manager: SessionManager, resolve_ref=None) -> list:
         try:
             async for event in actor.subscribe(since=since):
                 await ws.send_text(event.model_dump_json())
-            await ws.close()
         except WebSocketDisconnect:
+            return
+        except Exception:
+            pass  # transport boundary — don't let a send/serialize error escape as a task crash
+        try:
+            await ws.close()
+        except Exception:  # pragma: no cover - already closing/closed
             pass
 
     return [

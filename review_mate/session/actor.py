@@ -45,12 +45,30 @@ class SessionActor:
         self._queue: asyncio.Queue = asyncio.Queue()
         self._subscribers: set[_Subscriber] = set()
         self._task: asyncio.Task | None = None
+        self._dead: BaseException | None = None  # set if the writer task ever dies unexpectedly
 
     # --- lifecycle ----------------------------------------------------------
 
     def start(self) -> None:
         if self._task is None:
             self._task = asyncio.create_task(self._run())
+            self._task.add_done_callback(self._on_task_done)
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        # The writer should only ever stop via cancellation (stop()). Any other exit is a defect;
+        # fail fast so submit() callers don't hang forever on an unresolved future.
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            self._dead = exc
+            while not self._queue.empty():
+                try:
+                    _, _, fut = self._queue.get_nowait()
+                except asyncio.QueueEmpty:  # pragma: no cover
+                    break
+                if not fut.done():
+                    fut.set_exception(exc)
 
     async def stop(self) -> None:
         if self._task is not None:
@@ -77,12 +95,13 @@ class SessionActor:
             for event in self._log.replay():
                 if since < event.seq <= start_seq:
                     yield event
+            # The subscriber is registered before start_seq is read (no await between), so the
+            # writer cannot run in that gap: replay covers (since, start_seq], the live queue holds
+            # only seq > start_seq. No overlap to dedupe.
             while True:
                 item = await sub.q.get()
                 if item is _CLOSED:
                     break
-                if item.seq <= start_seq:  # guard against a replay/live overlap
-                    continue
                 yield item
         finally:
             self._subscribers.discard(sub)
@@ -90,6 +109,8 @@ class SessionActor:
     # --- writes (single-writer path) ----------------------------------------
 
     async def submit(self, command: Command, origin: Origin) -> CommandResult:
+        if self._dead is not None:
+            raise RuntimeError(f"session writer is dead: {self._dead!r}")
         loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
         await self._queue.put((command, origin, fut))

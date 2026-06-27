@@ -7,9 +7,13 @@ Persistence lives under the `~/.review-mate/sessions/<id>/` workspace boundary.
 from __future__ import annotations
 
 import json
+import logging
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from review_mate.config import sessions_dir
 from review_mate.seams import MRRef
@@ -57,8 +61,18 @@ class SessionManager:
         self._actors[sid] = actor
 
         if ref is not None and self._mr_source is not None:
-            await self.load(sid, ref)
+            try:
+                await self.load(sid, ref)
+            except Exception:
+                await self._discard(sid)  # don't leave an orphaned, MR-less ACTIVE session
+                raise
         return sid
+
+    async def _discard(self, session_id: str) -> None:
+        actor = self._actors.pop(session_id, None)
+        if actor is not None:
+            await actor.stop()
+        shutil.rmtree(self.root / session_id, ignore_errors=True)
 
     async def load(self, session_id: str, ref: MRRef) -> None:
         """Populate a session from the host seam (SYSTEM origin). No-op if no MRSource injected."""
@@ -78,13 +92,17 @@ class SessionManager:
             log_path = sdir / "events.jsonl"
             if not log_path.exists() or sdir.name in self._actors:
                 continue
-            meta = self._read_meta(sdir)
-            log = EventLog(log_path)
-            state = SessionState(id=sdir.name, created_at=meta.get("created_at", ""))
-            state = fold(state, list(log.replay()))
-            actor = SessionActor(sdir.name, log, state)
-            actor.start()
-            self._actors[sdir.name] = actor
+            try:
+                meta = self._read_meta(sdir)
+                log = EventLog(log_path)
+                state = fold(SessionState(id=sdir.name, created_at=meta.get("created_at", "")),
+                             list(log.replay()))
+                actor = SessionActor(sdir.name, log, state)
+                actor.start()
+                self._actors[sdir.name] = actor
+            except Exception:
+                # one unreadable/corrupt session must not stop the server from booting
+                logger.warning("skipping unrestorable session %s", sdir.name, exc_info=True)
 
     async def end(self, session_id: str) -> None:
         actor = self._actors.get(session_id)
