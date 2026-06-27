@@ -53,8 +53,11 @@
   td.code.hlc{box-shadow:inset 3px 0 0 var(--accent)}
   /* rail */
   .rail h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg2);margin:6px 0 8px}
-  .hcard{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px}
-  .hcard .loc{font-family:var(--mono);font-size:11px;color:var(--accent);margin-bottom:4px;cursor:pointer}
+  .hcard{position:relative;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 10px 10px 30px;margin-bottom:10px}
+  .hcard .num{position:absolute;left:8px;top:9px;font-family:var(--mono);font-size:11px;color:var(--fg2);background:var(--bg);border:1px solid var(--line2);border-radius:5px;padding:0 5px}
+  .hcard .x{position:absolute;right:8px;top:7px;color:var(--fg2);cursor:pointer;border:none;background:none;font-size:15px;line-height:1;padding:2px}
+  .hcard .x:hover{color:var(--delfg)}
+  .hcard .loc{font-family:var(--mono);font-size:11px;color:var(--accent);margin-bottom:4px;cursor:pointer;text-decoration:underline;text-decoration-style:dotted}
   .hcard .q{color:var(--fg2);font-size:12px;margin-bottom:6px}
   .hcard .card{border-top:1px dashed var(--line);margin-top:8px;padding-top:8px;white-space:pre-wrap}
   .hcard .pending{color:var(--fg2);font-style:italic;font-size:12px}
@@ -76,7 +79,8 @@
   <button class="btn" id="t-split" title="unified / side-by-side">⇄ split</button>
   <button class="btn" id="t-right" title="toggle context panel">◨</button>
   <span class="mr" id="mr" style="flex:1">—</span>
-  <span class="tb"><input id="ref" placeholder="MR url, group/proj!iid, or blank for your queue"><button class="btn" id="load">Load</button></span>
+  <span class="tb"><input id="ref" placeholder="MR url or group/proj!iid"><button class="btn" id="load">Load</button></span>
+  <span class="sid" id="status"></span>
   <span class="sid" id="sid"></span>
 </header>
 <div class="shell" id="shell">

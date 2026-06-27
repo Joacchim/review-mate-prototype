@@ -23,8 +23,11 @@ async function boot() {
   connectWS();
 }
 
+function setStatus(msg) { $("status").textContent = msg || ""; }
+
 async function showLanding() {
   $("mr").textContent = "—";
+  $("diff").innerHTML = '<div class="land"><p class="empty">loading your review queue…</p></div>';
   let items = [];
   try { items = await fetch("/api/queue").then((r) => r.json()); } catch (e) {}
   if (items && items.error) items = [];
@@ -44,13 +47,21 @@ async function showLanding() {
 }
 
 async function loadRef(ref) {
-  const r = await fetch("/api/sessions", {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ref }),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) { alert(data.error || `load failed (${r.status})`); return; }
-  location.search = `?s=${data.id}`;  // reload cleanly into the loaded session
+  const btn = $("load");
+  btn.disabled = true; btn.textContent = "Loading…"; setStatus("resolving " + (ref || "(queue)") + "…");
+  try {
+    const r = await fetch("/api/sessions", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ref }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { setStatus("✕ " + (data.error || `load failed (${r.status})`)); return; }
+    location.search = `?s=${data.id}`;  // reload cleanly into the loaded session
+  } catch (e) {
+    setStatus("✕ " + e);
+  } finally {
+    btn.disabled = false; btn.textContent = "Load";
+  }
 }
 
 async function load() {
@@ -154,7 +165,15 @@ function renderNode(node, path, depth, out) {
 // --- diff -------------------------------------------------------------------
 
 function highlightLines(path) {
-  return new Set(state.highlights.filter((h) => h.file === path).map((h) => h.line_range.start));
+  const set = new Set();
+  state.highlights.filter((h) => h.file === path).forEach((h) => {
+    for (let l = h.line_range.start; l <= h.line_range.end; l++) set.add(l);
+  });
+  return set;
+}
+
+function highlightExact(path, lo, hi) {
+  return state.highlights.find((h) => h.file === path && h.line_range.start === lo && h.line_range.end === hi);
 }
 
 function renderDiff() {
@@ -163,22 +182,43 @@ function renderDiff() {
   const file = state.files.find((f) => f.path === currentFile);
   if (!file) { el.innerHTML = '<div class="empty" style="padding:16px">select a file</div>'; return; }
   const name = document.createElement("div");
-  name.className = "fname"; name.textContent = file.path;
+  name.className = "fname"; name.textContent = file.path + "  ·  click a line, or drag to select a block";
   el.appendChild(name);
   const hl = highlightLines(file.path);
   const table = document.createElement("table");
   table.className = "hunk";
   (file.hunks || []).forEach((h) => {
-    (splitMode ? splitRows : unifiedRows)(h.diff || "", file.path, hl, table);
+    (splitMode ? splitRows : unifiedRows)(h.diff || "", hl, table);
   });
+  wireSelection(table, file.path);
   el.appendChild(table);
 }
 
-function addHighlight(path, line, text) {
-  post({ type: "add_highlight", file: path, side: "new", line_range: { start: line, end: line }, anchor: text });
+// click a line = toggle its highlight (dedupe + discard-by-reclick); drag = select a block
+function wireSelection(table, path) {
+  let dragStart = null;
+  const lineOf = (target) => {
+    let el = target;
+    while (el && el !== table) { if (el.dataset && el.dataset.line) return parseInt(el.dataset.line, 10); el = el.parentElement; }
+    return null;
+  };
+  table.addEventListener("mousedown", (e) => { const ln = lineOf(e.target); if (ln != null) { dragStart = ln; e.preventDefault(); } });
+  table.addEventListener("mouseup", (e) => {
+    if (dragStart == null) return;
+    const end = lineOf(e.target);
+    commitSelection(path, dragStart, end == null ? dragStart : end);
+    dragStart = null;
+  });
 }
 
-function unifiedRows(diff, path, hl, table) {
+function commitSelection(path, a, b) {
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  const existing = highlightExact(path, lo, hi);
+  if (existing) post({ type: "remove_highlight", highlight_id: existing.id });   // re-select = discard
+  else post({ type: "add_highlight", file: path, side: "new", line_range: { start: lo, end: hi } });
+}
+
+function unifiedRows(diff, hl, table) {
   let newLine = 0;
   diff.split("\n").forEach((raw) => {
     if (raw === "") return;
@@ -191,13 +231,14 @@ function unifiedRows(diff, path, hl, table) {
     }
     const kind = raw[0] === "+" ? "add" : raw[0] === "-" ? "del" : "ctx";
     tr.className = "line " + kind + (kind !== "del" && hl.has(newLine) ? " hl" : "");
-    tr.innerHTML = `<td class="ln">${kind === "del" ? "" : newLine}</td><td class="code">${esc(raw)}</td>`;
-    if (kind !== "del") { const n = newLine; tr.querySelector(".code").onclick = () => addHighlight(path, n, raw.slice(1)); newLine += 1; }
+    const code = `<td class="code"${kind !== "del" ? ` data-line="${newLine}"` : ""}>${esc(raw)}</td>`;
+    tr.innerHTML = `<td class="ln">${kind === "del" ? "" : newLine}</td>${code}`;
+    if (kind !== "del") newLine += 1;
     table.appendChild(tr);
   });
 }
 
-function splitRows(diff, path, hl, table) {
+function splitRows(diff, hl, table) {
   let oldLine = 0, newLine = 0;
   let pendDel = [], pendAdd = [];
   const flush = () => {
@@ -206,8 +247,7 @@ function splitRows(diff, path, hl, table) {
       const d = pendDel[i], a = pendAdd[i];
       const tr = document.createElement("tr"); tr.className = "line";
       appendCell(tr, d ? "del" : "gap", d ? d.ln : "", d ? d.text : "", null, false);
-      appendCell(tr, a ? "add" : "gap", a ? a.ln : "", a ? a.text : "",
-                 a ? () => addHighlight(path, a.ln, a.text) : null, a && hl.has(a.ln));
+      appendCell(tr, a ? "add" : "gap", a ? a.ln : "", a ? a.text : "", a ? a.ln : null, a && hl.has(a.ln));
       table.appendChild(tr);
     }
     pendDel = []; pendAdd = [];
@@ -228,16 +268,16 @@ function splitRows(diff, path, hl, table) {
     else {
       flush();
       const tr = document.createElement("tr"); tr.className = "line";
-      const txt = raw.slice(1), nn = newLine;
+      const txt = raw.slice(1);
       appendCell(tr, "ctx", oldLine, txt, null, false);
-      appendCell(tr, "ctx", newLine, txt, () => addHighlight(path, nn, txt), hl.has(newLine));
+      appendCell(tr, "ctx", newLine, txt, newLine, hl.has(newLine));
       table.appendChild(tr); oldLine += 1; newLine += 1;
     }
   });
   flush();
 }
 
-function appendCell(tr, kind, ln, text, onclick, isHl) {
+function appendCell(tr, kind, ln, text, dataLine, isHl) {
   const tdLn = document.createElement("td");
   tdLn.className = "ln" + (kind === "gap" ? " gap" : kind === "del" ? " delln" : kind === "add" ? " addln" : "");
   tdLn.textContent = ln === "" ? "" : ln;
@@ -245,7 +285,7 @@ function appendCell(tr, kind, ln, text, onclick, isHl) {
   tdCode.className = "code" + (kind === "gap" ? " gap" : kind === "del" ? " delc" : kind === "add" ? " addc" : "")
                    + (isHl ? " hlc" : "");
   tdCode.textContent = text || "";
-  if (onclick) { tdCode.style.cursor = "pointer"; tdCode.onclick = onclick; }
+  if (dataLine != null) tdCode.dataset.line = dataLine;  // new-side, selectable
   tr.appendChild(tdLn); tr.appendChild(tdCode);
 }
 
@@ -256,16 +296,20 @@ function renderRail() {
   el.innerHTML = "";
   el.appendChild(h3("Highlights & cards"));
   if (!state.highlights.length) el.appendChild(empty("highlight a line to ask for context"));
-  state.highlights.forEach((hl) => {
+  state.highlights.forEach((hl, i) => {
     const card = state.cards.find((c) => c.highlight_id === hl.id);
+    const lr = hl.line_range;
+    const loc = `${hl.file}:${lr.start}${lr.end !== lr.start ? "-" + lr.end : ""}`;
     const box = document.createElement("div");
     box.className = "hcard";
     box.innerHTML =
-      `<div class="loc">${esc(hl.file)}:${hl.line_range.start}</div>` +
+      `<span class="num">#${i + 1}</span><button class="x" title="discard">×</button>` +
+      `<div class="loc">${esc(loc)}</div>` +
       (hl.question ? `<div class="q">${esc(hl.question)}</div>` : "") +
       (card ? `<div class="card">${esc(card.body)}</div>`
             : `<div class="pending">waiting for context…</div>`);
-    box.querySelector(".loc").onclick = () => { currentFile = hl.file; render(); };
+    box.querySelector(".loc").onclick = () => goToHighlight(hl);
+    box.querySelector(".x").onclick = () => post({ type: "remove_highlight", highlight_id: hl.id });
     el.appendChild(box);
   });
 
@@ -280,6 +324,12 @@ function renderRail() {
     box.appendChild(btn("Deny", "btn no", () => post({ type: "decide_access", request_id: r.id, approve: false })));
     el.appendChild(box);
   });
+}
+
+function goToHighlight(hl) {
+  if (currentFile !== hl.file) { currentFile = hl.file; render(); }
+  const cell = $("diff").querySelector(`td.code[data-line="${hl.line_range.start}"]`);
+  if (cell) cell.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
 function h3(t) { const e = document.createElement("h3"); e.textContent = t; return e; }
