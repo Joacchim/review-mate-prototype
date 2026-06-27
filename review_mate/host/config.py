@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -25,7 +26,23 @@ class GitLabConfig:
 
 
 def _glab_credentials() -> tuple[str | None, str | None, str | None]:
-    """Best-effort read of host/token/user from the glab CLI config (ambient creds)."""
+    """Resolve host/token/user from the `glab` CLI's *actual* auth (keyring-aware), not the config
+    file — newer glab stores the live token in the OS keyring and leaves a stale config token."""
+    try:
+        proc = subprocess.run(["glab", "auth", "status", "--show-token"],
+                              capture_output=True, text=True, timeout=10)
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return _glab_config_credentials()
+    out = (proc.stdout or "") + (proc.stderr or "")
+    host = (re.search(r"Logged in to (\S+)", out) or [None, None])[1]
+    user = (re.search(r"\bas (\S+)", out) or [None, None])[1]
+    token = (re.search(r"Token:\s*(\S+)", out) or [None, None])[1]
+    if not token or set(token) <= {"*"}:  # masked or absent — fall back to the config file
+        return _glab_config_credentials()
+    return host, token, user
+
+
+def _glab_config_credentials() -> tuple[str | None, str | None, str | None]:
     cfg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "glab-cli" / "config.yml"
     if not cfg.exists():
         return None, None, None

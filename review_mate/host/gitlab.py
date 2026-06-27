@@ -24,7 +24,7 @@ class GitLabProvider:
         self.username = username
         self.host = host
         self._client = client or httpx.AsyncClient(
-            base_url=base_url, headers={"PRIVATE-TOKEN": token},
+            base_url=base_url, headers={"Authorization": f"Bearer {token}"},
             timeout=httpx.Timeout(15.0, connect=5.0),
         )
 
@@ -75,7 +75,7 @@ class GitLabProvider:
 
     async def _get(self, path: str, params: dict | None = None):
         resp = await self._client.get(path, params=params,
-                                      headers={"PRIVATE-TOKEN": self.token})
+                                      headers={"Authorization": f"Bearer {self.token}"})
         resp.raise_for_status()
         return resp.json()
 
@@ -89,7 +89,7 @@ class GitLabWriter:
         self.token = token
         self._caps = dict(capabilities)
         self._client = client or httpx.AsyncClient(
-            base_url=base_url, headers={"PRIVATE-TOKEN": token},
+            base_url=base_url, headers={"Authorization": f"Bearer {token}"},
             timeout=httpx.Timeout(15.0, connect=5.0),
         )
 
@@ -139,13 +139,13 @@ class GitLabWriter:
 
     async def _post(self, path: str, json: dict | None = None) -> dict:
         resp = await self._client.post(path, json=json or {},
-                                       headers={"PRIVATE-TOKEN": self.token})
+                                       headers={"Authorization": f"Bearer {self.token}"})
         resp.raise_for_status()
         return resp.json()
 
     async def _put(self, path: str, params: dict | None = None) -> dict:
         resp = await self._client.put(path, params=params,
-                                      headers={"PRIVATE-TOKEN": self.token})
+                                      headers={"Authorization": f"Bearer {self.token}"})
         resp.raise_for_status()
         return resp.json()
 
