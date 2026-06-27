@@ -9,8 +9,8 @@ from __future__ import annotations
 import asyncio
 
 from review_mate.session.actor import CommandResult
-from review_mate.session.commands import EmitCard, RequestAccess, UpdateCard
-from review_mate.session.events import HighlightAdded
+from review_mate.session.commands import EmitCard, PostMessage, RequestAccess, UpdateCard
+from review_mate.session.events import HighlightAdded, MessagePosted
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import (
     CardStatus, FileEntry, Origin, SessionState, SessionSummary,
@@ -76,3 +76,26 @@ class AgentBridge:
         return await self._actor(session_id).submit(
             RequestAccess(repo=repo, reason=reason), Origin.AGENT,
         )
+
+    # --- chat ---------------------------------------------------------------
+
+    async def post_message(self, session_id: str, body: str) -> CommandResult:
+        return await self._actor(session_id).submit(PostMessage(body=body), Origin.AGENT)
+
+    async def wait_for_message(self, session_id: str, since: int = 0,
+                               timeout: float | None = None) -> dict | None:
+        """Wait for the reviewer's next chat message (role=user) after `since`."""
+        actor = self._actor(session_id)
+
+        async def _wait() -> dict | None:
+            async for event in actor.subscribe(since=since):
+                if isinstance(event, MessagePosted) and event.message.role == "user":
+                    return {"seq": event.seq, "message": event.message.model_dump(mode="json")}
+            return None
+
+        if timeout is None:
+            return await _wait()
+        try:
+            return await asyncio.wait_for(_wait(), timeout)
+        except asyncio.TimeoutError:
+            return None

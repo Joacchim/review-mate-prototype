@@ -7,6 +7,8 @@ let state = null;
 let currentFile = null;
 const collapsedDirs = new Set();
 let splitMode = localStorage.getItem("rm-split") === "1";
+let chatDraft = "";
+let chatFocused = false;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -324,6 +326,47 @@ function renderRail() {
     box.appendChild(btn("Deny", "btn no", () => post({ type: "decide_access", request_id: r.id, approve: false })));
     el.appendChild(box);
   });
+
+  renderChat(el);
+}
+
+function renderChat(el) {
+  const wrap = document.createElement("div");
+  wrap.className = "chat";
+  wrap.appendChild(h3("Chat with Claude"));
+  const msgs = document.createElement("div");
+  msgs.className = "msgs";
+  if (!state.messages.length) msgs.appendChild(empty('ask about a card (e.g. "expand on #2") or anything in the diff'));
+  state.messages.forEach((m) => {
+    const d = document.createElement("div");
+    d.className = "msg " + (m.role === "user" ? "user" : "agent");
+    d.innerHTML = `<div class="who">${m.role}</div>${esc(m.body)}`;
+    msgs.appendChild(d);
+  });
+  wrap.appendChild(msgs);
+
+  const box = document.createElement("div");
+  box.className = "chatbox";
+  const inp = document.createElement("input");
+  inp.placeholder = "message Claude — reference a card by #N";
+  inp.value = chatDraft;
+  inp.oninput = (e) => { chatDraft = e.target.value; };
+  inp.onfocus = () => { chatFocused = true; };
+  inp.onblur = () => { chatFocused = false; };
+  const send = () => {
+    const v = inp.value.trim();
+    if (!v) return;
+    post({ type: "post_message", body: v });
+    chatDraft = ""; inp.value = "";
+  };
+  inp.onkeydown = (e) => { if (e.key === "Enter") send(); };
+  box.appendChild(inp);
+  box.appendChild(btn("Send", "btn", send));
+  wrap.appendChild(box);
+  el.appendChild(wrap);
+
+  msgs.scrollTop = msgs.scrollHeight;
+  if (chatFocused) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
 }
 
 function goToHighlight(hl) {

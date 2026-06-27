@@ -124,6 +124,13 @@ class ReviewThread(BaseModel):
     capabilities: dict[str, bool] = Field(default_factory=dict)
 
 
+class ChatMessage(BaseModel):
+    id: str
+    role: str                          # "user" (browser) or "agent"
+    body: str
+    created_at: str = ""
+
+
 class SessionState(BaseModel):
     id: str
     status: SessionStatus = SessionStatus.ACTIVE
@@ -135,6 +142,7 @@ class SessionState(BaseModel):
     cards: list[Card] = Field(default_factory=list)
     access_requests: list[AccessRequest] = Field(default_factory=list)
     threads: list[ReviewThread] = Field(default_factory=list)
+    messages: list[ChatMessage] = Field(default_factory=list)
 
 
 class SessionSummary(BaseModel):

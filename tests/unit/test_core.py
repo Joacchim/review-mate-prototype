@@ -26,8 +26,8 @@ def test_session_state_has_exactly_the_six_document_types():
     assert s.mr is None
     for field in ("files", "highlights", "cards", "access_requests", "threads"):
         assert getattr(s, field) == []
-    # the six contract collections + mr, nothing the design did not name
-    doc_fields = {"mr", "files", "highlights", "cards", "access_requests", "threads"}
+    # the contract collections + mr, nothing the design did not name (chat added in Phase-3+)
+    doc_fields = {"mr", "files", "highlights", "cards", "access_requests", "threads", "messages"}
     envelope = {"id", "status", "created_at", "seq"}
     assert set(SessionState.model_fields) == doc_fields | envelope
     assert s.status is SessionStatus.ACTIVE

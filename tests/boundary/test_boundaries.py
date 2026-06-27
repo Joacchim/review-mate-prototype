@@ -35,6 +35,6 @@ def test_core_imports_no_host_mcp_workspace_or_ui(py):  # AC-12
 
 
 def test_session_state_is_exactly_the_contract_set():  # AC-13
-    doc_fields = {"mr", "files", "highlights", "cards", "access_requests", "threads"}
+    doc_fields = {"mr", "files", "highlights", "cards", "access_requests", "threads", "messages"}
     envelope = {"id", "status", "created_at", "seq"}
     assert set(SessionState.model_fields) == doc_fields | envelope

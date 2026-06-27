@@ -65,6 +65,14 @@
   .req .repo{font-family:var(--mono);font-size:12px} .req .why{color:var(--fg2);font-size:12px;margin:4px 0 8px}
   .req button{margin-right:6px} button.ok{border-color:#2e6b45;color:var(--addfg)} button.no{border-color:#6b2e38;color:var(--delfg)}
   .empty{color:var(--fg2);font-size:12px;padding:8px 0}
+  /* chat */
+  .chat{margin-top:16px}
+  .chat .msgs{max-height:42vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--bg)}
+  .msg{margin:0 0 8px;padding:7px 10px;border-radius:8px;font-size:13px;white-space:pre-wrap;line-height:1.45}
+  .msg .who{font-size:9.5px;color:var(--fg2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px}
+  .msg.user{background:#1d2a44;margin-left:22px} .msg.agent{background:var(--panel2);margin-right:22px}
+  .chatbox{display:flex;gap:6px;margin-top:8px}
+  .chatbox input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line2);color:var(--fg);border-radius:6px;padding:6px 9px;font:inherit}
   /* landing / queue */
   .land{max-width:760px;margin:40px auto;padding:0 20px}
   .land h2{font-weight:600;margin:0 0 4px} .land p{color:var(--fg2);margin:0 0 18px}

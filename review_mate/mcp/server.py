@@ -61,4 +61,15 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
         """Ask the reviewer to approve read access to another local repository."""
         return (await bridge.request_access(session_id, repo, reason)).model_dump()
 
+    @mcp.tool()
+    async def post_message(session_id: str, body: str) -> dict:
+        """Post a chat message to the reviewer (the agent side of the conversation)."""
+        return (await bridge.post_message(session_id, body)).model_dump()
+
+    @mcp.tool()
+    async def wait_for_message(session_id: str, since: int = 0,
+                               timeout: float | None = 60.0) -> dict | None:
+        """Wait for the reviewer's next chat message after `since`; returns {seq, message} or null."""
+        return await bridge.wait_for_message(session_id, since=since, timeout=timeout)
+
     return mcp

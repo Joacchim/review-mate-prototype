@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from review_mate.session import events as ev
 from review_mate.session.state import (
-    AccessRequest, AccessStatus, Card, CardStatus, FileEntry, Highlight, LineRange,
+    AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, FileEntry, Highlight, LineRange,
     MRMetadata, Origin, ReviewThread, Side,
 )
 
@@ -78,13 +78,18 @@ class ApplyThread(BaseModel):
     thread: ReviewThread
 
 
+class PostMessage(BaseModel):
+    type: Literal["post_message"] = "post_message"
+    body: str
+
+
 class EndSession(BaseModel):
     type: Literal["end_session"] = "end_session"
 
 
 Command = Union[
     AddHighlight, RemoveHighlight, EmitCard, UpdateCard,
-    RequestAccess, DecideAccess, ApplyMRMetadata, ApplyFiles, ApplyThread, EndSession,
+    RequestAccess, DecideAccess, ApplyMRMetadata, ApplyFiles, ApplyThread, PostMessage, EndSession,
 ]
 
 
@@ -111,6 +116,7 @@ AUTHORITY: dict[str, set[Origin]] = {
     "emit_card": {Origin.AGENT},
     "update_card": {Origin.AGENT},
     "request_access": {Origin.AGENT},
+    "post_message": {Origin.BROWSER, Origin.AGENT},  # both sides of the chat
     "apply_mr_metadata": {Origin.SYSTEM},
     "apply_files": {Origin.SYSTEM},
     "apply_thread": {Origin.SYSTEM},
@@ -182,6 +188,11 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
 
     if isinstance(command, ApplyThread):
         return emit(ev.ThreadApplied, thread=command.thread)
+
+    if isinstance(command, PostMessage):
+        role = "user" if origin is Origin.BROWSER else "agent"
+        msg = ChatMessage(id=_id(), role=role, body=command.body, created_at=ts)
+        return emit(ev.MessagePosted, message=msg)
 
     if isinstance(command, EndSession):
         return emit(ev.SessionEnded)

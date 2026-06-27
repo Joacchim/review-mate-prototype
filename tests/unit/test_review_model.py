@@ -30,6 +30,7 @@ def _sample(cmd_type: str):
                               source_branch="x", target_branch="m", sha="s", author="a", url="u")),
         "apply_files": cmd.ApplyFiles(files=[]),
         "apply_thread": cmd.ApplyThread(thread=ReviewThread(id="t")),
+        "post_message": cmd.PostMessage(body="hi"),
     }[cmd_type]
 
 
