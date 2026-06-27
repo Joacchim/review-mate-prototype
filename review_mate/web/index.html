@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>review-mate</title>
+<style>
+  :root{
+    --bg:#0f1117; --panel:#171a23; --panel2:#1c2030; --line:#272b3a; --fg:#e6e8ee;
+    --fg2:#9aa3b2; --accent:#6ea8fe; --add:#1f3d2b; --addfg:#7ee2a8; --del:#3d1f25;
+    --delfg:#f0a0ac; --pill:#243; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box} html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}
+  header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+  header .brand{font-weight:600} header .mr{color:var(--fg2);font-size:13px}
+  header .dot{width:8px;height:8px;border-radius:50%;background:#3ddc84;display:inline-block;margin-right:5px}
+  .shell{display:grid;grid-template-columns:220px 1fr 340px;height:calc(100% - 49px)}
+  .files,.rail{overflow:auto;background:var(--panel)} .files{border-right:1px solid var(--line)}
+  .rail{border-left:1px solid var(--line);padding:12px}
+  .diff{overflow:auto;padding:0 0 40px}
+  .files .f{padding:7px 14px;cursor:pointer;border-bottom:1px solid var(--line);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .files .f:hover{background:var(--panel2)} .files .f.on{background:var(--panel2);color:var(--accent)}
+  .files .f .ct{font-family:var(--mono);font-size:10px;color:var(--fg2);margin-right:6px}
+  .fname{padding:12px 16px 6px;font-family:var(--mono);font-size:12px;color:var(--fg2)}
+  table.hunk{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:12.5px}
+  table.hunk td{padding:0 8px;white-space:pre-wrap;word-break:break-word;vertical-align:top}
+  td.ln{width:46px;text-align:right;color:var(--fg2);user-select:none;border-right:1px solid var(--line)}
+  tr.add td.code{background:var(--add);color:var(--addfg)} tr.del td.code{background:var(--del);color:var(--delfg)}
+  tr.hh td{color:var(--accent);background:var(--panel2)}
+  tr.line{cursor:pointer} tr.line:hover td.code{outline:1px solid var(--accent)}
+  tr.hl td.code{box-shadow:inset 3px 0 0 var(--accent)}
+  .rail h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg2);margin:6px 0 8px}
+  .hcard{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px}
+  .hcard .loc{font-family:var(--mono);font-size:11px;color:var(--accent);margin-bottom:4px}
+  .hcard .q{color:var(--fg2);font-size:12px;margin-bottom:6px}
+  .hcard .card{border-top:1px dashed var(--line);margin-top:8px;padding-top:8px;white-space:pre-wrap}
+  .hcard .pending{color:var(--fg2);font-style:italic;font-size:12px}
+  .req{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px}
+  .req .repo{font-family:var(--mono);font-size:12px} .req .why{color:var(--fg2);font-size:12px;margin:4px 0 8px}
+  .req button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;padding:4px 10px;cursor:pointer;margin-right:6px}
+  .req button.ok{border-color:#2e6b45;color:var(--addfg)} .req button.no{border-color:#6b2e38;color:var(--delfg)}
+  .empty{color:var(--fg2);font-size:12px;padding:8px 0}
+</style>
+</head>
+<body>
+<header>
+  <span class="dot"></span><span class="brand">review-mate</span>
+  <span class="mr" id="mr">—</span>
+  <span style="flex:1"></span>
+  <span class="mr" id="sid"></span>
+</header>
+<div class="shell">
+  <div class="files" id="files"></div>
+  <div class="diff" id="diff"></div>
+  <div class="rail" id="rail"></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
