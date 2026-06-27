@@ -24,7 +24,8 @@
   .shell{display:grid;grid-template-columns:240px 1fr 360px;height:calc(100% - 47px);transition:grid-template-columns .12s}
   .shell.hl{grid-template-columns:0 1fr 360px} .shell.hr{grid-template-columns:240px 1fr 0} .shell.hl.hr{grid-template-columns:0 1fr 0}
   .files,.rail{overflow:auto;background:var(--panel)} .files{border-right:1px solid var(--line)} .rail{border-left:1px solid var(--line);padding:12px}
-  .shell.hl .files,.shell.hr .rail{display:none}
+  /* collapse in place — never display:none (that drops the panel from the grid and shifts the diff) */
+  .shell.hl .files,.shell.hr .rail{overflow:hidden;border:0;padding:0}
   .diff{overflow:auto;padding:0 0 60px}
   /* file tree */
   .tree{padding:6px 0;font-size:13px}
