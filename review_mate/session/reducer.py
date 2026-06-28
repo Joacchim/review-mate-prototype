@@ -33,6 +33,8 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
                     c.status = event.status
                 if event.citations is not None:
                     c.citations = list(event.citations)
+    elif isinstance(event, ev.CardRemoved):
+        s.cards = [c for c in s.cards if c.id != event.card_id]
     elif isinstance(event, ev.AccessRequested):
         s.access_requests.append(event.request)
     elif isinstance(event, ev.AccessDecided):

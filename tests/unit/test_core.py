@@ -35,11 +35,36 @@ def test_session_state_has_exactly_the_six_document_types():
 
 # --- AC-9: write-authority partitioning -------------------------------------
 
-def test_browser_may_add_highlight_agent_may_not():
+def test_both_browser_and_agent_may_add_highlight_system_may_not():
     s = new_state()
     c = cmd.AddHighlight(file="a.py", side=Side.NEW, line_range=LineRange(start=1, end=3))
+    # the reviewer flags what to explain; the agent flags what it found — both authored, no conflict
     assert isinstance(handle(s, c, Origin.BROWSER), list)
-    assert isinstance(handle(s, c, Origin.AGENT), Rejection)
+    assert isinstance(handle(s, c, Origin.AGENT), list)
+    assert isinstance(handle(s, c, Origin.SYSTEM), Rejection)
+
+
+def test_agent_highlight_records_agent_authorship():
+    s = new_state()
+    c = cmd.AddHighlight(file="a.py", side=Side.NEW, line_range=LineRange(start=1, end=1))
+    s = fold(s, handle(s, c, Origin.AGENT))
+    assert s.highlights[0].author is Origin.AGENT
+
+
+def test_mr_level_card_needs_no_highlight():
+    s = new_state()
+    s = fold(s, handle(s, cmd.EmitCard(body="MR-level note"), Origin.AGENT))  # no highlight_id
+    assert s.cards[0].highlight_id is None
+    assert s.cards[0].body == "MR-level note"
+
+
+def test_remove_card_drops_it_browser_only():
+    s = new_state()
+    s = fold(s, handle(s, cmd.EmitCard(body="x"), Origin.AGENT))
+    cid = s.cards[0].id
+    assert isinstance(handle(s, cmd.RemoveCard(card_id=cid), Origin.AGENT), Rejection)
+    s = fold(s, handle(s, cmd.RemoveCard(card_id=cid), Origin.BROWSER))
+    assert s.cards == []
 
 
 def test_agent_may_emit_card_browser_may_not():

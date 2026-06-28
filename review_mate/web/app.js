@@ -458,10 +458,12 @@ function renderRail() {
     const card = state.cards.find((c) => c.highlight_id === hl.id);
     const lr = hl.line_range;
     const loc = `${hl.file}:${lr.start}${lr.end !== lr.start ? "-" + lr.end : ""}`;
+    const byAgent = hl.author === "agent";
     const box = document.createElement("div");
-    box.className = "hcard";
+    box.className = "hcard" + (byAgent ? " agent" : "");
     box.innerHTML =
       `<span class="num">#${i + 1}</span><button class="x" title="discard">×</button>` +
+      (byAgent ? `<span class="byclaude">Claude flagged</span>` : "") +
       `<div class="loc">${esc(loc)}</div>` +
       (hl.question ? `<div class="q">${esc(hl.question)}</div>` : "") +
       (card ? `<div class="card md">${md(card.body)}</div>`
@@ -470,6 +472,22 @@ function renderRail() {
     box.querySelector(".x").onclick = () => post({ type: "remove_highlight", highlight_id: hl.id });
     el.appendChild(box);
   });
+
+  // MR-level insights Claude raised on its own (cards anchored to no highlight)
+  const insights = state.cards.filter((c) => !c.highlight_id);
+  if (insights.length) {
+    el.appendChild(h3("Claude's insights"));
+    insights.forEach((c) => {
+      const box = document.createElement("div");
+      box.className = "hcard agent";
+      box.innerHTML =
+        `<button class="x" title="dismiss">×</button>` +
+        `<span class="byclaude">MR-level</span>` +
+        `<div class="card md nopad">${md(c.body)}</div>`;
+      box.querySelector(".x").onclick = () => post({ type: "remove_card", card_id: c.id });
+      el.appendChild(box);
+    });
+  }
 
   const pending = state.access_requests.filter((r) => r.status === "pending");
   el.appendChild(h3("Access requests"));

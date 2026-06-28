@@ -93,7 +93,7 @@ class Highlight(BaseModel):
 
 class Card(BaseModel):
     id: str
-    highlight_id: str                  # the pivot anchor
+    highlight_id: str | None = None    # the pivot anchor; None = an MR-level (unanchored) insight
     body: str                          # markdown
     citations: list[str] = Field(default_factory=list)
     author: Origin = Origin.AGENT

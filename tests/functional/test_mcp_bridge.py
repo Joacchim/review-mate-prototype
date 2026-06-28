@@ -44,6 +44,32 @@ async def test_emit_card_unknown_highlight_not_ok(setup):  # AC-2 (core rejects)
     assert not res.ok
 
 
+async def test_mr_level_card_has_no_anchor(setup):
+    manager, bridge, sid = setup
+    res = await bridge.emit_card(sid, highlight_id=None, body="MR-level insight")
+    assert res.ok
+    card = bridge.snapshot(sid).cards[0]
+    assert card.highlight_id is None and card.author is Origin.AGENT
+
+
+async def test_add_insight_creates_agent_highlight_and_card(setup):
+    manager, bridge, sid = setup
+    out = await bridge.add_insight(sid, file="m.py", start=40, end=42, body="this can NPE")
+    snap = bridge.snapshot(sid)
+    hl = snap.highlights[0]
+    assert hl.author is Origin.AGENT and hl.file == "m.py" and hl.line_range.start == 40
+    assert out["highlight_id"] == hl.id
+    card = next(c for c in snap.cards if c.highlight_id == hl.id)
+    assert card.body == "this can NPE"
+
+
+async def test_add_insight_tool_registered(setup):
+    manager, bridge, sid = setup
+    server = build_mcp_server(bridge)
+    names = {t.name for t in await server.list_tools()}
+    assert "add_insight" in names
+
+
 async def test_wait_for_highlight_resolves(setup):  # AC-3
     manager, bridge, sid = setup
     waiter = asyncio.create_task(bridge.wait_for_highlight(sid, since=bridge.snapshot(sid).seq))

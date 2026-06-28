@@ -13,6 +13,10 @@ depends on — so the reviewer understands the change faster.
 The session's source of truth is the bridge-server; you reach it only through the review-mate **MCP
 tools**. You never post in the reviewer's name — you provide insight; they write the review.
 
+Beyond reacting to highlights, you may **raise insights of your own**: anchor one to a zone the
+reviewer hasn't highlighted (`add_insight`) or post an MR-level observation tied to no line
+(`emit_card` with no `highlight_id`). See *Autonomous insights* below.
+
 ## Prerequisites
 
 - The review-mate server is running (`review-mate` / `python -m review_mate`), serving the UI and
@@ -57,6 +61,24 @@ For the highlighted `file` + `line_range` (and the reviewer's optional `question
 
 Keep cards **tight and specific**: what this code does, why, the one risk or subtlety worth the
 reviewer's attention, and a citation (file:line, spec §, or URL). Avoid restating the diff.
+
+## Autonomous insights (your own findings)
+
+The highlight loop is reviewer-driven, but you are not limited to it. When your reading of the diff
+surfaces something the reviewer hasn't flagged but should see, raise it yourself:
+
+- **Anchored to a zone** — `add_insight(session_id, file, start_line, end_line, body, …)`. This
+  creates an agent-authored highlight on that range *and* its card in one call, returning
+  `{highlight_id, card}`. The UI marks it "Claude flagged" and the reviewer can dismiss it. Use this
+  when the insight is about specific lines (a latent bug, a missed edge case, a duplicated block).
+- **MR-level** — `emit_card(session_id, body)` with no `highlight_id`. A standalone card in the
+  "Claude's insights" panel, for observations that aren't about one line (a missing migration
+  rollback, an absent rate limit, a cross-cutting concern).
+
+The chat is the natural trigger: when the reviewer asks "anything else I should look at?" (or you
+spot it mid-analysis), answer in chat *and* drop the durable insight as a card so it persists next
+to the code. Be **restrained** — only what genuinely merits attention; the reviewer dismisses noise,
+and noise erodes trust. Prefer one sharp anchored insight over five vague MR-level ones.
 
 ## Cross-repo access (consent-gated, never silent)
 

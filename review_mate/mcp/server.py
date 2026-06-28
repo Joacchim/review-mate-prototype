@@ -43,10 +43,20 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
         return {"seq": result["seq"], "highlight": result["highlight"].model_dump(mode="json")}
 
     @mcp.tool()
-    async def emit_card(session_id: str, highlight_id: str, body: str,
+    async def emit_card(session_id: str, body: str, highlight_id: str | None = None,
                         citations: list[str] | None = None) -> dict:
-        """Post a context card (markdown) anchored to a highlight."""
+        """Post a context card (markdown). Anchor it to a highlight by id, or omit highlight_id
+        for an MR-level insight (a standalone card not tied to any zone)."""
         return (await bridge.emit_card(session_id, highlight_id, body, citations)).model_dump()
+
+    @mcp.tool()
+    async def add_insight(session_id: str, file: str, start_line: int, end_line: int, body: str,
+                          side: str = "new", citations: list[str] | None = None) -> dict:
+        """Proactively flag a zone the reviewer did not highlight: creates an agent-authored
+        highlight on file:start_line-end_line and a card on it. Returns {highlight_id, card}.
+        Use sparingly for things genuinely worth the reviewer's attention; they can dismiss it."""
+        return await bridge.add_insight(session_id, file, start_line, end_line, body,
+                                        side=side, citations=citations)
 
     @mcp.tool()
     async def update_card(session_id: str, card_id: str, body: str | None = None,

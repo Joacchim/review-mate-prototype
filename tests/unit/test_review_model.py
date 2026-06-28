@@ -7,7 +7,7 @@ from review_mate.session.commands import handle, Rejection, AUTHORITY
 from review_mate.session.reducer import reduce, fold
 from review_mate.session.state import (
     SessionState, Origin, Side, LineRange, MRMetadata, FileEntry, ChangeType,
-    Highlight, Card, AccessRequest, ReviewThread, CardStatus, AccessStatus,
+    Highlight, Card, AccessRequest, ReviewThread, CardStatus, AccessStatus, ChatMessage,
 )
 
 ALL_ORIGINS = [Origin.BROWSER, Origin.AGENT, Origin.SYSTEM]
@@ -25,6 +25,7 @@ def _sample(cmd_type: str):
         "end_session": cmd.EndSession(),
         "emit_card": cmd.EmitCard(highlight_id="x", body="b"),
         "update_card": cmd.UpdateCard(card_id="x"),
+        "remove_card": cmd.RemoveCard(card_id="x"),
         "request_access": cmd.RequestAccess(repo="r", reason="why"),
         "apply_mr_metadata": cmd.ApplyMRMetadata(mr=MRMetadata(host="h", project="p", iid=1, title="t",
                               source_branch="x", target_branch="m", sha="s", author="a", url="u")),
@@ -89,6 +90,18 @@ def test_thread_applied_replaces_in_place():
     assert len(s.threads) == 1 and s.threads[0].resolved is True  # upsert, not duplicate
 
 
+def test_card_removed_and_chat_cleared_reduce():
+    s = _state()
+    s = reduce(s, ev.CardEmitted(seq=1, ts="t", origin=Origin.AGENT,
+               card=Card(id="c", body="insight")))  # MR-level card (no anchor)
+    s = reduce(s, ev.CardRemoved(seq=2, ts="t", origin=Origin.BROWSER, card_id="c"))
+    assert s.cards == []
+    s = reduce(s, ev.MessagePosted(seq=3, ts="t", origin=Origin.BROWSER,
+               message=ChatMessage(id="m", role="user", body="hi")))
+    s = reduce(s, ev.ChatCleared(seq=4, ts="t", origin=Origin.BROWSER))
+    assert s.messages == []
+
+
 def test_mr_and_files_reduce():
     s = _state()
     s = reduce(s, ev.MRMetadataApplied(seq=1, ts="t", origin=Origin.SYSTEM,
@@ -115,6 +128,8 @@ def test_mr_and_files_reduce():
     ev.AccessDecided(seq=9, ts="t", origin=Origin.BROWSER, request_id="r", status=AccessStatus.APPROVED, decided_at="t"),
     ev.ThreadApplied(seq=10, ts="t", origin=Origin.SYSTEM, thread=ReviewThread(id="t")),
     ev.SessionEnded(seq=11, ts="t", origin=Origin.BROWSER),
+    ev.CardRemoved(seq=12, ts="t", origin=Origin.BROWSER, card_id="c"),
+    ev.ChatCleared(seq=13, ts="t", origin=Origin.BROWSER),
 ])
 def test_event_roundtrip_all_types(event):
     back = ev.parse_event(event.model_dump_json())

@@ -38,9 +38,14 @@ class RemoveHighlight(BaseModel):
 
 class EmitCard(BaseModel):
     type: Literal["emit_card"] = "emit_card"
-    highlight_id: str
+    highlight_id: str | None = None    # None = an MR-level insight, anchored to nothing
     body: str
     citations: list[str] = []
+
+
+class RemoveCard(BaseModel):
+    type: Literal["remove_card"] = "remove_card"
+    card_id: str
 
 
 class UpdateCard(BaseModel):
@@ -92,7 +97,7 @@ class EndSession(BaseModel):
 
 
 Command = Union[
-    AddHighlight, RemoveHighlight, EmitCard, UpdateCard,
+    AddHighlight, RemoveHighlight, EmitCard, UpdateCard, RemoveCard,
     RequestAccess, DecideAccess, ApplyMRMetadata, ApplyFiles, ApplyThread,
     PostMessage, ClearChat, EndSession,
 ]
@@ -114,8 +119,11 @@ class Rejection(BaseModel):
 # --- the write-authority matrix (AC-9) --------------------------------------
 
 AUTHORITY: dict[str, set[Origin]] = {
-    "add_highlight": {Origin.BROWSER},
+    # both may add a highlight: the reviewer flags what to explain; the agent flags what it found.
+    # Highlight.author records which, and the single-writer property still holds (appends don't conflict).
+    "add_highlight": {Origin.BROWSER, Origin.AGENT},
     "remove_highlight": {Origin.BROWSER},
+    "remove_card": {Origin.BROWSER},   # the reviewer dismisses an insight card
     "decide_access": {Origin.BROWSER},
     "end_session": {Origin.BROWSER},
     "emit_card": {Origin.AGENT},
@@ -161,7 +169,8 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
         return emit(ev.HighlightRemoved, highlight_id=command.highlight_id)
 
     if isinstance(command, EmitCard):
-        if not any(h.id == command.highlight_id for h in state.highlights):
+        if command.highlight_id is not None and \
+                not any(h.id == command.highlight_id for h in state.highlights):
             return Rejection(reason=f"no such highlight: {command.highlight_id}")
         card = Card(id=_id(), highlight_id=command.highlight_id, body=command.body,
                     citations=command.citations, author=origin, created_at=ts)
@@ -172,6 +181,11 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
             return Rejection(reason=f"no such card: {command.card_id}")
         return emit(ev.CardUpdated, card_id=command.card_id, body=command.body,
                     status=command.status, citations=command.citations)
+
+    if isinstance(command, RemoveCard):
+        if not any(c.id == command.card_id for c in state.cards):
+            return Rejection(reason=f"no such card: {command.card_id}")
+        return emit(ev.CardRemoved, card_id=command.card_id)
 
     if isinstance(command, RequestAccess):
         req = AccessRequest(id=_id(), repo=command.repo, reason=command.reason)

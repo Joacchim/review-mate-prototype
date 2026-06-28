@@ -59,6 +59,11 @@ class CardUpdated(_EventBase):
     citations: list[str] | None = None
 
 
+class CardRemoved(_EventBase):
+    type: Literal["card_removed"] = "card_removed"
+    card_id: str
+
+
 class AccessRequested(_EventBase):
     type: Literal["access_requested"] = "access_requested"
     request: AccessRequest
@@ -93,7 +98,7 @@ Event = Annotated[
     Union[
         SessionCreated, MRMetadataApplied, FilesApplied,
         HighlightAdded, HighlightRemoved,
-        CardEmitted, CardUpdated,
+        CardEmitted, CardUpdated, CardRemoved,
         AccessRequested, AccessDecided,
         ThreadApplied, MessagePosted, ChatCleared, SessionEnded,
     ],
