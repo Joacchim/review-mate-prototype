@@ -13,12 +13,13 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from review_mate.seams import MRRef
-from review_mate.session.commands import parse_command
+from review_mate.session.commands import MarkDraftPosted, parse_command
 from review_mate.session.manager import SessionManager
-from review_mate.session.state import Origin
+from review_mate.session.state import DraftStatus, Origin
 
 
-def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broker=None) -> list:
+def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broker=None,
+                 writeback=None) -> list:
     async def create_session(request: Request) -> JSONResponse:
         body = await _maybe_json(request)
         raw = body.get("ref") if isinstance(body, dict) else None
@@ -115,6 +116,32 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             return JSONResponse({"ok": False, "reason": result.reason}, status_code=400)
         return JSONResponse({"ok": True, "seq": result.seq})
 
+    async def submit_review(request: Request) -> JSONResponse:
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        if writeback is None:
+            return JSONResponse({"error": "review posting unavailable"}, status_code=400)
+        snap = actor.snapshot()
+        if snap.mr is None:
+            return JSONResponse({"error": "no MR loaded"}, status_code=400)
+        ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
+        pending = [d for d in snap.drafts if d.status is DraftStatus.DRAFT]
+        results = []
+        for d in pending:
+            try:
+                res = await writeback.post_comment(snap.id, d.highlight_id, d.body, ref)
+                note = (res.get("notes") or [{}])[0] if isinstance(res, dict) else {}
+                url = (f"{snap.mr.url}#note_{note.get('id')}"
+                       if note.get("id") and snap.mr.url else None)
+                await actor.submit(MarkDraftPosted(highlight_id=d.highlight_id, url=url),
+                                   Origin.BROWSER)
+                results.append({"highlight_id": d.highlight_id, "ok": True, "url": url})
+            except Exception as exc:  # one bad anchor shouldn't sink the rest of the review
+                results.append({"highlight_id": d.highlight_id, "ok": False, "error": str(exc)})
+        posted = sum(1 for r in results if r["ok"])
+        return JSONResponse({"posted": posted, "total": len(pending), "results": results})
+
     async def end_session(request: Request) -> JSONResponse:
         try:
             await manager.end(request.path_params["id"])
@@ -156,6 +183,7 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/sessions/{id}", get_session, methods=["GET"]),
         Route("/api/sessions/{id}", end_session, methods=["DELETE"]),
         Route("/api/sessions/{id}/commands", submit_command, methods=["POST"]),
+        Route("/api/sessions/{id}/submit-review", submit_review, methods=["POST"]),
         WebSocketRoute("/api/sessions/{id}/stream", stream),
     ]
 

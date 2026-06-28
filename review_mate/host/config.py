@@ -98,3 +98,15 @@ def build_provider_from_env(client: httpx.AsyncClient | None = None):
         return None, None
     provider = build_gitlab_provider(config, client)
     return provider, (lambda s: parse_reference(s, config.host))
+
+
+def build_writer_from_env(client: httpx.AsyncClient | None = None):
+    """The write side, host-agnostic: a HostWriter built from the environment, or None.
+
+    Mirrors build_provider_from_env so the composition root names no host. Used to post the
+    reviewer's prepared review back to the host.
+    """
+    config = resolve_gitlab_config()
+    if config is None:
+        return None
+    return build_gitlab_writer(config, client)

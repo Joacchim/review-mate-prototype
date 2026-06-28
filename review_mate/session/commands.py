@@ -15,8 +15,8 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from review_mate.session import events as ev
 from review_mate.session.state import (
-    AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, FileEntry, Highlight, LineRange,
-    MRMetadata, Origin, ReviewThread, Side,
+    AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, DraftComment, DraftStatus,
+    FileEntry, Highlight, LineRange, MRMetadata, Origin, ReviewThread, Side,
 )
 
 
@@ -92,6 +92,23 @@ class ClearChat(BaseModel):
     type: Literal["clear_chat"] = "clear_chat"
 
 
+class SaveDraft(BaseModel):
+    type: Literal["save_draft"] = "save_draft"
+    highlight_id: str
+    body: str
+
+
+class RemoveDraft(BaseModel):
+    type: Literal["remove_draft"] = "remove_draft"
+    highlight_id: str
+
+
+class MarkDraftPosted(BaseModel):
+    type: Literal["mark_draft_posted"] = "mark_draft_posted"
+    highlight_id: str
+    url: str | None = None
+
+
 class EndSession(BaseModel):
     type: Literal["end_session"] = "end_session"
 
@@ -99,7 +116,7 @@ class EndSession(BaseModel):
 Command = Union[
     AddHighlight, RemoveHighlight, EmitCard, UpdateCard, RemoveCard,
     RequestAccess, DecideAccess, ApplyMRMetadata, ApplyFiles, ApplyThread,
-    PostMessage, ClearChat, EndSession,
+    PostMessage, ClearChat, SaveDraft, RemoveDraft, MarkDraftPosted, EndSession,
 ]
 
 
@@ -131,6 +148,10 @@ AUTHORITY: dict[str, set[Origin]] = {
     "request_access": {Origin.AGENT},
     "post_message": {Origin.BROWSER, Origin.AGENT},  # both sides of the chat
     "clear_chat": {Origin.BROWSER},
+    # review drafts are the reviewer's own — browser only (the agent never posts in their name)
+    "save_draft": {Origin.BROWSER},
+    "remove_draft": {Origin.BROWSER},
+    "mark_draft_posted": {Origin.BROWSER},
     "apply_mr_metadata": {Origin.SYSTEM},
     "apply_files": {Origin.SYSTEM},
     "apply_thread": {Origin.SYSTEM},
@@ -213,6 +234,27 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
         role = "user" if origin is Origin.BROWSER else "agent"
         msg = ChatMessage(id=_id(), role=role, body=command.body, created_at=ts)
         return emit(ev.MessagePosted, message=msg)
+
+    if isinstance(command, SaveDraft):
+        if not any(h.id == command.highlight_id for h in state.highlights):
+            return Rejection(reason=f"no such highlight: {command.highlight_id}")
+        existing = next((d for d in state.drafts if d.highlight_id == command.highlight_id), None)
+        draft = DraftComment(id=existing.id if existing else _id(),
+                             highlight_id=command.highlight_id, body=command.body,
+                             status=existing.status if existing else DraftStatus.DRAFT,
+                             url=existing.url if existing else None,
+                             created_at=existing.created_at if existing else ts)
+        return emit(ev.DraftSaved, draft=draft)
+
+    if isinstance(command, RemoveDraft):
+        if not any(d.highlight_id == command.highlight_id for d in state.drafts):
+            return Rejection(reason=f"no draft for highlight: {command.highlight_id}")
+        return emit(ev.DraftRemoved, highlight_id=command.highlight_id)
+
+    if isinstance(command, MarkDraftPosted):
+        if not any(d.highlight_id == command.highlight_id for d in state.drafts):
+            return Rejection(reason=f"no draft for highlight: {command.highlight_id}")
+        return emit(ev.DraftPosted, highlight_id=command.highlight_id, url=command.url)
 
     if isinstance(command, ClearChat):
         return emit(ev.ChatCleared)

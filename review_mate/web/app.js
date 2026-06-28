@@ -9,6 +9,8 @@ const collapsedDirs = new Set();
 let splitMode = localStorage.getItem("rm-split") === "1";
 let chatDraft = "";
 let chatFocused = false;
+const draftBuffers = {};   // highlight_id -> in-progress review-comment text (survives re-render)
+let focusedDraft = null;   // highlight_id of the focused draft textarea, to restore after render
 let repoTree = null;                 // all repo paths (lazy-loaded when "show all" is on)
 let showAll = localStorage.getItem("rm-showall") === "1";
 const fileContents = {};             // path -> content (cache for non-diff file views)
@@ -516,8 +518,11 @@ function renderRail() {
             : `<div class="pending">waiting for context…</div>`);
     box.querySelector(".loc").onclick = () => goToHighlight(hl);
     box.querySelector(".x").onclick = () => post({ type: "remove_highlight", highlight_id: hl.id });
+    box.appendChild(draftEditor(hl, state.drafts.find((d) => d.highlight_id === hl.id)));
     el.appendChild(box);
   });
+
+  renderReviewBar(el);
 
   // MR-level insights Claude raised on its own (cards anchored to no highlight)
   const insights = state.cards.filter((c) => !c.highlight_id);
@@ -548,6 +553,72 @@ function renderRail() {
   });
 
   renderChat(el);
+
+  if (focusedDraft) {  // a re-render (e.g. a WS event) shouldn't steal the draft you're typing
+    const ta = el.querySelector(`textarea.draftbox[data-hl="${focusedDraft}"]`);
+    if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  }
+}
+
+// a reviewer's review-comment draft for one highlight (their words; the card is never posted)
+function draftEditor(hl, draft) {
+  const wrap = document.createElement("div");
+  wrap.className = "draft";
+  if (draft && draft.status === "posted") {
+    wrap.innerHTML = `<div class="posted">✓ posted${
+      draft.url ? ` · <a href="${esc(draft.url)}" target="_blank" rel="noopener">view</a>` : ""}</div>`;
+    return wrap;
+  }
+  const ta = document.createElement("textarea");
+  ta.className = "draftbox";
+  ta.dataset.hl = hl.id;
+  ta.placeholder = "prepare a review comment — your words (Claude's card is context, not posted)";
+  ta.value = (hl.id in draftBuffers) ? draftBuffers[hl.id] : (draft ? draft.body : "");
+  ta.oninput = (e) => { draftBuffers[hl.id] = e.target.value; };
+  ta.onfocus = () => { focusedDraft = hl.id; };
+  ta.onblur = () => { if (focusedDraft === hl.id) focusedDraft = null; };
+  const row = document.createElement("div");
+  row.className = "draftbtns";
+  row.appendChild(btn(draft ? "Update" : "Save", "btn", () => {
+    const body = ta.value.trim();
+    if (!body) return;
+    post({ type: "save_draft", highlight_id: hl.id, body });
+    delete draftBuffers[hl.id];
+  }));
+  if (draft) row.appendChild(btn("Remove", "btn ghost", () => {
+    post({ type: "remove_draft", highlight_id: hl.id });
+    delete draftBuffers[hl.id];
+  }));
+  wrap.appendChild(ta);
+  wrap.appendChild(row);
+  return wrap;
+}
+
+function renderReviewBar(el) {
+  if (!state.drafts.length) return;
+  const pending = state.drafts.filter((d) => d.status !== "posted");
+  const posted = state.drafts.filter((d) => d.status === "posted");
+  el.appendChild(h3("Your review"));
+  const bar = document.createElement("div");
+  bar.className = "reviewbar";
+  const lbl = document.createElement("span");
+  lbl.textContent = `${pending.length} pending${posted.length ? ` · ${posted.length} posted` : ""}`;
+  bar.appendChild(lbl);
+  if (pending.length) bar.appendChild(btn("Submit review", "btn primary", submitReview));
+  el.appendChild(bar);
+}
+
+async function submitReview() {
+  setStatus("posting review…");
+  try {
+    const r = await fetch(`/api/sessions/${SID}/submit-review`, { method: "POST" });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { setStatus("✕ " + (data.error || "submit failed")); return; }
+    const failed = (data.results || []).filter((x) => !x.ok);
+    setStatus(failed.length
+      ? `posted ${data.posted}/${data.total} — ${failed.length} failed`
+      : `posted ${data.posted} comment${data.posted === 1 ? "" : "s"}`);
+  } catch (e) { setStatus("✕ " + e); }
 }
 
 function renderChat(el) {

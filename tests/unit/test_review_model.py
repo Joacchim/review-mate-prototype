@@ -8,6 +8,7 @@ from review_mate.session.reducer import reduce, fold
 from review_mate.session.state import (
     SessionState, Origin, Side, LineRange, MRMetadata, FileEntry, ChangeType,
     Highlight, Card, AccessRequest, ReviewThread, CardStatus, AccessStatus, ChatMessage,
+    DraftComment, DraftStatus,
 )
 
 ALL_ORIGINS = [Origin.BROWSER, Origin.AGENT, Origin.SYSTEM]
@@ -33,6 +34,9 @@ def _sample(cmd_type: str):
         "apply_thread": cmd.ApplyThread(thread=ReviewThread(id="t")),
         "post_message": cmd.PostMessage(body="hi"),
         "clear_chat": cmd.ClearChat(),
+        "save_draft": cmd.SaveDraft(highlight_id="x", body="b"),
+        "remove_draft": cmd.RemoveDraft(highlight_id="x"),
+        "mark_draft_posted": cmd.MarkDraftPosted(highlight_id="x"),
     }[cmd_type]
 
 
@@ -102,6 +106,38 @@ def test_card_removed_and_chat_cleared_reduce():
     assert s.messages == []
 
 
+def test_draft_lifecycle_save_upsert_post_and_orphan_cleanup():
+    s = _state()
+    s = fold(s, handle(s, cmd.AddHighlight(file="a.py", side=Side.NEW,
+                                           line_range=LineRange(start=1, end=1)), Origin.BROWSER))
+    hid = s.highlights[0].id
+    # save then update keeps one draft per highlight (upsert by highlight_id, id stable)
+    s = fold(s, handle(s, cmd.SaveDraft(highlight_id=hid, body="first"), Origin.BROWSER))
+    did = s.drafts[0].id
+    s = fold(s, handle(s, cmd.SaveDraft(highlight_id=hid, body="second"), Origin.BROWSER))
+    assert len(s.drafts) == 1 and s.drafts[0].body == "second" and s.drafts[0].id == did
+    # mark posted carries the url and flips status
+    s = fold(s, handle(s, cmd.MarkDraftPosted(highlight_id=hid, url="u#note_9"), Origin.BROWSER))
+    assert s.drafts[0].status is DraftStatus.POSTED and s.drafts[0].url == "u#note_9"
+    # dismissing the highlight drops its draft (no orphans)
+    s = fold(s, handle(s, cmd.RemoveHighlight(highlight_id=hid), Origin.BROWSER))
+    assert s.drafts == []
+
+
+def test_save_draft_for_unknown_highlight_rejected():
+    s = _state()
+    assert isinstance(handle(s, cmd.SaveDraft(highlight_id="nope", body="b"), Origin.BROWSER),
+                      Rejection)
+
+
+def test_drafts_are_browser_only():
+    s = _state()
+    s = fold(s, handle(s, cmd.AddHighlight(file="a.py", side=Side.NEW,
+                                           line_range=LineRange(start=1, end=1)), Origin.BROWSER))
+    hid = s.highlights[0].id
+    assert isinstance(handle(s, cmd.SaveDraft(highlight_id=hid, body="b"), Origin.AGENT), Rejection)
+
+
 def test_mr_and_files_reduce():
     s = _state()
     s = reduce(s, ev.MRMetadataApplied(seq=1, ts="t", origin=Origin.SYSTEM,
@@ -130,6 +166,10 @@ def test_mr_and_files_reduce():
     ev.SessionEnded(seq=11, ts="t", origin=Origin.BROWSER),
     ev.CardRemoved(seq=12, ts="t", origin=Origin.BROWSER, card_id="c"),
     ev.ChatCleared(seq=13, ts="t", origin=Origin.BROWSER),
+    ev.DraftSaved(seq=14, ts="t", origin=Origin.BROWSER,
+        draft=DraftComment(id="d", highlight_id="h", body="nit")),
+    ev.DraftRemoved(seq=15, ts="t", origin=Origin.BROWSER, highlight_id="h"),
+    ev.DraftPosted(seq=16, ts="t", origin=Origin.BROWSER, highlight_id="h", url="u#note_1"),
 ])
 def test_event_roundtrip_all_types(event):
     back = ev.parse_event(event.model_dump_json())

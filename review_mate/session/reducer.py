@@ -6,7 +6,7 @@ state exactly — the basis for durable resume (AC-8).
 from __future__ import annotations
 
 from review_mate.session import events as ev
-from review_mate.session.state import SessionState, SessionStatus
+from review_mate.session.state import DraftStatus, SessionState, SessionStatus
 
 
 def reduce(state: SessionState, event: "ev.Event") -> SessionState:
@@ -22,6 +22,7 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
         s.highlights.append(event.highlight)
     elif isinstance(event, ev.HighlightRemoved):
         s.highlights = [h for h in s.highlights if h.id != event.highlight_id]
+        s.drafts = [d for d in s.drafts if d.highlight_id != event.highlight_id]  # no orphan drafts
     elif isinstance(event, ev.CardEmitted):
         s.cards.append(event.card)
     elif isinstance(event, ev.CardUpdated):
@@ -55,6 +56,22 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
         s.messages.append(event.message)
     elif isinstance(event, ev.ChatCleared):
         s.messages = []
+    elif isinstance(event, ev.DraftSaved):
+        replaced = False
+        for i, d in enumerate(s.drafts):
+            if d.highlight_id == event.draft.highlight_id:
+                s.drafts[i] = event.draft
+                replaced = True
+                break
+        if not replaced:
+            s.drafts.append(event.draft)
+    elif isinstance(event, ev.DraftRemoved):
+        s.drafts = [d for d in s.drafts if d.highlight_id != event.highlight_id]
+    elif isinstance(event, ev.DraftPosted):
+        for d in s.drafts:
+            if d.highlight_id == event.highlight_id:
+                d.status = DraftStatus.POSTED
+                d.url = event.url
     elif isinstance(event, ev.SessionEnded):
         s.status = SessionStatus.ENDED
     else:  # pragma: no cover - exhaustive over the Event union

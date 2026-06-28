@@ -131,6 +131,25 @@ class ChatMessage(BaseModel):
     created_at: str = ""
 
 
+class DraftStatus(str, Enum):
+    DRAFT = "draft"
+    POSTED = "posted"
+
+
+class DraftComment(BaseModel):
+    """A reviewer-authored review comment, prepared locally and posted on submit (D14).
+
+    The body is the reviewer's own text — never the agent's card. Anchored to a highlight, whose
+    file/line + the MR's diff_refs give the host the exact position at submit time.
+    """
+    id: str
+    highlight_id: str                  # the anchor (one draft per highlight)
+    body: str
+    status: DraftStatus = DraftStatus.DRAFT
+    url: str | None = None             # the posted comment's URL, set on submit
+    created_at: str = ""
+
+
 class SessionState(BaseModel):
     id: str
     status: SessionStatus = SessionStatus.ACTIVE
@@ -143,6 +162,7 @@ class SessionState(BaseModel):
     access_requests: list[AccessRequest] = Field(default_factory=list)
     threads: list[ReviewThread] = Field(default_factory=list)
     messages: list[ChatMessage] = Field(default_factory=list)
+    drafts: list[DraftComment] = Field(default_factory=list)
 
 
 class SessionSummary(BaseModel):

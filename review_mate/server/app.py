@@ -24,10 +24,11 @@ class _NoCacheUI(BaseHTTPMiddleware):
             response.headers["Cache-Control"] = "no-store, must-revalidate"
         return response
 
-from review_mate.host.config import build_provider_from_env
+from review_mate.host.config import build_provider_from_env, build_writer_from_env
 from review_mate.server.routes import build_routes
 from review_mate.session.manager import SessionManager
 from review_mate.workspace.manager import WorkspaceManager
+from review_mate.writeback.service import Writeback
 
 _WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
@@ -40,25 +41,29 @@ def build_manager_from_env():
     """
     provider, resolve_ref = build_provider_from_env()
     if provider is None:
-        return SessionManager(), None, None
+        return SessionManager(), None, None, None
     manager = SessionManager(mr_source=provider, workspace=WorkspaceManager())
-    return manager, resolve_ref, provider
+    writer = build_writer_from_env()
+    writeback = Writeback(manager, writer) if writer is not None else None
+    return manager, resolve_ref, provider, writeback
 
 
 def create_app(manager: SessionManager | None = None,
                static_dir: Path | None = None,
                with_mcp: bool = True,
                resolve_ref=None,
-               provider=None) -> Starlette:
+               provider=None,
+               writeback=None) -> Starlette:
     if manager is None:
-        manager, resolve_ref, provider = build_manager_from_env()
+        manager, resolve_ref, provider, writeback = build_manager_from_env()
     web = static_dir or _WEB_DIR
 
     # the MR-discovery channel — ephemeral, shared by the browser routes and the agent bridge
     from review_mate.lookup.broker import LookupBroker
     broker = LookupBroker()
 
-    routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider, broker=broker)
+    routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider, broker=broker,
+                          writeback=writeback)
 
     mcp_app = None
     if with_mcp:
