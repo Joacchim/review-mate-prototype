@@ -15,6 +15,10 @@ let repoTree = null;                 // all repo paths (lazy-loaded when "show a
 let showAll = localStorage.getItem("rm-showall") === "1";
 const fileContents = {};             // path -> content (cache for non-diff file views)
 let viewingPath = null;              // a non-diff file currently shown (plain view)
+let railFilter = "all";              // index filter: all | context | comment | posted
+let railQuery = "";                  // index text search (file + comment + question)
+let railSearchFocused = false;       // restore search focus after a WS-driven re-render
+let selected = null;                 // {kind:"hl"|"insight", id} shown in the detail overlay
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -555,49 +559,49 @@ function appendCell(tr, kind, ln, text, dataLine, isHl) {
   tr.appendChild(tdLn); tr.appendChild(tdCode);
 }
 
-// --- rail (highlights + cards, access requests) -----------------------------
+// --- rail: a compact, filterable index; the card+editor open in a side overlay ----
+
+// a highlight's place in the reviewer's taxonomy: context-only "card" → drafted "comment" → posted
+function commentState(hl) {
+  const d = state.drafts.find((x) => x.highlight_id === hl.id);
+  if (!d) return "context";
+  return d.status === "posted" ? "posted" : "comment";
+}
+
+function firstLine(s) {
+  const ln = (s || "").split("\n").find((l) => l.trim()) || "";
+  return ln.length > 80 ? ln.slice(0, 79) + "…" : ln;
+}
+
+function railMatch(hl) {
+  if (railFilter !== "all" && commentState(hl) !== railFilter) return false;
+  if (railQuery) {
+    const d = state.drafts.find((x) => x.highlight_id === hl.id);
+    const buf = (hl.id in draftBuffers) ? draftBuffers[hl.id] : (d ? d.body : "");
+    const hay = `${hl.file} ${hl.question || ""} ${buf}`.toLowerCase();
+    if (!hay.includes(railQuery.toLowerCase())) return false;
+  }
+  return true;
+}
 
 function renderRail() {
   const el = $("rail");
   el.innerHTML = "";
-  el.appendChild(h3("Highlights & cards"));
-  if (!state.highlights.length) el.appendChild(empty("highlight a line to ask for context"));
-  state.highlights.forEach((hl, i) => {
-    const card = state.cards.find((c) => c.highlight_id === hl.id);
-    const lr = hl.line_range;
-    const loc = `${hl.file}:${lr.start}${lr.end !== lr.start ? "-" + lr.end : ""}`;
-    const byAgent = hl.author === "agent";
-    const box = document.createElement("div");
-    box.className = "hcard" + (byAgent ? " agent" : "");
-    box.innerHTML =
-      `<span class="num">#${i + 1}</span><button class="x" title="discard">×</button>` +
-      (byAgent ? `<span class="byclaude">Claude flagged</span>` : "") +
-      `<div class="loc">${esc(loc)}</div>` +
-      (hl.question ? `<div class="q">${esc(hl.question)}</div>` : "") +
-      (card ? `<div class="card md">${md(card.body)}</div>`
-            : `<div class="pending">waiting for context…</div>`);
-    box.querySelector(".loc").onclick = () => goToHighlight(hl);
-    box.querySelector(".x").onclick = () => post({ type: "remove_highlight", highlight_id: hl.id });
-    box.appendChild(draftEditor(hl, state.drafts.find((d) => d.highlight_id === hl.id)));
-    el.appendChild(box);
-  });
 
-  renderReviewBar(el);
+  renderReviewBar(el);          // sticky submit + counts
+  renderRailTools(el);          // filter chips + text search
+
+  el.appendChild(h3("Highlights & cards"));
+  const list = document.createElement("div");
+  list.id = "hlist";
+  el.appendChild(list);
+  renderHlist();
 
   // MR-level insights Claude raised on its own (cards anchored to no highlight)
   const insights = state.cards.filter((c) => !c.highlight_id);
   if (insights.length) {
     el.appendChild(h3("Claude's insights"));
-    insights.forEach((c) => {
-      const box = document.createElement("div");
-      box.className = "hcard agent";
-      box.innerHTML =
-        `<button class="x" title="dismiss">×</button>` +
-        `<span class="byclaude">MR-level</span>` +
-        `<div class="card md nopad">${md(c.body)}</div>`;
-      box.querySelector(".x").onclick = () => post({ type: "remove_card", card_id: c.id });
-      el.appendChild(box);
-    });
+    insights.forEach((c) => el.appendChild(insightRow(c)));
   }
 
   const pending = state.access_requests.filter((r) => r.status === "pending");
@@ -613,9 +617,142 @@ function renderRail() {
   });
 
   renderChat(el);
+  renderDetail();
 
-  if (focusedDraft) {  // a re-render (e.g. a WS event) shouldn't steal the draft you're typing
-    const ta = el.querySelector(`textarea.draftbox[data-hl="${focusedDraft}"]`);
+  if (railSearchFocused) {  // a WS-driven re-render shouldn't steal the search box you're typing in
+    const s = $("railsearch");
+    if (s) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
+  }
+}
+
+function renderRailTools(el) {
+  if (!state.highlights.length) return;
+  const wrap = document.createElement("div");
+  wrap.className = "railtools";
+  const seg = document.createElement("div"); seg.className = "seg"; seg.id = "railseg";
+  wrap.appendChild(seg);
+  const inp = document.createElement("input");
+  inp.id = "railsearch"; inp.placeholder = "filter…"; inp.value = railQuery;
+  inp.oninput = (e) => { railQuery = e.target.value; renderHlist(); };  // list-only → input keeps focus
+  inp.onfocus = () => { railSearchFocused = true; };
+  inp.onblur = () => { railSearchFocused = false; };
+  wrap.appendChild(inp);
+  el.appendChild(wrap);
+  fillSeg();
+}
+
+function fillSeg() {
+  const seg = $("railseg"); if (!seg) return;
+  seg.innerHTML = "";
+  const counts = { all: state.highlights.length, context: 0, comment: 0, posted: 0 };
+  state.highlights.forEach((hl) => { counts[commentState(hl)] += 1; });
+  [["all", "All"], ["context", "Cards"], ["comment", "Comments"], ["posted", "Posted"]].forEach(([k, label]) => {
+    seg.appendChild(btn(`${label} ${counts[k]}`, "btn" + (railFilter === k ? " on" : ""),
+      () => { railFilter = k; fillSeg(); renderHlist(); }));
+  });
+}
+
+function renderHlist() {
+  const list = $("hlist"); if (!list) return;
+  list.innerHTML = "";
+  if (!state.highlights.length) { list.appendChild(empty("highlight a line to ask for context")); return; }
+  let shown = 0;
+  state.highlights.forEach((hl, i) => { if (railMatch(hl)) { list.appendChild(hlRow(hl, i + 1)); shown += 1; } });
+  if (!shown) list.appendChild(empty("no highlights match this filter"));
+}
+
+function hlRow(hl, n) {
+  const st = commentState(hl);
+  const card = state.cards.find((c) => c.highlight_id === hl.id);
+  const d = state.drafts.find((x) => x.highlight_id === hl.id);
+  const buf = (hl.id in draftBuffers) ? draftBuffers[hl.id] : (d ? d.body : "");
+  const lr = hl.line_range;
+  const loc = `${hl.file}:${lr.start}${lr.end !== lr.start ? "-" + lr.end : ""}`;
+  const chipLabel = { context: "context", comment: "comment", posted: "✓ posted" }[st];
+  const prev = buf ? firstLine(buf)
+             : st === "context" ? (card ? "context ready" : "waiting for context…")
+             : firstLine(hl.question || "");
+  const active = selected && selected.kind === "hl" && selected.id === hl.id;
+  const row = document.createElement("div");
+  row.className = "hrow" + (active ? " active" : "") + (hl.author === "agent" ? " agent" : "");
+  row.innerHTML =
+    `<button class="x" title="discard">×</button>` +
+    `<div class="top"><span class="num">#${n}</span>` +
+    `<span class="chip ${st}">${chipLabel}</span>` +
+    `<span class="loc">${esc(loc)}</span></div>` +
+    `<div class="prev">${esc(prev)}</div>`;
+  row.onclick = () => { selected = { kind: "hl", id: hl.id }; renderRail(); };
+  row.querySelector(".x").onclick = (e) => { e.stopPropagation(); post({ type: "remove_highlight", highlight_id: hl.id }); };
+  return row;
+}
+
+function insightRow(c) {
+  const active = selected && selected.kind === "insight" && selected.id === c.id;
+  const row = document.createElement("div");
+  row.className = "hrow agent" + (active ? " active" : "");
+  row.innerHTML =
+    `<button class="x" title="dismiss">×</button>` +
+    `<div class="top"><span class="chip insight">MR-level</span></div>` +
+    `<div class="prev">${esc(firstLine(c.body))}</div>`;
+  row.onclick = () => { selected = { kind: "insight", id: c.id }; renderRail(); };
+  row.querySelector(".x").onclick = (e) => { e.stopPropagation(); post({ type: "remove_card", card_id: c.id }); };
+  return row;
+}
+
+// the non-blocking detail overlay: full card + roomy editor for the selected row
+function renderDetail() {
+  const el = $("detail");
+  const close = () => { selected = null; renderRail(); };
+
+  if (selected && selected.kind === "insight") {
+    const c = state.cards.find((x) => x.id === selected.id);
+    if (!c) { selected = null; el.hidden = true; el.innerHTML = ""; return; }
+    el.hidden = false; el.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "dhead";
+    head.innerHTML = `<span class="byclaude">Claude's insight</span>`;
+    head.appendChild(btn("×", "dclose", close));
+    el.appendChild(head);
+    const body = document.createElement("div");
+    body.className = "card md"; body.innerHTML = md(c.body);
+    el.appendChild(body);
+    return;
+  }
+
+  const hl = selected ? state.highlights.find((h) => h.id === selected.id) : null;
+  if (!hl) { selected = null; el.hidden = true; el.innerHTML = ""; return; }
+  const card = state.cards.find((c) => c.highlight_id === hl.id);
+  const draft = state.drafts.find((d) => d.highlight_id === hl.id);
+  const posted = draft && draft.status === "posted";
+  const lr = hl.line_range;
+  const loc = `${hl.file}:${lr.start}${lr.end !== lr.start ? "-" + lr.end : ""}`;
+
+  el.hidden = false; el.innerHTML = "";
+  const head = document.createElement("div");
+  head.className = "dhead";
+  head.innerHTML = `<span class="num">#${state.highlights.indexOf(hl) + 1}</span>` +
+    (hl.author === "agent" ? `<span class="byclaude">Claude flagged</span>` : "") +
+    `<span class="loc" title="jump to code">${esc(loc)}</span>`;
+  head.appendChild(btn("×", "dclose", close));
+  el.appendChild(head);
+  head.querySelector(".loc").onclick = () => goToHighlight(hl);
+
+  if (hl.question) {
+    const q = document.createElement("div");
+    q.className = "q"; q.textContent = hl.question;
+    el.appendChild(q);
+  }
+  // a posted comment drops the now-moot context card — just the comment + its link
+  if (!posted) {
+    const c = document.createElement("div");
+    if (card) { c.className = "card md"; c.innerHTML = md(card.body); }
+    else { c.className = "pending"; c.textContent = "waiting for context…"; }
+    el.appendChild(c);
+  }
+  el.appendChild(draftEditor(hl, draft));
+
+  if (!posted && focusedDraft === hl.id) {  // restore focus across a WS re-render; never steal it
+    const ta = el.querySelector("textarea.draftbox");
     if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
   }
 }
@@ -658,11 +795,10 @@ function renderReviewBar(el) {
   if (!state.drafts.length) return;
   const pending = state.drafts.filter((d) => d.status !== "posted");
   const posted = state.drafts.filter((d) => d.status === "posted");
-  el.appendChild(h3("Your review"));
   const bar = document.createElement("div");
-  bar.className = "reviewbar";
+  bar.className = "reviewbar sticky";
   const lbl = document.createElement("span");
-  lbl.textContent = `${pending.length} pending${posted.length ? ` · ${posted.length} posted` : ""}`;
+  lbl.textContent = `Your review · ${pending.length} pending${posted.length ? ` · ${posted.length} posted` : ""}`;
   bar.appendChild(lbl);
   if (pending.length) bar.appendChild(btn("Submit review", "btn primary", submitReview));
   el.appendChild(bar);
