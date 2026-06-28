@@ -20,8 +20,10 @@ from review_mate.session.state import (
 
 
 class AgentBridge:
-    def __init__(self, manager: SessionManager):
+    def __init__(self, manager: SessionManager, broker=None, provider=None):
         self._m = manager
+        self._broker = broker      # LookupBroker (MR-discovery channel); None in the baseline
+        self._provider = provider  # HostProvider, for search_mrs; None when no host configured
 
     def _actor(self, session_id: str):
         actor = self._m.get(session_id)
@@ -113,6 +115,29 @@ class AgentBridge:
 
     async def post_message(self, session_id: str, body: str) -> CommandResult:
         return await self._actor(session_id).submit(PostMessage(body=body), Origin.AGENT)
+
+    # --- MR lookup (the standing discovery channel) -------------------------
+
+    async def search_mrs(self, query: str) -> list[dict]:
+        """Host search for MRs matching `query` — real, loadable candidates for a lookup answer."""
+        if self._provider is None or not hasattr(self._provider, "search"):
+            return []
+        return await self._provider.search(query)
+
+    async def wait_for_lookup(self, since: int = 0, timeout: float | None = None) -> dict | None:
+        """Wait for the reviewer's next MR-lookup request after `since`; returns {seq, id, query}."""
+        if self._broker is None:
+            return None
+        req = await self._broker.wait_for_request(since=since, timeout=timeout)
+        if req is None:
+            return None
+        return {"seq": req.seq, "id": req.id, "query": req.query}
+
+    def answer_lookup(self, lookup_id: str, answer: str, candidates: list[dict] | None = None) -> dict:
+        """Answer a lookup request: prose + loadable MR candidates the browser will show."""
+        if self._broker is None:
+            raise KeyError(lookup_id)
+        return self._broker.answer(lookup_id, answer, candidates).model_dump(mode="json")
 
     async def wait_for_message(self, session_id: str, since: int = 0,
                                timeout: float | None = None) -> dict | None:

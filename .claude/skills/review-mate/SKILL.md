@@ -25,6 +25,19 @@ reviewer hasn't highlighted (`add_insight`) or post an MR-level observation tied
   `claude mcp add --transport http review-mate http://127.0.0.1:8765/mcp`.
 - Confirm with `list_sessions`; if several, ask the reviewer which session id to attend.
 
+## Before a review is loaded: help find the MR
+
+When you start and no session has an MR yet, the reviewer may be searching for one. Watch the
+**lookup channel** and answer fuzzy queries the deterministic search can't ("the MR roberto was
+doing about caching"):
+
+1. `wait_for_lookup(since=<last_seq>)` — blocks until the reviewer asks, returning `{seq, id, query}`.
+2. Interpret the query; call `search_mrs(query)` for real candidates (and lean on the tracker / your
+   own knowledge to disambiguate *which* one they mean).
+3. `answer_lookup(lookup_id, answer, candidates)` — `answer` is a one-line suggestion ("Probably
+   !573, host cache for VMs — roberto.medina"); `candidates` are loadable MRs shown as buttons.
+4. Loop on `wait_for_lookup` until a session gains an MR, then switch to the highlight loop below.
+
 ## The loop
 
 1. **Pick the session** — `list_sessions`; take the active one (ask if ambiguous). Read it with

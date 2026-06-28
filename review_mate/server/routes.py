@@ -18,7 +18,7 @@ from review_mate.session.manager import SessionManager
 from review_mate.session.state import Origin
 
 
-def build_routes(manager: SessionManager, resolve_ref=None, provider=None) -> list:
+def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broker=None) -> list:
     async def create_session(request: Request) -> JSONResponse:
         body = await _maybe_json(request)
         raw = body.get("ref") if isinstance(body, dict) else None
@@ -51,6 +51,22 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None) -> li
             return JSONResponse(await provider.search(q))
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
+
+    async def open_lookup(request: Request) -> JSONResponse:
+        body = await _maybe_json(request)
+        query = (body.get("query") if isinstance(body, dict) else "") or ""
+        if broker is None or not query.strip():
+            return JSONResponse({"error": "lookup unavailable"}, status_code=400)
+        req = broker.create(query.strip())
+        return JSONResponse({"id": req.id, "seq": req.seq})
+
+    async def poll_lookup(request: Request) -> JSONResponse:
+        if broker is None:
+            return JSONResponse({"error": "lookup unavailable"}, status_code=400)
+        req = await broker.wait_for_answer(request.path_params["id"], timeout=25.0)
+        if req is None:
+            return JSONResponse({"error": "unknown lookup"}, status_code=404)
+        return JSONResponse(req.model_dump(mode="json"))
 
     async def repo_tree(request: Request) -> JSONResponse:
         actor = manager.get(request.path_params["id"])
@@ -131,6 +147,8 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None) -> li
     return [
         Route("/api/queue", review_queue, methods=["GET"]),
         Route("/api/search", search, methods=["GET"]),
+        Route("/api/lookup", open_lookup, methods=["POST"]),
+        Route("/api/lookup/{id}", poll_lookup, methods=["GET"]),
         Route("/api/sessions/{id}/repo-tree", repo_tree, methods=["GET"]),
         Route("/api/sessions/{id}/file", get_file, methods=["GET"]),
         Route("/api/sessions", create_session, methods=["POST"]),

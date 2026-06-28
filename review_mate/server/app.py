@@ -54,13 +54,18 @@ def create_app(manager: SessionManager | None = None,
         manager, resolve_ref, provider = build_manager_from_env()
     web = static_dir or _WEB_DIR
 
-    routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider)
+    # the MR-discovery channel — ephemeral, shared by the browser routes and the agent bridge
+    from review_mate.lookup.broker import LookupBroker
+    broker = LookupBroker()
+
+    routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider, broker=broker)
 
     mcp_app = None
     if with_mcp:
         from review_mate.mcp.bridge import AgentBridge
         from review_mate.mcp.server import build_mcp_server
-        mcp_app = build_mcp_server(AgentBridge(manager), mountable=True).streamable_http_app()
+        bridge = AgentBridge(manager, broker=broker, provider=provider)
+        mcp_app = build_mcp_server(bridge, mountable=True).streamable_http_app()
         routes.append(Mount("/mcp", app=mcp_app))  # the agent seam (shares this manager)
 
     # static UI mounted last so it never shadows /api or /mcp
@@ -78,4 +83,5 @@ def create_app(manager: SessionManager | None = None,
 
     app = Starlette(routes=routes, lifespan=lifespan, middleware=[Middleware(_NoCacheUI)])
     app.state.manager = manager
+    app.state.broker = broker
     return app

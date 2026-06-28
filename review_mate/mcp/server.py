@@ -82,4 +82,23 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
         """Wait for the reviewer's next chat message after `since`; returns {seq, message} or null."""
         return await bridge.wait_for_message(session_id, since=since, timeout=timeout)
 
+    @mcp.tool()
+    async def search_mrs(query: str) -> list[dict]:
+        """Search the host for MRs matching a free-text query; returns loadable candidates
+        [{host, project, iid, title, url}]. Use to back a lookup answer with real MRs."""
+        return await bridge.search_mrs(query)
+
+    @mcp.tool()
+    async def wait_for_lookup(since: int = 0, timeout: float | None = 60.0) -> dict | None:
+        """Wait for the reviewer's next MR-lookup request after `since`; returns {seq, id, query}
+        or null. Use this before a review is loaded to help the reviewer find an MR: interpret the
+        (often fuzzy) query, call search_mrs, then answer_lookup with your pick and candidates."""
+        return await bridge.wait_for_lookup(since=since, timeout=timeout)
+
+    @mcp.tool()
+    def answer_lookup(lookup_id: str, answer: str, candidates: list[dict] | None = None) -> dict:
+        """Answer a lookup request the reviewer is waiting on: `answer` is your prose suggestion;
+        `candidates` are loadable MRs [{host, project, iid, title, url}] shown as buttons."""
+        return bridge.answer_lookup(lookup_id, answer, candidates)
+
     return mcp

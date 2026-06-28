@@ -176,6 +176,14 @@ async function renderSuggestions(query) {
   const land = document.createElement("div");
   land.className = "land";
   land.innerHTML = `<h2>Search results</h2><p>matches for “${esc(query)}”</p>`;
+  // ask-Claude affordance: route the (often fuzzy) query to the agent's lookup channel
+  const askRow = document.createElement("div");
+  askRow.className = "askrow";
+  askRow.appendChild(btn("✦ Ask Claude to find it", "btn", () => askClaude(query, claudePanel)));
+  land.appendChild(askRow);
+  const claudePanel = document.createElement("div");
+  claudePanel.className = "claudepanel";
+  land.appendChild(claudePanel);
   const list = document.createElement("div");
   list.appendChild(empty("searching…"));
   land.appendChild(list);
@@ -195,6 +203,44 @@ async function renderSuggestions(query) {
     b.innerHTML = `<div class="t">${esc(it.title)}</div><div class="m">${esc(it.project)} !${it.iid}</div>`;
     b.onclick = () => loadRef(`${it.project}!${it.iid}`);
     list.appendChild(b);
+  });
+}
+
+// route a fuzzy query to Claude's lookup channel; render its answer + loadable candidates
+async function askClaude(query, panel) {
+  panel.innerHTML = "";
+  panel.appendChild(empty("asking Claude…"));
+  let id = null;
+  try {
+    const r = await fetch("/api/lookup", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    if (!r.ok) { panel.innerHTML = ""; panel.appendChild(empty("lookup unavailable")); return; }
+    id = (await r.json()).id;
+  } catch (e) { panel.innerHTML = ""; panel.appendChild(empty("lookup failed")); return; }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if ($("ref").value.trim() !== query) return;  // reviewer moved on
+    let req = null;
+    try { req = await fetch(`/api/lookup/${id}`).then((r) => r.json()); } catch (e) {}
+    if (req && req.status === "answered") { renderClaudeAnswer(req, panel); return; }
+  }
+  panel.innerHTML = "";
+  panel.appendChild(empty("Claude didn't respond — is the agent attached and watching for lookups?"));
+}
+
+function renderClaudeAnswer(req, panel) {
+  panel.innerHTML = "";
+  const ans = document.createElement("div");
+  ans.className = "claudeans";
+  ans.innerHTML = `<div class="byclaude">Claude suggests</div><div class="md">${md(req.answer || "")}</div>`;
+  panel.appendChild(ans);
+  (req.candidates || []).forEach((it) => {
+    const b = document.createElement("button");
+    b.className = "qitem";
+    b.innerHTML = `<div class="t">${esc(it.title)}</div><div class="m">${esc(it.project)} !${it.iid}</div>`;
+    b.onclick = () => loadRef(`${it.project}!${it.iid}`);
+    panel.appendChild(b);
   });
 }
 
