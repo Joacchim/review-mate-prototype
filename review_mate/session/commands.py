@@ -83,13 +83,18 @@ class PostMessage(BaseModel):
     body: str
 
 
+class ClearChat(BaseModel):
+    type: Literal["clear_chat"] = "clear_chat"
+
+
 class EndSession(BaseModel):
     type: Literal["end_session"] = "end_session"
 
 
 Command = Union[
     AddHighlight, RemoveHighlight, EmitCard, UpdateCard,
-    RequestAccess, DecideAccess, ApplyMRMetadata, ApplyFiles, ApplyThread, PostMessage, EndSession,
+    RequestAccess, DecideAccess, ApplyMRMetadata, ApplyFiles, ApplyThread,
+    PostMessage, ClearChat, EndSession,
 ]
 
 
@@ -117,6 +122,7 @@ AUTHORITY: dict[str, set[Origin]] = {
     "update_card": {Origin.AGENT},
     "request_access": {Origin.AGENT},
     "post_message": {Origin.BROWSER, Origin.AGENT},  # both sides of the chat
+    "clear_chat": {Origin.BROWSER},
     "apply_mr_metadata": {Origin.SYSTEM},
     "apply_files": {Origin.SYSTEM},
     "apply_thread": {Origin.SYSTEM},
@@ -193,6 +199,9 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
         role = "user" if origin is Origin.BROWSER else "agent"
         msg = ChatMessage(id=_id(), role=role, body=command.body, created_at=ts)
         return emit(ev.MessagePosted, message=msg)
+
+    if isinstance(command, ClearChat):
+        return emit(ev.ChatCleared)
 
     if isinstance(command, EndSession):
         return emit(ev.SessionEnded)

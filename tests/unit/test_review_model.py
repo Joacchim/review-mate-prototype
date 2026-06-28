@@ -31,6 +31,7 @@ def _sample(cmd_type: str):
         "apply_files": cmd.ApplyFiles(files=[]),
         "apply_thread": cmd.ApplyThread(thread=ReviewThread(id="t")),
         "post_message": cmd.PostMessage(body="hi"),
+        "clear_chat": cmd.ClearChat(),
     }[cmd_type]
 
 

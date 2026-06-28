@@ -51,6 +51,8 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
             s.threads.append(event.thread)
     elif isinstance(event, ev.MessagePosted):
         s.messages.append(event.message)
+    elif isinstance(event, ev.ChatCleared):
+        s.messages = []
     elif isinstance(event, ev.SessionEnded):
         s.status = SessionStatus.ENDED
     else:  # pragma: no cover - exhaustive over the Event union

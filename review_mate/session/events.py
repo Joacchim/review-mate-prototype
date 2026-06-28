@@ -81,6 +81,10 @@ class MessagePosted(_EventBase):
     message: ChatMessage
 
 
+class ChatCleared(_EventBase):
+    type: Literal["chat_cleared"] = "chat_cleared"
+
+
 class SessionEnded(_EventBase):
     type: Literal["session_ended"] = "session_ended"
 
@@ -91,7 +95,7 @@ Event = Annotated[
         HighlightAdded, HighlightRemoved,
         CardEmitted, CardUpdated,
         AccessRequested, AccessDecided,
-        ThreadApplied, MessagePosted, SessionEnded,
+        ThreadApplied, MessagePosted, ChatCleared, SessionEnded,
     ],
     Field(discriminator="type"),
 ]

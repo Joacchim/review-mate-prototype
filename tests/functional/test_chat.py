@@ -43,3 +43,17 @@ def test_post_message_authority(setup):
     assert isinstance(handle(s, PostMessage(body="x"), Origin.BROWSER), list)
     assert isinstance(handle(s, PostMessage(body="x"), Origin.AGENT), list)
     assert isinstance(handle(s, PostMessage(body="x"), Origin.SYSTEM), Rejection)
+
+
+def test_clear_chat_empties_messages_browser_only():
+    from review_mate.session.commands import ClearChat, handle, Rejection
+    from review_mate.session.reducer import fold
+    from review_mate.session.state import SessionState
+    s = SessionState(id="s", created_at="t")
+    s = fold(s, handle(s, PostMessage(body="hi"), Origin.BROWSER))
+    s = fold(s, handle(s, PostMessage(body="hey"), Origin.AGENT))
+    assert len(s.messages) == 2
+    # only the browser may clear the thread
+    assert isinstance(handle(s, ClearChat(), Origin.AGENT), Rejection)
+    s = fold(s, handle(s, ClearChat(), Origin.BROWSER))
+    assert s.messages == []

@@ -428,7 +428,16 @@ function renderRail() {
 function renderChat(el) {
   const wrap = document.createElement("div");
   wrap.className = "chat";
-  wrap.appendChild(h3("Chat with Claude"));
+  const head = document.createElement("div");
+  head.className = "chathdr";
+  head.appendChild(h3("Chat with Claude"));
+  if (state.messages.length) {
+    const clear = btn("clear", "btn ghost", () => {
+      if (confirm("Clear the chat thread?")) post({ type: "clear_chat" });
+    });
+    head.appendChild(clear);
+  }
+  wrap.appendChild(head);
   const msgs = document.createElement("div");
   msgs.className = "msgs";
   if (!state.messages.length) msgs.appendChild(empty('ask about a card (e.g. "expand on #2") or anything in the diff'));
