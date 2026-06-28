@@ -71,13 +71,31 @@ async function showLanding() {
   land.className = "land";
   land.innerHTML = `<h2>Pick a merge request</h2><p>Your review queue${
     items.length ? "" : " is empty here — paste an MR reference in the top bar (URL or group/proj!iid)."}</p>`;
-  items.forEach((it) => {
-    const b = document.createElement("button");
-    b.className = "qitem";
-    b.innerHTML = `<div class="t">${esc(it.title)}</div><div class="m">${esc(it.project)} !${it.iid}</div>`;
-    b.onclick = () => loadRef(`${it.project}!${it.iid}`);
-    land.appendChild(b);
-  });
+  if (items.length) {
+    const filter = document.createElement("input");
+    filter.className = "qfilter";
+    filter.placeholder = "filter the queue…";
+    const list = document.createElement("div");
+    const matches = (it, q) =>
+      !q || `${it.title} ${it.project} !${it.iid}`.toLowerCase().includes(q);
+    const renderList = () => {
+      const q = filter.value.trim().toLowerCase();
+      list.innerHTML = "";
+      const shown = items.filter((it) => matches(it, q));
+      if (!shown.length) { list.appendChild(empty("no queue entries match")); return; }
+      shown.forEach((it) => {
+        const b = document.createElement("button");
+        b.className = "qitem";
+        b.innerHTML = `<div class="t">${esc(it.title)}</div><div class="m">${esc(it.project)} !${it.iid}</div>`;
+        b.onclick = () => loadRef(`${it.project}!${it.iid}`);
+        list.appendChild(b);
+      });
+    };
+    filter.oninput = renderList;
+    land.appendChild(filter);
+    land.appendChild(list);
+    renderList();
+  }
   const d = $("diff"); d.innerHTML = ""; d.appendChild(land);
   $("files").innerHTML = ""; $("rail").innerHTML = "";
 }
@@ -91,7 +109,13 @@ async function loadRef(ref) {
       body: JSON.stringify({ ref }),
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) { setStatus("✕ " + (data.error || `load failed (${r.status})`)); return; }
+    if (!r.ok) {
+      // exact reference didn't resolve — fall back to flexible search suggestions
+      setStatus("");
+      if (ref) renderSuggestions(ref);
+      else setStatus("✕ " + (data.error || `load failed (${r.status})`));
+      return;
+    }
     location.search = `?s=${data.id}`;  // reload cleanly into the loaded session
   } catch (e) {
     setStatus("✕ " + e);
@@ -135,6 +159,43 @@ function wireToolbar() {
   };
   $("load").onclick = () => { const v = $("ref").value.trim(); loadRef(v); };
   $("ref").addEventListener("keydown", (e) => { if (e.key === "Enter") $("load").click(); });
+  // live suggestions while typing — only on the landing page, so we never hijack a loaded diff
+  $("ref").addEventListener("input", (e) => {
+    if (SID) return;
+    const v = e.target.value.trim();
+    clearTimeout(suggestTimer);
+    if (v.length < 2) { showLanding(); return; }
+    suggestTimer = setTimeout(() => { if (!SID && $("ref").value.trim() === v) renderSuggestions(v); }, 250);
+  });
+}
+
+let suggestTimer = null;
+async function renderSuggestions(query) {
+  const d = $("diff");
+  d.innerHTML = "";
+  const land = document.createElement("div");
+  land.className = "land";
+  land.innerHTML = `<h2>Search results</h2><p>matches for “${esc(query)}”</p>`;
+  const list = document.createElement("div");
+  list.appendChild(empty("searching…"));
+  land.appendChild(list);
+  d.appendChild(land);
+  if (!SID) { $("files").innerHTML = ""; $("rail").innerHTML = ""; }
+  let items = [];
+  try { items = await fetch(`/api/search?q=${encodeURIComponent(query)}`).then((r) => r.json()); } catch (e) {}
+  if (items && items.error) items = [];
+  if ($("ref").value.trim() !== query) return;  // box moved on while we fetched
+  list.innerHTML = "";
+  if (!items.length) {
+    list.appendChild(empty("no matches — try another term, or paste a full MR URL")); return;
+  }
+  items.forEach((it) => {
+    const b = document.createElement("button");
+    b.className = "qitem";
+    b.innerHTML = `<div class="t">${esc(it.title)}</div><div class="m">${esc(it.project)} !${it.iid}</div>`;
+    b.onclick = () => loadRef(`${it.project}!${it.iid}`);
+    list.appendChild(b);
+  });
 }
 
 function render() {

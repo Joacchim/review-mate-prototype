@@ -75,6 +75,27 @@ async def test_end_session_via_http(client):  # AC-5
     assert (await client.get(f"/api/sessions/{sid}")).json()["status"] == "ended"
 
 
+async def test_search_no_provider_returns_empty(client):
+    r = await client.get("/api/search?q=anything")
+    assert r.status_code == 200 and r.json() == []
+
+
+async def test_search_routes_to_provider(tmp_path):
+    class StubProvider:
+        async def search(self, q):
+            return [{"host": "gitlab", "project": "g/p", "iid": 9, "title": f"hit:{q}", "url": "u"}]
+
+    manager = SessionManager(root=tmp_path / "sessions")
+    app = create_app(manager=manager, provider=StubProvider())
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        empty = await c.get("/api/search?q=")            # blank query → no host call
+        assert empty.json() == []
+        r = await c.get("/api/search?q=cache")
+        assert r.json()[0]["title"] == "hit:cache"
+    await manager.shutdown()
+
+
 # WS uses Starlette's sync TestClient (httpx has no WS client)
 
 def test_ws_stream_delivers_live_events(tmp_path):  # AC-3 over WS

@@ -103,6 +103,50 @@ class GitLabProvider:
                                   "title": it.get("title", ""), "url": it.get("web_url", "")})
         return items
 
+    async def search(self, query: str, limit: int = 15) -> list[dict]:
+        """Suggest opened MRs matching a free-text query — the flexible lookup box's source.
+
+        Global MR text search (title/description) plus, when the query reads like a project path,
+        that project's opened MRs. Returns display items: {host, project, iid, title, url}.
+        """
+        query = (query or "").strip()
+        if not query:
+            return []
+        seen: set = set()
+        items: list[dict] = []
+
+        def add(it: dict) -> None:
+            ref = parse_reference(it.get("web_url", ""), self.host)
+            if ref and (ref.project, ref.iid) not in seen:
+                seen.add((ref.project, ref.iid))
+                items.append({"host": ref.host, "project": ref.project, "iid": ref.iid,
+                              "title": it.get("title", ""), "url": it.get("web_url", "")})
+
+        try:
+            rows = await self._get("/search", params={"scope": "merge_requests",
+                                                      "search": query, "state": "opened"})
+            for it in rows:
+                add(it)
+        except httpx.HTTPError:
+            pass
+
+        if "/" in query and len(items) < limit:
+            try:
+                projects = await self._get("/projects", params={"search": query.rsplit("/", 1)[-1],
+                                                               "simple": "true", "per_page": 5})
+                for p in projects:
+                    pid = quote(p.get("path_with_namespace", ""), safe="")
+                    if not pid:
+                        continue
+                    mrs = await self._get(f"/projects/{pid}/merge_requests",
+                                          params={"state": "opened", "per_page": 5})
+                    for it in mrs:
+                        add(it)
+            except httpx.HTTPError:
+                pass
+
+        return items[:limit]
+
     async def issue_related_mrs(self, project: str, issue_iid: int) -> list[MRRef]:
         items = await self._get(
             f"/projects/{quote(project, safe='')}/issues/{issue_iid}/related_merge_requests"

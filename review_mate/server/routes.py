@@ -43,6 +43,15 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None) -> li
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
 
+    async def search(request: Request) -> JSONResponse:
+        q = request.query_params.get("q", "").strip()
+        if provider is None or not q or not hasattr(provider, "search"):
+            return JSONResponse([])  # no host / empty query → no suggestions
+        try:
+            return JSONResponse(await provider.search(q))
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+
     async def repo_tree(request: Request) -> JSONResponse:
         actor = manager.get(request.path_params["id"])
         if actor is None:
@@ -121,6 +130,7 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None) -> li
 
     return [
         Route("/api/queue", review_queue, methods=["GET"]),
+        Route("/api/search", search, methods=["GET"]),
         Route("/api/sessions/{id}/repo-tree", repo_tree, methods=["GET"]),
         Route("/api/sessions/{id}/file", get_file, methods=["GET"]),
         Route("/api/sessions", create_session, methods=["POST"]),

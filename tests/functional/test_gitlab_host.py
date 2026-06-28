@@ -23,8 +23,14 @@ QUEUE = [{"web_url": "https://gitlab/group/proj/-/merge_requests/42"},
          {"web_url": "https://gitlab/group/proj/-/merge_requests/43"}]
 
 
+SEARCH_HITS = [{"title": "fix cache", "web_url": "https://gitlab/group/proj/-/merge_requests/77"}]
+PROJECTS = [{"path_with_namespace": "group/proj"}]
+
+
 def _handler(request: httpx.Request) -> httpx.Response:
     p = request.url.path
+    if p.endswith("/search"):
+        return httpx.Response(200, json=SEARCH_HITS)
     if p.endswith("/changes"):
         return httpx.Response(200, json=CHANGES)
     if p.endswith("/discussions"):
@@ -35,6 +41,8 @@ def _handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=QUEUE)
     if p.endswith("/merge_requests"):
         return httpx.Response(200, json=QUEUE)
+    if p.endswith("/projects"):
+        return httpx.Response(200, json=PROJECTS)
     if "/projects/" in p:
         return httpx.Response(200, json=PROJECT)
     return httpx.Response(404, json={})
@@ -72,6 +80,24 @@ async def test_review_queue(provider):  # AC-5
 async def test_issue_related_mrs(provider):  # AC-6
     refs = await provider.issue_related_mrs("group/proj", 5)
     assert [r.iid for r in refs] == [42, 43]
+
+
+async def test_search_returns_display_items(provider):
+    items = await provider.search("cache")
+    assert items[0] == {"host": "gitlab", "project": "group/proj", "iid": 77,
+                        "title": "fix cache", "url": "https://gitlab/group/proj/-/merge_requests/77"}
+
+
+async def test_search_empty_query_short_circuits(provider):
+    assert await provider.search("   ") == []
+
+
+async def test_search_dedupes_path_query_with_global_hits(provider):
+    # a slash query also pulls the project's opened MRs; the dupe (proj!77) collapses
+    items = await provider.search("group/proj")
+    keys = [(it["project"], it["iid"]) for it in items]
+    assert len(keys) == len(set(keys))
+    assert ("group/proj", 77) in keys
 
 
 def test_capabilities_cover_review_model():  # AC-7
