@@ -168,9 +168,11 @@ async function loadRef(ref) {
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
-      // exact reference didn't resolve — fall back to flexible search suggestions
       setStatus("");
-      if (ref) renderSuggestions(ref);
+      // 400 = the reference didn't parse → fall back to flexible search suggestions.
+      // Anything else (e.g. 502, a GitLab/auth failure) is a real error — surface it
+      // instead of masking it as "no match".
+      if (r.status === 400 && ref) renderSuggestions(ref);
       else setStatus("✕ " + (data.error || `load failed (${r.status})`));
       return;
     }
