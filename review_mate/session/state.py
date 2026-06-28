@@ -166,9 +166,15 @@ class SessionState(BaseModel):
 
 
 class SessionSummary(BaseModel):
-    """A light listing entry (no document bodies)."""
+    """A light listing entry (no document bodies) — enough for the queue page's session list."""
     id: str
     status: SessionStatus
     created_at: str
     seq: int
     title: str | None = None
+    project: str | None = None
+    iid: int | None = None
+    highlights: int = 0
+    cards: int = 0
+    drafts_pending: int = 0
+    drafts_posted: int = 0

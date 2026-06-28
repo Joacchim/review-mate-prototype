@@ -43,8 +43,10 @@ doing about caching"):
 
 ## The loop
 
-1. **Pick the session** — `list_sessions`; take the active one (ask if ambiguous). Read it with
-   `get_session` and the diff with `get_diff`. Note `seq` as your starting offset.
+1. **Pick the session** — `list_sessions`; take the active one (ask if ambiguous). The reviewer
+   curates sessions from the queue page (resume or close them), so a clean setup usually has one
+   active session to attend; several means several are genuinely open. Read it with `get_session`
+   and the diff with `get_diff`. Note `seq` as your starting offset.
 2. **Wait** — call `wait_for_highlight(session_id, since=<last_seq>)`. It blocks until the reviewer
    highlights a line, returning `{seq, highlight}`. Advance your offset to `seq`.
 3. **Resolve context** for `highlight` (strategy below).

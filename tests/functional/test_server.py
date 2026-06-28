@@ -96,6 +96,39 @@ async def test_search_routes_to_provider(tmp_path):
     await manager.shutdown()
 
 
+async def test_session_list_carries_mr_and_progress_counts(tmp_path):
+    from review_mate.session.commands import AddHighlight, ApplyMRMetadata, EmitCard, SaveDraft
+    from review_mate.session.state import LineRange, MRMetadata, Origin, Side
+
+    manager = SessionManager(root=tmp_path / "sessions")
+    app = create_app(manager=manager)
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        sid = (await c.post("/api/sessions")).json()["id"]
+        actor = manager.get(sid)
+        await actor.submit(ApplyMRMetadata(mr=MRMetadata(
+            host="gitlab", project="g/p", iid=7, title="T", source_branch="x", target_branch="m",
+            sha="s", author="a", url="u")), Origin.SYSTEM)
+        await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+                                        line_range=LineRange(start=1, end=1)), Origin.BROWSER)
+        hid = actor.snapshot().highlights[0].id
+        await actor.submit(EmitCard(highlight_id=hid, body="ctx"), Origin.AGENT)
+        await actor.submit(SaveDraft(highlight_id=hid, body="nit"), Origin.BROWSER)
+
+        listed = (await c.get("/api/sessions")).json()
+        row = next(s for s in listed if s["id"] == sid)
+        assert row["project"] == "g/p" and row["iid"] == 7 and row["title"] == "T"
+        assert row["highlights"] == 1 and row["cards"] == 1
+        assert row["drafts_pending"] == 1 and row["drafts_posted"] == 0
+
+        # closing the session ends it → drops from the active set the hub shows
+        await c.delete(f"/api/sessions/{sid}")
+        after = (await c.get("/api/sessions")).json()
+        active = [s for s in after if s["status"] == "active"]
+        assert sid not in [s["id"] for s in active]
+    await manager.shutdown()
+
+
 async def test_submit_review_unavailable_without_writer(client):
     sid = (await client.post("/api/sessions")).json()["id"]
     r = await client.post(f"/api/sessions/{sid}/submit-review")

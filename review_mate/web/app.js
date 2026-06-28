@@ -63,43 +63,99 @@ async function boot() {
 
 function setStatus(msg) { $("status").textContent = msg || ""; }
 
+// the queue page doubles as the session hub: resume or close an in-flight review
+function renderOpenSessions(land, sessions) {
+  if (!sessions.length) return;
+  const h = document.createElement("h2");
+  h.textContent = "Open reviews";
+  land.appendChild(h);
+  const list = document.createElement("div");
+  list.style.margin = "0 0 26px";
+  sessions
+    .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
+    .forEach((s) => {
+      const loc = s.project ? `${esc(s.project)} !${s.iid}` : "(no MR loaded)";
+      const bits = [];
+      if (s.highlights) bits.push(`${s.highlights} highlight${s.highlights > 1 ? "s" : ""}`);
+      if (s.cards) bits.push(`${s.cards} card${s.cards > 1 ? "s" : ""}`);
+      if (s.drafts_pending) bits.push(`${s.drafts_pending} draft${s.drafts_pending > 1 ? "s" : ""}`);
+      if (s.drafts_posted) bits.push(`${s.drafts_posted} posted`);
+      const row = document.createElement("div");
+      row.className = "sitem";
+      row.innerHTML =
+        `<button class="x" title="close review">×</button>` +
+        `<div class="t">${esc(s.title || "(untitled review)")}</div>` +
+        `<div class="m">${loc}${bits.length ? " · " + bits.join(" · ") : ""}</div>`;
+      row.onclick = () => { location.search = `?s=${s.id}`; };
+      row.querySelector(".x").onclick = (e) => {
+        e.stopPropagation();
+        closeSession(s.id, s.drafts_pending);
+      };
+      list.appendChild(row);
+    });
+  land.appendChild(list);
+}
+
+async function closeSession(id, pending) {
+  if (pending && !confirm(`This review has ${pending} unsubmitted comment(s). Close it anyway?`)) return;
+  try { await fetch(`/api/sessions/${id}`, { method: "DELETE" }); } catch (e) {}
+  showLanding();  // refresh the hub
+}
+
 async function showLanding() {
   $("mr").textContent = "—";
-  $("diff").innerHTML = '<div class="land"><p class="empty">loading your review queue…</p></div>';
+  $("files").innerHTML = ""; $("rail").innerHTML = "";
+  const land = document.createElement("div");
+  land.className = "land";
+  const d = $("diff"); d.innerHTML = ""; d.appendChild(land);
+
+  // open sessions first — local and fast; never block them behind the (possibly slow) host queue
+  let sessions = [];
+  try { sessions = await fetch("/api/sessions").then((r) => r.json()); } catch (e) {}
+  if (!Array.isArray(sessions)) sessions = [];
+  renderOpenSessions(land, sessions.filter((s) => s.status === "active"));
+
+  const head = document.createElement("div");
+  head.innerHTML = `<h2>Pick a merge request</h2>`;
+  land.appendChild(head);
+  const queueBox = document.createElement("div");
+  queueBox.appendChild(empty("loading your review queue…"));
+  land.appendChild(queueBox);
+
   let items = [];
   try { items = await fetch("/api/queue").then((r) => r.json()); } catch (e) {}
   if (items && items.error) items = [];
-  const land = document.createElement("div");
-  land.className = "land";
-  land.innerHTML = `<h2>Pick a merge request</h2><p>Your review queue${
-    items.length ? "" : " is empty here — paste an MR reference in the top bar (URL or group/proj!iid)."}</p>`;
-  if (items.length) {
-    const filter = document.createElement("input");
-    filter.className = "qfilter";
-    filter.placeholder = "filter the queue…";
-    const list = document.createElement("div");
-    const matches = (it, q) =>
-      !q || `${it.title} ${it.project} !${it.iid}`.toLowerCase().includes(q);
-    const renderList = () => {
-      const q = filter.value.trim().toLowerCase();
-      list.innerHTML = "";
-      const shown = items.filter((it) => matches(it, q));
-      if (!shown.length) { list.appendChild(empty("no queue entries match")); return; }
-      shown.forEach((it) => {
-        const b = document.createElement("button");
-        b.className = "qitem";
-        b.innerHTML = `<div class="t">${esc(it.title)}</div><div class="m">${esc(it.project)} !${it.iid}</div>`;
-        b.onclick = () => loadRef(`${it.project}!${it.iid}`);
-        list.appendChild(b);
-      });
-    };
-    filter.oninput = renderList;
-    land.appendChild(filter);
-    land.appendChild(list);
-    renderList();
+  renderQueue(queueBox, items);
+}
+
+function renderQueue(box, items) {
+  box.innerHTML = "";
+  if (!items.length) {
+    box.appendChild(empty("your review queue is empty here — paste an MR reference in the top bar (URL or group/proj!iid)."));
+    return;
   }
-  const d = $("diff"); d.innerHTML = ""; d.appendChild(land);
-  $("files").innerHTML = ""; $("rail").innerHTML = "";
+  const filter = document.createElement("input");
+  filter.className = "qfilter";
+  filter.placeholder = "filter the queue…";
+  const list = document.createElement("div");
+  const matches = (it, q) => !q || `${it.title} ${it.project} !${it.iid}`.toLowerCase().includes(q);
+  const renderList = () => {
+    const q = filter.value.trim().toLowerCase();
+    list.innerHTML = "";
+    const shown = items.filter((it) => matches(it, q));
+    if (!shown.length) { list.appendChild(empty("no queue entries match")); return; }
+    shown.forEach((it) => {
+      const b = document.createElement("button");
+      b.className = "qitem";
+      b.innerHTML = `<div class="t">${esc(it.title)}</div><div class="m">${esc(it.project)} !${it.iid}</div>`;
+      b.onclick = () => loadRef(`${it.project}!${it.iid}`);
+      list.appendChild(b);
+    });
+  };
+  filter.oninput = renderList;
+  box.appendChild(filter);
+  box.appendChild(list);
+  renderList();
 }
 
 async function loadRef(ref) {
@@ -150,6 +206,8 @@ async function post(command) {
 // --- toolbar ----------------------------------------------------------------
 
 function wireToolbar() {
+  const brand = document.querySelector("header .brand");
+  if (brand) { brand.style.cursor = "pointer"; brand.title = "back to the queue"; brand.onclick = () => { location.href = "/"; }; }
   $("t-left").onclick = () => $("shell").classList.toggle("hl");
   $("t-right").onclick = () => $("shell").classList.toggle("hr");
   $("t-split").classList.toggle("on", splitMode);

@@ -25,7 +25,7 @@ from review_mate.session.commands import (
 from review_mate.session.eventlog import EventLog
 from review_mate.session.reducer import fold
 from review_mate.session.state import (
-    Origin, SessionState, SessionStatus, SessionSummary,
+    DraftStatus, Origin, SessionState, SessionStatus, SessionSummary,
 )
 
 
@@ -126,8 +126,15 @@ class SessionManager:
         out: list[SessionSummary] = []
         for actor in self._actors.values():
             s = actor.snapshot()
-            out.append(SessionSummary(id=s.id, status=s.status, created_at=s.created_at,
-                                      seq=s.seq, title=s.mr.title if s.mr else None))
+            out.append(SessionSummary(
+                id=s.id, status=s.status, created_at=s.created_at, seq=s.seq,
+                title=s.mr.title if s.mr else None,
+                project=s.mr.project if s.mr else None,
+                iid=s.mr.iid if s.mr else None,
+                highlights=len(s.highlights), cards=len(s.cards),
+                drafts_pending=sum(1 for d in s.drafts if d.status is DraftStatus.DRAFT),
+                drafts_posted=sum(1 for d in s.drafts if d.status is DraftStatus.POSTED),
+            ))
         return out
 
     # --- meta --------------------------------------------------------------
