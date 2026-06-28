@@ -187,6 +187,14 @@ class GitLabWriter:
             json={"body": body, "position": _position(position)},
         )
 
+    async def post_mr_comment(self, ref: MRRef, body: str) -> dict:
+        """An MR-level note (a review summary) — a general comment with no diff position."""
+        self._require("mr_comments")
+        return await self._post(
+            f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}/notes",
+            json={"body": body},
+        )
+
     async def reply(self, ref: MRRef, discussion_id: str, body: str) -> dict:
         self._require("threads")
         return await self._post(

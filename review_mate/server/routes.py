@@ -131,7 +131,8 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         for d in pending:
             try:
                 res = await writeback.post_comment(snap.id, d.highlight_id, d.body, ref)
-                note = (res.get("notes") or [{}])[0] if isinstance(res, dict) else {}
+                # anchored comments return a discussion {notes:[…]}; an MR-level note returns the note
+                note = (res.get("notes") or [res])[0] if isinstance(res, dict) else {}
                 url = (f"{snap.mr.url}#note_{note.get('id')}"
                        if note.get("id") and snap.mr.url else None)
                 await actor.submit(MarkDraftPosted(highlight_id=d.highlight_id, url=url),

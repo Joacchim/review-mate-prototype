@@ -18,7 +18,8 @@ let viewingPath = null;              // a non-diff file currently shown (plain v
 let railFilter = "all";              // index filter: all | context | comment | posted
 let railQuery = "";                  // index text search (file + comment + question)
 let railSearchFocused = false;       // restore search focus after a WS-driven re-render
-let selected = null;                 // {kind:"hl"|"insight", id} shown in the detail overlay
+let selected = null;                 // {kind:"hl"|"insight"|"mr", id} shown in the detail overlay
+const MR_KEY = "__mr__";             // draftBuffers/focus key for the (anchorless) MR-level comment
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -589,6 +590,7 @@ function renderRail() {
   el.innerHTML = "";
 
   renderReviewBar(el);          // sticky submit + counts
+  renderMrRow(el);              // the MR-level review comment, pinned above the index
   renderRailTools(el);          // filter chips + text search
 
   el.appendChild(h3("Highlights & cards"));
@@ -699,10 +701,51 @@ function insightRow(c) {
   return row;
 }
 
+// the reviewer's MR-level comment — a single pinned row that opens the same detail editor
+function renderMrRow(el) {
+  const d = mrDraft();
+  const buf = (MR_KEY in draftBuffers) ? draftBuffers[MR_KEY] : (d ? d.body : "");
+  const posted = d && d.status === "posted";
+  const active = selected && selected.kind === "mr";
+  const chip = posted ? `<span class="chip posted">✓ posted</span>`
+             : d ? `<span class="chip comment">comment</span>`
+             : `<span class="chip">MR-level</span>`;
+  const prev = buf ? firstLine(buf) : "⊕ write a review summary";
+  const row = document.createElement("div");
+  row.className = "hrow mr" + (active ? " active" : "");
+  row.innerHTML =
+    (d && !posted ? `<button class="x" title="discard">×</button>` : "") +
+    `<div class="top">${chip}<span class="loc">whole MR</span></div>` +
+    `<div class="prev">${esc(prev)}</div>`;
+  row.onclick = () => { selected = { kind: "mr" }; renderRail(); };
+  if (d && !posted) row.querySelector(".x").onclick = (e) => {
+    e.stopPropagation(); delete draftBuffers[MR_KEY]; post({ type: "remove_draft", highlight_id: null });
+  };
+  el.appendChild(row);
+}
+
+function mrDraft() { return state.drafts.find((d) => !d.highlight_id); }  // the MR-level comment, if any
+
 // the non-blocking detail overlay: full card + roomy editor for the selected row
 function renderDetail() {
   const el = $("detail");
   const close = () => { selected = null; renderRail(); };
+
+  if (selected && selected.kind === "mr") {
+    const d = mrDraft();
+    el.hidden = false; el.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "dhead";
+    head.innerHTML = `<span class="chip">MR-level</span><span class="dlabel">review comment — whole MR</span>`;
+    head.appendChild(btn("×", "dclose", close));
+    el.appendChild(head);
+    el.appendChild(draftEditor(MR_KEY, null, d));
+    if (!(d && d.status === "posted") && focusedDraft === MR_KEY) {
+      const ta = el.querySelector("textarea.draftbox");
+      if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    }
+    return;
+  }
 
   if (selected && selected.kind === "insight") {
     const c = state.cards.find((x) => x.id === selected.id);
@@ -749,7 +792,7 @@ function renderDetail() {
     else { c.className = "pending"; c.textContent = "waiting for context…"; }
     el.appendChild(c);
   }
-  el.appendChild(draftEditor(hl, draft));
+  el.appendChild(draftEditor(hl.id, hl.id, draft));
 
   if (!posted && focusedDraft === hl.id) {  // restore focus across a WS re-render; never steal it
     const ta = el.querySelector("textarea.draftbox");
@@ -757,8 +800,9 @@ function renderDetail() {
   }
 }
 
-// a reviewer's review-comment draft for one highlight (their words; the card is never posted)
-function draftEditor(hl, draft) {
+// a reviewer's review-comment draft (their words; the card is never posted). `anchor` is the
+// highlight id, or null for the MR-level comment; `key` keys the local buffer + focus tracking.
+function draftEditor(key, anchor, draft) {
   const wrap = document.createElement("div");
   wrap.className = "draft";
   if (draft && draft.status === "posted") {
@@ -768,23 +812,24 @@ function draftEditor(hl, draft) {
   }
   const ta = document.createElement("textarea");
   ta.className = "draftbox";
-  ta.dataset.hl = hl.id;
-  ta.placeholder = "prepare a review comment — your words (Claude's card is context, not posted)";
-  ta.value = (hl.id in draftBuffers) ? draftBuffers[hl.id] : (draft ? draft.body : "");
-  ta.oninput = (e) => { draftBuffers[hl.id] = e.target.value; };
-  ta.onfocus = () => { focusedDraft = hl.id; };
-  ta.onblur = () => { if (focusedDraft === hl.id) focusedDraft = null; };
+  ta.placeholder = anchor === null
+    ? "write an MR-level review comment — a summary posted as a general note on the MR"
+    : "prepare a review comment — your words (Claude's card is context, not posted)";
+  ta.value = (key in draftBuffers) ? draftBuffers[key] : (draft ? draft.body : "");
+  ta.oninput = (e) => { draftBuffers[key] = e.target.value; };
+  ta.onfocus = () => { focusedDraft = key; };
+  ta.onblur = () => { if (focusedDraft === key) focusedDraft = null; };
   const row = document.createElement("div");
   row.className = "draftbtns";
   row.appendChild(btn(draft ? "Update" : "Save", "btn", () => {
     const body = ta.value.trim();
     if (!body) return;
-    post({ type: "save_draft", highlight_id: hl.id, body });
-    delete draftBuffers[hl.id];
+    post({ type: "save_draft", highlight_id: anchor, body });
+    delete draftBuffers[key];
   }));
   if (draft) row.appendChild(btn("Remove", "btn ghost", () => {
-    post({ type: "remove_draft", highlight_id: hl.id });
-    delete draftBuffers[hl.id];
+    post({ type: "remove_draft", highlight_id: anchor });
+    delete draftBuffers[key];
   }));
   wrap.appendChild(ta);
   wrap.appendChild(row);

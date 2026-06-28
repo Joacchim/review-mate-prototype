@@ -140,10 +140,11 @@ class DraftComment(BaseModel):
     """A reviewer-authored review comment, prepared locally and posted on submit (D14).
 
     The body is the reviewer's own text — never the agent's card. Anchored to a highlight, whose
-    file/line + the MR's diff_refs give the host the exact position at submit time.
+    file/line + the MR's diff_refs give the host the exact position at submit time. A `None` anchor
+    is an MR-level comment (a review summary), posted as a general note — mirrors `Card.highlight_id`.
     """
     id: str
-    highlight_id: str                  # the anchor (one draft per highlight)
+    highlight_id: str | None = None    # the anchor (one draft per highlight); None = MR-level
     body: str
     status: DraftStatus = DraftStatus.DRAFT
     url: str | None = None             # the posted comment's URL, set on submit

@@ -48,6 +48,13 @@ async def test_post_comment_inline(writer, calls):  # AC-1
     assert body["position"]["new_path"] == "a.py" and body["position"]["new_line"] == 12
 
 
+async def test_post_mr_comment_is_an_unanchored_note(writer, calls):
+    await writer.post_mr_comment(REF, "overall this looks solid; one concern below")
+    method, path, _params, body = calls[-1]
+    assert method == "POST" and path.endswith("/merge_requests/42/notes")
+    assert body == {"body": "overall this looks solid; one concern below"}  # no position
+
+
 async def test_capability_gating_blocks_and_sends_nothing(calls):  # AC-3
     caps = dict(GITLAB_CAPABILITIES); caps["approvals"] = False
     w = GitLabWriter(base_url="https://gitlab/api/v4", token="t", capabilities=caps,
@@ -98,3 +105,12 @@ async def test_writeback_posts_reviewer_text_anchored_to_highlight(session, writ
     body = calls[-1][3]
     assert body["body"] == "the reviewer's own words"          # reviewer text, not a card (D14)
     assert body["position"]["new_path"] == "a.py" and body["position"]["new_line"] == 12
+
+
+async def test_writeback_posts_mr_level_comment_when_unanchored(session, writer, calls):
+    m, sid, _hid = session
+    wb = Writeback(m, writer)
+    await wb.post_comment(sid, None, "a review summary", REF)   # None anchor = MR-level
+    method, path, _params, body = calls[-1]
+    assert method == "POST" and path.endswith("/merge_requests/42/notes")
+    assert body == {"body": "a review summary"} and "position" not in body

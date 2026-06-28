@@ -12,6 +12,7 @@ POS = {"new_path": "a.py", "new_line": 1}
 # (op invocation, the capability it requires)
 OPS = [
     ("post_comment", "inline_comments", lambda w: w.post_comment(REF, POS, "b")),
+    ("post_mr_comment", "mr_comments", lambda w: w.post_mr_comment(REF, "b")),
     ("reply", "threads", lambda w: w.reply(REF, "d1", "b")),
     ("resolve", "threads", lambda w: w.resolve(REF, "d1")),
     ("approve", "approvals", lambda w: w.approve(REF)),

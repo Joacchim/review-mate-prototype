@@ -94,18 +94,18 @@ class ClearChat(BaseModel):
 
 class SaveDraft(BaseModel):
     type: Literal["save_draft"] = "save_draft"
-    highlight_id: str
+    highlight_id: str | None = None    # None = an MR-level review comment (a summary)
     body: str
 
 
 class RemoveDraft(BaseModel):
     type: Literal["remove_draft"] = "remove_draft"
-    highlight_id: str
+    highlight_id: str | None = None
 
 
 class MarkDraftPosted(BaseModel):
     type: Literal["mark_draft_posted"] = "mark_draft_posted"
-    highlight_id: str
+    highlight_id: str | None = None
     url: str | None = None
 
 
@@ -236,7 +236,8 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
         return emit(ev.MessagePosted, message=msg)
 
     if isinstance(command, SaveDraft):
-        if not any(h.id == command.highlight_id for h in state.highlights):
+        if command.highlight_id is not None and \
+                not any(h.id == command.highlight_id for h in state.highlights):
             return Rejection(reason=f"no such highlight: {command.highlight_id}")
         existing = next((d for d in state.drafts if d.highlight_id == command.highlight_id), None)
         draft = DraftComment(id=existing.id if existing else _id(),

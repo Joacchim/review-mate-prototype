@@ -97,12 +97,12 @@ class DraftSaved(_EventBase):
 
 class DraftRemoved(_EventBase):
     type: Literal["draft_removed"] = "draft_removed"
-    highlight_id: str
+    highlight_id: str | None = None
 
 
 class DraftPosted(_EventBase):
     type: Literal["draft_posted"] = "draft_posted"
-    highlight_id: str
+    highlight_id: str | None = None
     url: str | None = None
 
 
