@@ -22,7 +22,10 @@ reviewer hasn't highlighted (`add_insight`) or post an MR-level observation tied
 - The review-mate server is running (`review-mate` / `python -m review_mate`), serving the UI and
   the MCP endpoint at `/mcp`.
 - The MCP server is registered in Claude Code, e.g.
-  `claude mcp add --transport http review-mate http://127.0.0.1:8765/mcp`.
+  `claude mcp add --transport http review-mate http://127.0.0.1:8765/mcp/`. The **trailing slash is
+  required** — the streamable-HTTP endpoint is served at `/mcp/`; a POST to `/mcp` returns 405 and
+  the registration shows "Failed to connect". Tools load at session start, so register before
+  launching the session you want to review in.
 - Confirm with `list_sessions`; if several, ask the reviewer which session id to attend.
 
 ## Before a review is loaded: help find the MR
