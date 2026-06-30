@@ -6,6 +6,7 @@ Persistence lives under the `~/.review-mate/sessions/<id>/` workspace boundary.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import shutil
@@ -34,12 +35,15 @@ def _now() -> str:
 
 
 class SessionManager:
-    def __init__(self, root: Path | str | None = None, mr_source=None, workspace=None):
+    def __init__(self, root: Path | str | None = None, mr_source=None, workspace=None,
+                 activity_broker=None):
         self.root = Path(root) if root is not None else sessions_dir()
         self.root.mkdir(parents=True, exist_ok=True)
         self._actors: dict[str, SessionActor] = {}
         self._mr_source = mr_source   # MRSource seam (optional, injected) — host-adapter impl
         self._workspace = workspace   # Workspace seam (optional, injected) — workspace-manager impl
+        self._activity_broker = activity_broker  # ActivityBroker (optional) — review-fleet notify spine
+        self._republishers: list[asyncio.Task] = []  # per-actor taps feeding the activity channel
 
     # --- lifecycle ----------------------------------------------------------
 
@@ -66,7 +70,27 @@ class SessionManager:
             except Exception:
                 await self._discard(sid)  # don't leave an orphaned, MR-less ACTIVE session
                 raise
+        self._attach_republisher(actor, sid)
         return sid
+
+    def _attach_republisher(self, actor: SessionActor, sid: str) -> None:
+        """Tap the actor's event stream and republish highlight/message events to the activity
+        channel, so one watcher covers every session (review-fleet). No-op without a broker.
+        Subscribes from the current seq, so a restored session's historical events are not
+        re-announced as fresh activity. Ends when the actor closes subscribers on SessionEnded."""
+        broker = self._activity_broker
+        if broker is None:
+            return
+        since = actor.snapshot().seq
+
+        async def _pump() -> None:
+            async for event in actor.subscribe(since=since):
+                if isinstance(event, ev.HighlightAdded):
+                    broker.publish("highlight_added", session_id=sid)
+                elif isinstance(event, ev.MessagePosted):
+                    broker.publish("message_posted", session_id=sid)
+
+        self._republishers.append(asyncio.create_task(_pump()))
 
     async def _discard(self, session_id: str) -> None:
         actor = self._actors.pop(session_id, None)
@@ -100,6 +124,7 @@ class SessionManager:
                 actor = SessionActor(sdir.name, log, state)
                 actor.start()
                 self._actors[sdir.name] = actor
+                self._attach_republisher(actor, sdir.name)
             except Exception:
                 # one unreadable/corrupt session must not stop the server from booting
                 logger.warning("skipping unrestorable session %s", sdir.name, exc_info=True)
@@ -113,6 +138,9 @@ class SessionManager:
                          actor.snapshot().created_at, SessionStatus.ENDED)
 
     async def shutdown(self) -> None:
+        for task in self._republishers:
+            task.cancel()
+        self._republishers.clear()
         for actor in list(self._actors.values()):
             await actor.stop()
         self._actors.clear()
