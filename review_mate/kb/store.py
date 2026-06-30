@@ -2,7 +2,7 @@
 
 A repo catalog, cross-repo relationships, and configured preferences/integrations (D11), persisted
 as one JSON document under ~/.review-mate/knowledge/ — user-wide, distinct from per-project memory.
-The context-skill consults it; the crossrepo-broker enriches it (each approval → a relationship).
+The review-worker consults it; the crossrepo-broker enriches it (each approval → a relationship).
 """
 from __future__ import annotations
 
