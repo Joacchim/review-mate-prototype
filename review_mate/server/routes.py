@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pydantic import ValidationError
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
@@ -17,9 +17,13 @@ from review_mate.session.commands import MarkDraftPosted, parse_command
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import DraftStatus, Origin
 
+# server-side long-poll ceiling for GET /api/activity: under common idle cutoffs, and short enough
+# that the coordinator gets a regular tick (to re-evaluate the idle-reap bound) even when quiet.
+ACTIVITY_TIMEOUT = 50.0
+
 
 def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broker=None,
-                 writeback=None) -> list:
+                 writeback=None, activity_broker=None) -> list:
     async def create_session(request: Request) -> JSONResponse:
         body = await _maybe_json(request)
         raw = body.get("ref") if isinstance(body, dict) else None
@@ -59,7 +63,21 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         if broker is None or not query.strip():
             return JSONResponse({"error": "lookup unavailable"}, status_code=400)
         req = broker.create(query.strip())
+        if activity_broker is not None:  # surface the lookup on the agent's activity stream (D16)
+            activity_broker.publish("lookup_opened", lookup_id=req.id, query=query.strip())
         return JSONResponse({"id": req.id, "seq": req.seq})
+
+    async def activity(request: Request) -> Response:
+        if activity_broker is None:
+            return Response(status_code=204)  # baseline: no activity channel configured
+        try:
+            since = int(request.query_params.get("since", "0"))
+        except ValueError:
+            since = 0
+        event = await activity_broker.wait(since, timeout=ACTIVITY_TIMEOUT)
+        if event is None:
+            return Response(status_code=204)  # timed out — the caller re-polls
+        return JSONResponse(event.model_dump(mode="json"))
 
     async def poll_lookup(request: Request) -> JSONResponse:
         if broker is None:
@@ -177,6 +195,7 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/search", search, methods=["GET"]),
         Route("/api/lookup", open_lookup, methods=["POST"]),
         Route("/api/lookup/{id}", poll_lookup, methods=["GET"]),
+        Route("/api/activity", activity, methods=["GET"]),
         Route("/api/sessions/{id}/repo-tree", repo_tree, methods=["GET"]),
         Route("/api/sessions/{id}/file", get_file, methods=["GET"]),
         Route("/api/sessions", create_session, methods=["POST"]),

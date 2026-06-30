@@ -58,12 +58,19 @@ def create_app(manager: SessionManager | None = None,
         manager, resolve_ref, provider, writeback = build_manager_from_env()
     web = static_dir or _WEB_DIR
 
+    # the activity channel — ephemeral notification spine; one watcher covers every session
+    # (review-fleet). Reuse a broker the manager was built with, else create and wire one here
+    # (the composition root owns this), before restore_all attaches the per-actor republishers.
+    from review_mate.activity.broker import ActivityBroker
+    activity_broker = manager._activity_broker or ActivityBroker()
+    manager._activity_broker = activity_broker
+
     # the MR-discovery channel — ephemeral, shared by the browser routes and the agent bridge
     from review_mate.lookup.broker import LookupBroker
     broker = LookupBroker()
 
     routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider, broker=broker,
-                          writeback=writeback)
+                          writeback=writeback, activity_broker=activity_broker)
 
     mcp_app = None
     if with_mcp:
@@ -89,4 +96,5 @@ def create_app(manager: SessionManager | None = None,
     app = Starlette(routes=routes, lifespan=lifespan, middleware=[Middleware(_NoCacheUI)])
     app.state.manager = manager
     app.state.broker = broker
+    app.state.activity_broker = activity_broker
     return app
