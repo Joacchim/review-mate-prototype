@@ -23,6 +23,12 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
     elif isinstance(event, ev.HighlightRemoved):
         s.highlights = [h for h in s.highlights if h.id != event.highlight_id]
         s.drafts = [d for d in s.drafts if d.highlight_id != event.highlight_id]  # no orphan drafts
+    elif isinstance(event, ev.ContextRequested):
+        for h in s.highlights:
+            if h.id == event.highlight_id:
+                h.context_requested = True
+                if event.question:
+                    h.question = event.question
     elif isinstance(event, ev.CardEmitted):
         s.cards.append(event.card)
     elif isinstance(event, ev.CardUpdated):

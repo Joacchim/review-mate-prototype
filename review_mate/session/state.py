@@ -89,6 +89,7 @@ class Highlight(BaseModel):
     author: Origin = Origin.BROWSER
     created_at: str = ""
     status: HighlightStatus = HighlightStatus.OPEN
+    context_requested: bool = False    # the reviewer escalated this to the agent tier (D21)
 
 
 class Card(BaseModel):

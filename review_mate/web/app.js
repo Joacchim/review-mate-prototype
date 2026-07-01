@@ -25,6 +25,8 @@ let threadFilter = "unresolved";     // discussions filter: unresolved | all
 const threadReplyBuf = {};           // thread_id -> in-progress reply text (survives re-render)
 let threadReplyFocused = null;       // thread_id of the focused reply textarea, to restore after render
 const cheapCtx = {};                 // highlight_id -> {blame, linked_issues} | "loading" (D21 cheap tier)
+const askBuf = {};                   // highlight_id -> in-progress "ask Claude" question text
+let askFocused = null;               // highlight_id of the focused ask-context input, to restore after render
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -843,17 +845,29 @@ function renderDetail() {
   }
   // the cheap, deterministic context tier — shown by default, no agent (D21)
   if (!posted) el.appendChild(cheapContextBlock(hl));
-  // the agent's deep card, when present (a posted comment drops the now-moot card)
-  if (!posted && card) {
-    const c = document.createElement("div");
-    c.className = "card md"; c.innerHTML = md(card.body);
-    el.appendChild(c);
+  // the agent tier is on demand: the card if present, else escalate — or "waiting" once escalated
+  if (!posted) {
+    if (card) {
+      const c = document.createElement("div");
+      c.className = "card md"; c.innerHTML = md(card.body);
+      el.appendChild(c);
+    } else if (hl.context_requested) {
+      const p = document.createElement("div");
+      p.className = "pending"; p.textContent = "waiting for Claude's context…";
+      el.appendChild(p);
+    } else {
+      el.appendChild(askContextControl(hl));
+    }
   }
   el.appendChild(draftEditor(hl.id, hl.id, draft));
 
   if (!posted && focusedDraft === hl.id) {  // restore focus across a WS re-render; never steal it
     const ta = el.querySelector("textarea.draftbox");
     if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  }
+  if (askFocused === hl.id) {
+    const ai = el.querySelector("input.askinp");
+    if (ai) { ai.focus(); ai.setSelectionRange(ai.value.length, ai.value.length); }
   }
 }
 
@@ -1063,6 +1077,29 @@ function renderChat(el) {
 
   msgs.scrollTop = msgs.scrollHeight;
   if (chatFocused) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+}
+
+// escalate a highlight to the agent tier (D21) — separate from the review-comment box (D14):
+// an optional "what do you want to know?" plus the explicit request button.
+function askContextControl(hl) {
+  const wrap = document.createElement("div");
+  wrap.className = "askctx";
+  const inp = document.createElement("input");
+  inp.className = "askinp";
+  inp.placeholder = "ask Claude something specific (optional)";
+  inp.value = askBuf[hl.id] || "";
+  inp.oninput = (e) => { askBuf[hl.id] = e.target.value; };
+  inp.onfocus = () => { askFocused = hl.id; };
+  inp.onblur = () => { if (askFocused === hl.id) askFocused = null; };
+  inp.onkeydown = (e) => { if (e.key === "Enter") requestContext(hl); };
+  wrap.appendChild(inp);
+  wrap.appendChild(btn("✦ Ask Claude for context", "btn", () => requestContext(hl)));
+  return wrap;
+}
+
+function requestContext(hl) {
+  post({ type: "request_context", highlight_id: hl.id, question: (askBuf[hl.id] || "").trim() || null });
+  delete askBuf[hl.id];
 }
 
 // the cheap, deterministic context tier (D21): last-touch + linked issues, fetched once per highlight

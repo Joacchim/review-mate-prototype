@@ -34,9 +34,11 @@ session, not one shared with the reviewer's chat.
    `curl -s -m 55 "http://127.0.0.1:8765/api/activity?since=<since>"` with `run_in_background: true`.
 2. **On re-invocation** (the curl returned), branch on the body:
    - **empty / HTTP 204** (timeout tick) → reap, then relaunch step 1 with the same `since`.
-   - **`highlight_added` / `message_posted`** for session `S` at `seq M` → set `since = M`; **resume**
-     `S`'s worker via `SendMessage` ("new activity in `S` — drain your backlog") if it is live, else
-     **cold-spawn** (below); set `last_active[S] = now`.
+   - **`context_requested` / `message_posted`** for session `S` at `seq M` → set `since = M`;
+     **resume** `S`'s worker via `SendMessage` ("new activity in `S` — drain your backlog") if it is
+     live, else **cold-spawn** (below); set `last_active[S] = now`. (A bare highlight never appears
+     here — the reviewer must escalate it with a context request, D21 — so a worker only ever wakes
+     for work the reviewer actually asked for.)
    - **`lookup_opened`** carrying `lookup_id` + `query` → the reviewer explicitly asked you to find
      an MR by description (the **escape hatch**, D20 — the browser's own `/api/search` is the default
      path; a `lookup_opened` means direct search didn't satisfy them). Answer inline from the event:
@@ -56,7 +58,7 @@ flowchart TD
   L["background curl /api/activity?since=since"] --> R{"returned: body?"}
   R -->|"empty / 204"| R3
   R -->|"lookup_opened {id,query}"| LK["search_mrs(query) → answer_lookup(id)"] --> R3
-  R -->|"highlight/message (S, seq M)"| SET["since=M; last_active[S]=now"] --> LIVE{"worker for S live?"}
+  R -->|"context_requested/message (S, seq M)"| SET["since=M; last_active[S]=now"] --> LIVE{"worker for S live?"}
   LIVE -->|yes| RES["SendMessage(worker, drain S)"] --> R3
   LIVE -->|no| FULL{"registry holds 3?"}
   FULL -->|yes| EV["evict LRU (TaskStop + drop)"] --> SP

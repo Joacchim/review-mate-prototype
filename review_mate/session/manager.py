@@ -89,8 +89,10 @@ class SessionManager:
             async for event in actor.subscribe(since=since):
                 if event.origin is not Origin.BROWSER:
                     continue  # agent actions must not wake the agent
-                if isinstance(event, ev.HighlightAdded):
-                    broker.publish("highlight_added", session_id=sid)
+                # a bare highlight gets the cheap tier and spends no agent turn (D21); only an
+                # explicit context request or a chat message wakes the agent.
+                if isinstance(event, ev.ContextRequested):
+                    broker.publish("context_requested", session_id=sid)
                 elif isinstance(event, ev.MessagePosted):
                     broker.publish("message_posted", session_id=sid)
 

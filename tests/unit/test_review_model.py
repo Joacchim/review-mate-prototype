@@ -22,6 +22,7 @@ def _sample(cmd_type: str):
     return {
         "add_highlight": cmd.AddHighlight(file="a.py", side=Side.NEW, line_range=LineRange(start=1, end=1)),
         "remove_highlight": cmd.RemoveHighlight(highlight_id="x"),
+        "request_context": cmd.RequestContext(highlight_id="x"),
         "decide_access": cmd.DecideAccess(request_id="x", approve=True),
         "end_session": cmd.EndSession(),
         "emit_card": cmd.EmitCard(highlight_id="x", body="b"),
@@ -136,6 +137,21 @@ def test_drafts_are_browser_only():
                                            line_range=LineRange(start=1, end=1)), Origin.BROWSER))
     hid = s.highlights[0].id
     assert isinstance(handle(s, cmd.SaveDraft(highlight_id=hid, body="b"), Origin.AGENT), Rejection)
+
+
+def test_request_context_sets_the_escalation_flag():
+    s = _state()
+    s = fold(s, handle(s, cmd.AddHighlight(file="a.py", side=Side.NEW,
+                                           line_range=LineRange(start=1, end=1)), Origin.BROWSER))
+    hid = s.highlights[0].id
+    assert s.highlights[0].context_requested is False           # bare highlight: cheap tier only
+    s = fold(s, handle(s, cmd.RequestContext(highlight_id=hid, question="why?"), Origin.BROWSER))
+    assert s.highlights[0].context_requested is True and s.highlights[0].question == "why?"
+
+
+def test_request_context_for_unknown_highlight_rejected():
+    s = _state()
+    assert isinstance(handle(s, cmd.RequestContext(highlight_id="nope"), Origin.BROWSER), Rejection)
 
 
 def test_mr_and_files_reduce():

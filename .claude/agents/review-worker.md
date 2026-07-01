@@ -27,7 +27,9 @@ anything. You do your work and **return** — the coordinator resumes you on the
    already hold.
 2. **Compute the backlog** — the **idempotent work predicate**, derived from session state, so a
    re-run or a missed/duplicated wake never double-posts:
-   - highlights that have **no agent card yet**, and
+   - highlights the reviewer **escalated** (`context_requested == true`) that have **no agent card
+     yet** — a bare highlight the reviewer did not escalate is theirs to comment on; the server's
+     cheap context tier covers it, so **do not card it** (D21), and
    - the **trailing** reviewer chat message when **no** agent reply follows it.
 3. **Resolve and post** each backlog item (strategy below): `emit_card(session_id, highlight_id,
    body, citations)`; answer chat with `post_message(session_id, body)`; raise an unprompted finding

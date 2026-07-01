@@ -36,6 +36,13 @@ class RemoveHighlight(BaseModel):
     highlight_id: str
 
 
+class RequestContext(BaseModel):
+    """The reviewer escalates a highlight from the cheap tier to a full agent card (D21)."""
+    type: Literal["request_context"] = "request_context"
+    highlight_id: str
+    question: str | None = None
+
+
 class EmitCard(BaseModel):
     type: Literal["emit_card"] = "emit_card"
     highlight_id: str | None = None    # None = an MR-level insight, anchored to nothing
@@ -114,7 +121,7 @@ class EndSession(BaseModel):
 
 
 Command = Union[
-    AddHighlight, RemoveHighlight, EmitCard, UpdateCard, RemoveCard,
+    AddHighlight, RemoveHighlight, RequestContext, EmitCard, UpdateCard, RemoveCard,
     RequestAccess, DecideAccess, ApplyMRMetadata, ApplyFiles, ApplyThread,
     PostMessage, ClearChat, SaveDraft, RemoveDraft, MarkDraftPosted, EndSession,
 ]
@@ -140,6 +147,7 @@ AUTHORITY: dict[str, set[Origin]] = {
     # Highlight.author records which, and the single-writer property still holds (appends don't conflict).
     "add_highlight": {Origin.BROWSER, Origin.AGENT},
     "remove_highlight": {Origin.BROWSER},
+    "request_context": {Origin.BROWSER},   # the reviewer escalates a highlight to the agent tier (D21)
     "remove_card": {Origin.BROWSER},   # the reviewer dismisses an insight card
     "decide_access": {Origin.BROWSER},
     "end_session": {Origin.BROWSER},
@@ -188,6 +196,11 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
 
     if isinstance(command, RemoveHighlight):
         return emit(ev.HighlightRemoved, highlight_id=command.highlight_id)
+
+    if isinstance(command, RequestContext):
+        if not any(h.id == command.highlight_id for h in state.highlights):
+            return Rejection(reason=f"no such highlight: {command.highlight_id}")
+        return emit(ev.ContextRequested, highlight_id=command.highlight_id, question=command.question)
 
     if isinstance(command, EmitCard):
         if command.highlight_id is not None and \

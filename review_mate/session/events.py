@@ -46,6 +46,12 @@ class HighlightRemoved(_EventBase):
     highlight_id: str
 
 
+class ContextRequested(_EventBase):
+    type: Literal["context_requested"] = "context_requested"
+    highlight_id: str
+    question: str | None = None
+
+
 class CardEmitted(_EventBase):
     type: Literal["card_emitted"] = "card_emitted"
     card: Card
@@ -113,7 +119,7 @@ class SessionEnded(_EventBase):
 Event = Annotated[
     Union[
         SessionCreated, MRMetadataApplied, FilesApplied,
-        HighlightAdded, HighlightRemoved,
+        HighlightAdded, HighlightRemoved, ContextRequested,
         CardEmitted, CardUpdated, CardRemoved,
         AccessRequested, AccessDecided,
         ThreadApplied, MessagePosted, ChatCleared,
