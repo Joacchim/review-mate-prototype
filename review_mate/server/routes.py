@@ -225,6 +225,28 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         await _remirror_threads(actor, ref)
         return JSONResponse({"ok": True, "resolved": resolved})
 
+    async def context(request: Request) -> JSONResponse:
+        """The cheap, deterministic context tier for a highlighted line range (D21): host-computed
+        last-touch + linked issues, no agent. Each source degrades independently (best-effort)."""
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        snap = actor.snapshot()
+        if snap.mr is None:
+            return JSONResponse({"error": "no MR loaded"}, status_code=400)
+        file = request.query_params.get("file", "")
+        try:
+            start = int(request.query_params.get("start", "0"))
+            end = int(request.query_params.get("end", str(start)))
+        except ValueError:
+            start = end = 0
+        out: dict = {"blame": [], "linked_issues": []}
+        if provider is not None and file and hasattr(provider, "blame"):
+            out["blame"] = await provider.blame(snap.mr.project, file, snap.mr.sha, start, end)
+        if provider is not None and hasattr(provider, "linked_issues"):
+            out["linked_issues"] = await provider.linked_issues(snap.mr.project, snap.mr.iid)
+        return JSONResponse(out)
+
     async def refresh_threads(request: Request) -> JSONResponse:
         actor = manager.get(request.path_params["id"])
         if actor is None:
@@ -281,6 +303,7 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/sessions/{id}/threads/{tid}/reply", reply_thread, methods=["POST"]),
         Route("/api/sessions/{id}/threads/{tid}/resolve", resolve_thread, methods=["POST"]),
         Route("/api/sessions/{id}/refresh-threads", refresh_threads, methods=["POST"]),
+        Route("/api/sessions/{id}/context", context, methods=["GET"]),
         WebSocketRoute("/api/sessions/{id}/stream", stream),
     ]
 

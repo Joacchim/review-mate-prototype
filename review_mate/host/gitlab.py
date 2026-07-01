@@ -193,6 +193,36 @@ class GitLabProvider:
         discussions = await self._get(f"/projects/{pid}/merge_requests/{ref.iid}/discussions")
         return [_to_thread(d) for d in discussions]
 
+    async def blame(self, project: str, path: str, ref: str, start: int, end: int) -> list[dict]:
+        """Last-touch info for a line range (the cheap context tier, D21) — GitLab file blame at
+        `ref`. Best-effort: returns [] on any error so the tier degrades rather than failing."""
+        try:
+            rows = await self._get(
+                f"/projects/{quote(project, safe='')}/repository/files/{quote(path, safe='')}/blame",
+                params={"ref": ref, "range[start]": start, "range[end]": end},
+            )
+        except httpx.HTTPError:
+            return []
+        out, line = [], start
+        for r in rows:
+            commit = r.get("commit") or {}
+            n = max(len(r.get("lines") or []), 1)
+            out.append({"lines": [line, line + n - 1], "commit": (commit.get("id") or "")[:12],
+                        "author": commit.get("author_name", ""), "date": commit.get("committed_date", ""),
+                        "summary": commit.get("title", "")})
+            line += n
+        return out
+
+    async def linked_issues(self, project: str, iid: int) -> list[dict]:
+        """Issues this MR closes (the cheap context tier, D21). Best-effort: [] on any error."""
+        try:
+            rows = await self._get(
+                f"/projects/{quote(project, safe='')}/merge_requests/{iid}/closes_issues")
+        except httpx.HTTPError:
+            return []
+        return [{"iid": r.get("iid"), "title": r.get("title", ""), "url": r.get("web_url", "")}
+                for r in rows]
+
     async def issue_related_mrs(self, project: str, issue_iid: int) -> list[MRRef]:
         items = await self._get(
             f"/projects/{quote(project, safe='')}/issues/{issue_iid}/related_merge_requests"

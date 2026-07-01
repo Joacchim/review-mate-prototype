@@ -24,6 +24,7 @@ let approveToggle = false;           // "Approve MR" checkbox on the submit bar
 let threadFilter = "unresolved";     // discussions filter: unresolved | all
 const threadReplyBuf = {};           // thread_id -> in-progress reply text (survives re-render)
 let threadReplyFocused = null;       // thread_id of the focused reply textarea, to restore after render
+const cheapCtx = {};                 // highlight_id -> {blame, linked_issues} | "loading" (D21 cheap tier)
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -840,11 +841,12 @@ function renderDetail() {
     q.className = "q"; q.textContent = hl.question;
     el.appendChild(q);
   }
-  // a posted comment drops the now-moot context card — just the comment + its link
-  if (!posted) {
+  // the cheap, deterministic context tier — shown by default, no agent (D21)
+  if (!posted) el.appendChild(cheapContextBlock(hl));
+  // the agent's deep card, when present (a posted comment drops the now-moot card)
+  if (!posted && card) {
     const c = document.createElement("div");
-    if (card) { c.className = "card md"; c.innerHTML = md(card.body); }
-    else { c.className = "pending"; c.textContent = "waiting for context…"; }
+    c.className = "card md"; c.innerHTML = md(card.body);
     el.appendChild(c);
   }
   el.appendChild(draftEditor(hl.id, hl.id, draft));
@@ -1061,6 +1063,46 @@ function renderChat(el) {
 
   msgs.scrollTop = msgs.scrollHeight;
   if (chatFocused) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+}
+
+// the cheap, deterministic context tier (D21): last-touch + linked issues, fetched once per highlight
+async function fetchCheapContext(hl) {
+  const lr = hl.line_range;
+  cheapCtx[hl.id] = "loading";
+  try {
+    cheapCtx[hl.id] = await fetch(
+      `/api/sessions/${SID}/context?file=${encodeURIComponent(hl.file)}&start=${lr.start}&end=${lr.end}`
+    ).then((r) => r.json());
+  } catch (e) { cheapCtx[hl.id] = { blame: [], linked_issues: [] }; }
+  if (selected && selected.kind === "hl" && selected.id === hl.id) renderDetail();
+}
+
+function cheapContextBlock(hl) {
+  const c = cheapCtx[hl.id];
+  if (c === undefined) { fetchCheapContext(hl); }
+  const box = document.createElement("div");
+  box.className = "cheapctx";
+  if (c === undefined || c === "loading") { box.appendChild(empty("looking up context…")); return box; }
+  const blame = (c.blame || []);
+  const issues = (c.linked_issues || []);
+  if (!blame.length && !issues.length) { box.appendChild(empty("no last-touch or linked issue")); return box; }
+  if (blame.length) {
+    const b = blame[0];
+    const row = document.createElement("div");
+    row.className = "ctxrow";
+    row.innerHTML = `<span class="k">last touch</span> ${esc(b.author || "?")}` +
+      (b.date ? ` · ${esc((b.date || "").slice(0, 10))}` : "") +
+      (b.commit ? ` · <code>${esc(b.commit)}</code>` : "") +
+      (b.summary ? `<div class="s">${esc(b.summary)}</div>` : "");
+    box.appendChild(row);
+  }
+  issues.forEach((i) => {
+    const row = document.createElement("div");
+    row.className = "ctxrow";
+    row.innerHTML = `<span class="k">closes</span> <a href="${esc(i.url)}" target="_blank" rel="noopener">#${i.iid} ${esc(i.title)}</a>`;
+    box.appendChild(row);
+  });
+  return box;
 }
 
 function goToHighlight(hl) {

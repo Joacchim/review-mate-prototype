@@ -31,10 +31,19 @@ PROJECTS = [{"path_with_namespace": "group/proj"}]
 # The fake knows exactly one project: group/proj, named "proj", with two opened MRs (42, 43).
 
 
+BLAME = [{"commit": {"id": "abc123def456", "author_name": "dev", "committed_date": "2026-01-02",
+                     "title": "add the guard"}, "lines": ["x = 1"]}]
+CLOSES_ISSUES = [{"iid": 7, "title": "Fix the leak", "web_url": "https://gitlab/group/proj/-/issues/7"}]
+
+
 def _handler(request: httpx.Request) -> httpx.Response:
     p = request.url.path
     params = dict(request.url.params)
     # sub-resources of a specific MR
+    if p.endswith("/blame"):
+        return httpx.Response(200, json=BLAME)
+    if p.endswith("/closes_issues"):
+        return httpx.Response(200, json=CLOSES_ISSUES)
     if p.endswith("/changes"):
         return httpx.Response(200, json=CHANGES)
     if p.endswith("/discussions"):
@@ -93,6 +102,27 @@ async def test_review_queue(provider):  # AC-5
 async def test_issue_related_mrs(provider):  # AC-6
     refs = await provider.issue_related_mrs("group/proj", 5)
     assert [r.iid for r in refs] == [42, 43]
+
+
+async def test_blame_maps_last_touch(provider):
+    rows = await provider.blame("group/proj", "a.py", "sha1", 5, 5)
+    assert rows and rows[0]["commit"] == "abc123def456" and rows[0]["author"] == "dev"
+    assert rows[0]["summary"] == "add the guard" and rows[0]["lines"] == [5, 5]
+
+
+async def test_linked_issues_maps_closes_issues(provider):
+    issues = await provider.linked_issues("group/proj", 42)
+    assert issues == [{"iid": 7, "title": "Fix the leak",
+                       "url": "https://gitlab/group/proj/-/issues/7"}]
+
+
+async def test_cheap_context_degrades_on_host_error():
+    # a host that errors on every read → the cheap tier yields [] rather than raising
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(500, json={})),
+                               base_url="https://gitlab/api/v4")
+    p = GitLabProvider(base_url="https://gitlab/api/v4", token="t", username="me", client=client)
+    assert await p.blame("group/proj", "a.py", "s", 1, 1) == []
+    assert await p.linked_issues("group/proj", 42) == []
 
 
 async def test_fetch_threads_maps_discussions(provider):

@@ -45,11 +45,19 @@ class StubWriter:
 
 class StubProvider:
     """A host provider whose fetch_threads returns whatever the test stages as 'current host truth'."""
-    def __init__(self, threads=None):
+    def __init__(self, threads=None, blame=None, issues=None):
         self.threads = threads or []
+        self._blame = blame or []
+        self._issues = issues or []
 
     async def fetch_threads(self, ref):
         return list(self.threads)
+
+    async def blame(self, project, path, ref, start, end):
+        return list(self._blame)
+
+    async def linked_issues(self, project, iid):
+        return list(self._issues)
 
 
 async def _app_client(tmp_path, writer, provider):
@@ -133,6 +141,30 @@ async def test_refresh_pulls_threads_into_state(tmp_path):
         r = await client.post(f"/api/sessions/{sid}/refresh-threads", json={})
         assert r.json() == {"threads": 1}
     assert [t.id for t in manager.get(sid).snapshot().threads] == ["d9"]
+    await manager.shutdown()
+
+
+async def test_context_returns_cheap_tier(tmp_path):
+    blame = [{"lines": [5, 5], "commit": "abc123", "author": "dev", "date": "d", "summary": "guard"}]
+    issues = [{"iid": 7, "title": "Fix leak", "url": "u"}]
+    provider = StubProvider(blame=blame, issues=issues)
+    manager, sid, client = await _app_client(tmp_path, StubWriter(), provider)
+    async with client:
+        r = await client.get(f"/api/sessions/{sid}/context?file=a.py&start=5&end=5")
+        data = r.json()
+    assert data["blame"] == blame and data["linked_issues"] == issues
+    await manager.shutdown()
+
+
+async def test_context_degrades_without_provider(tmp_path):
+    # no provider → the cheap tier is empty, not an error (agent plane may still be absent too)
+    manager = SessionManager(root=tmp_path / "s")
+    app = create_app(manager=manager, with_mcp=False)  # no provider, no writeback
+    sid = await manager.create()
+    await manager.get(sid).submit(ApplyMRMetadata(mr=MR), Origin.SYSTEM)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
+        r = await client.get(f"/api/sessions/{sid}/context?file=a.py&start=1&end=1")
+        assert r.json() == {"blame": [], "linked_issues": []}
     await manager.shutdown()
 
 
