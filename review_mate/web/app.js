@@ -246,18 +246,18 @@ async function renderSuggestions(query) {
   d.innerHTML = "";
   const land = document.createElement("div");
   land.className = "land";
-  land.innerHTML = `<h2>Search results</h2><p>matches for “${esc(query)}”</p>`;
-  // ask-Claude affordance: route the (often fuzzy) query to the agent's lookup channel
-  const askRow = document.createElement("div");
-  askRow.className = "askrow";
-  askRow.appendChild(btn("✦ Ask Claude to find it", "btn", () => askClaude(query, claudePanel)));
-  land.appendChild(askRow);
+  land.innerHTML = `<h2>Search results</h2><p>GitLab matches for “${esc(query)}”</p>`;
+  // GitLab search (code-first, D20) is the default; results render here first
+  const list = document.createElement("div");
+  list.appendChild(empty("searching GitLab…"));
+  land.appendChild(list);
+  // escape hatch (D20): only if the direct search misses, route the fuzzy query to the agent
+  const fallback = document.createElement("div");
+  fallback.className = "askrow";
   const claudePanel = document.createElement("div");
   claudePanel.className = "claudepanel";
+  land.appendChild(fallback);
   land.appendChild(claudePanel);
-  const list = document.createElement("div");
-  list.appendChild(empty("searching…"));
-  land.appendChild(list);
   d.appendChild(land);
   if (!SID) { $("files").innerHTML = ""; $("rail").innerHTML = ""; }
   let items = [];
@@ -265,9 +265,6 @@ async function renderSuggestions(query) {
   if (items && items.error) items = [];
   if ($("ref").value.trim() !== query) return;  // box moved on while we fetched
   list.innerHTML = "";
-  if (!items.length) {
-    list.appendChild(empty("no matches — try another term, or paste a full MR URL")); return;
-  }
   items.forEach((it) => {
     const b = document.createElement("button");
     b.className = "qitem";
@@ -275,6 +272,10 @@ async function renderSuggestions(query) {
     b.onclick = () => loadRef(`${it.project}!${it.iid}`);
     list.appendChild(b);
   });
+  if (!items.length) list.appendChild(empty("no GitLab matches — try another term, or paste a full MR URL"));
+  // the agent is a fallback, not the default: prompt it more strongly when direct search came up empty
+  fallback.appendChild(document.createTextNode(items.length ? "Not the one? " : "Looking for it by description? "));
+  fallback.appendChild(btn("✦ Ask Claude to find it", "btn ghost", () => askClaude(query, claudePanel)));
 }
 
 // route a fuzzy query to Claude's lookup channel; render its answer + loadable candidates
@@ -304,7 +305,7 @@ function renderClaudeAnswer(req, panel) {
   panel.innerHTML = "";
   const ans = document.createElement("div");
   ans.className = "claudeans";
-  ans.innerHTML = `<div class="byclaude">Claude suggests</div><div class="md">${md(req.answer || "")}</div>`;
+  ans.innerHTML = `<div class="byclaude">Claude suggests <span class="prov">· may draw on non-GitLab sources; provenance noted inline</span></div><div class="md">${md(req.answer || "")}</div>`;
   panel.appendChild(ans);
   (req.candidates || []).forEach((it) => {
     const b = document.createElement("button");

@@ -37,7 +37,9 @@ session, not one shared with the reviewer's chat.
    - **`highlight_added` / `message_posted`** for session `S` at `seq M` → set `since = M`; **resume**
      `S`'s worker via `SendMessage` ("new activity in `S` — drain your backlog") if it is live, else
      **cold-spawn** (below); set `last_active[S] = now`.
-   - **`lookup_opened`** carrying `lookup_id` + `query` → answer discovery inline from the event:
+   - **`lookup_opened`** carrying `lookup_id` + `query` → the reviewer explicitly asked you to find
+     an MR by description (the **escape hatch**, D20 — the browser's own `/api/search` is the default
+     path; a `lookup_opened` means direct search didn't satisfy them). Answer inline from the event:
      `search_mrs(query)`, then `answer_lookup(lookup_id, answer, candidates)`. No worker, no second
      cursor — the event carries everything. Set `since = M`.
      - The candidates come from `search_mrs` (GitLab) — that is the authoritative source. If your
