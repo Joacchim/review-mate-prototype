@@ -76,7 +76,9 @@ class SessionManager:
     def _attach_republisher(self, actor: SessionActor, sid: str) -> None:
         """Tap the actor's event stream and republish highlight/message events to the activity
         channel, so one watcher covers every session (review-fleet). No-op without a broker.
-        Subscribes from the current seq, so a restored session's historical events are not
+        Only the reviewer's own actions (Origin.BROWSER) are republished: an agent write would
+        otherwise re-invoke the coordinator and re-wake this session's worker for a backlog it just
+        drained. Subscribes from the current seq, so a restored session's historical events are not
         re-announced as fresh activity. Ends when the actor closes subscribers on SessionEnded."""
         broker = self._activity_broker
         if broker is None:
@@ -85,12 +87,26 @@ class SessionManager:
 
         async def _pump() -> None:
             async for event in actor.subscribe(since=since):
+                if event.origin is not Origin.BROWSER:
+                    continue  # agent actions must not wake the agent
                 if isinstance(event, ev.HighlightAdded):
                     broker.publish("highlight_added", session_id=sid)
                 elif isinstance(event, ev.MessagePosted):
                     broker.publish("message_posted", session_id=sid)
 
-        self._republishers.append(asyncio.create_task(_pump()))
+        task = asyncio.create_task(_pump())
+        task.add_done_callback(self._on_republisher_done)
+        self._republishers.append(task)
+
+    @staticmethod
+    def _on_republisher_done(task: asyncio.Task) -> None:
+        """A republisher must never die silently: an unhandled exception would darken a session's
+        whole activity feed for the process lifetime, not just drop one notification."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("activity republisher task failed", exc_info=exc)
 
     async def _discard(self, session_id: str) -> None:
         actor = self._actors.pop(session_id, None)

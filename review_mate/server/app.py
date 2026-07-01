@@ -33,16 +33,18 @@ from review_mate.writeback.service import Writeback
 _WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 
-def build_manager_from_env():
+def build_manager_from_env(activity_broker=None):
     """Wire a live SessionManager when a host is configured; else the self-contained baseline.
 
     Host selection lives in the host layer (build_provider_from_env), so this composition root
-    names no specific host.
+    names no specific host. The activity broker (review-fleet notification spine) is threaded in
+    so the manager owns it from construction, before restore_all attaches the republishers.
     """
     provider, resolve_ref = build_provider_from_env()
     if provider is None:
-        return SessionManager(), None, None, None
-    manager = SessionManager(mr_source=provider, workspace=WorkspaceManager())
+        return SessionManager(activity_broker=activity_broker), None, None, None
+    manager = SessionManager(mr_source=provider, workspace=WorkspaceManager(),
+                             activity_broker=activity_broker)
     writer = build_writer_from_env()
     writeback = Writeback(manager, writer) if writer is not None else None
     return manager, resolve_ref, provider, writeback
@@ -54,16 +56,19 @@ def create_app(manager: SessionManager | None = None,
                resolve_ref=None,
                provider=None,
                writeback=None) -> Starlette:
-    if manager is None:
-        manager, resolve_ref, provider, writeback = build_manager_from_env()
-    web = static_dir or _WEB_DIR
-
     # the activity channel — ephemeral notification spine; one watcher covers every session
-    # (review-fleet). Reuse a broker the manager was built with, else create and wire one here
-    # (the composition root owns this), before restore_all attaches the per-actor republishers.
+    # (review-fleet). The composition root owns it, wired in before restore_all attaches the
+    # per-actor republishers.
     from review_mate.activity.broker import ActivityBroker
-    activity_broker = manager._activity_broker or ActivityBroker()
-    manager._activity_broker = activity_broker
+    activity_broker = ActivityBroker()
+
+    if manager is None:
+        manager, resolve_ref, provider, writeback = build_manager_from_env(activity_broker)
+    else:
+        # externally-injected manager (tests): adopt the broker it brought, else give it ours.
+        activity_broker = manager._activity_broker or activity_broker
+        manager._activity_broker = activity_broker
+    web = static_dir or _WEB_DIR
 
     # the MR-discovery channel — ephemeral, shared by the browser routes and the agent bridge
     from review_mate.lookup.broker import LookupBroker

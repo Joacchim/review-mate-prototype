@@ -53,6 +53,22 @@ async def test_no_broker_is_a_noop(tmp_path):
     await mgr.shutdown()
 
 
+async def test_agent_authored_writes_do_not_republish(tmp_path):
+    # only the reviewer's actions wake the agent — a worker's own highlight/message (Origin.AGENT)
+    # must NOT re-publish as activity, else it re-invokes the coordinator and re-wakes itself.
+    broker = ActivityBroker()
+    mgr = SessionManager(root=tmp_path / "s", activity_broker=broker)
+    sid = await mgr.create()
+    await mgr.get(sid).submit(AddHighlight(**HL), Origin.AGENT)
+    await mgr.get(sid).submit(PostMessage(body="an agent reply"), Origin.AGENT)
+    assert await broker.wait(since=0, timeout=0.2) is None   # nothing republished
+    # a reviewer highlight after the agent writes still gets through (seq advances normally)
+    await mgr.get(sid).submit(AddHighlight(**HL), Origin.BROWSER)
+    event = await broker.wait(since=0, timeout=1)
+    assert event is not None and event.kind == "highlight_added" and event.session_id == sid
+    await mgr.shutdown()
+
+
 # --- GET /api/activity route (end-to-end via the app) ---
 
 def test_route_returns_a_highlight_event(tmp_path):
