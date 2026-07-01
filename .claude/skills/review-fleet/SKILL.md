@@ -40,6 +40,12 @@ session, not one shared with the reviewer's chat.
    - **`lookup_opened`** carrying `lookup_id` + `query` → answer discovery inline from the event:
      `search_mrs(query)`, then `answer_lookup(lookup_id, answer, candidates)`. No worker, no second
      cursor — the event carries everything. Set `since = M`.
+     - The candidates come from `search_mrs` (GitLab) — that is the authoritative source. If your
+       answer adds anything beyond them — context from Linear/a tracker, the web, or your own
+       inference — **say where it came from** in the answer text (e.g. "via Linear COMP-182"), and
+       never present it as GitLab truth. If `search_mrs` returns nothing, **say so plainly** and
+       offer to pull a specific `!iid` — do not backfill from other sources unattributed, and never
+       guess an MR's state or contents.
 3. **Reap** any worker with `now − last_active > 10 min` (`TaskStop` it, drop its entry).
 4. **Relaunch** the watch (step 1) with the updated `since`.
 

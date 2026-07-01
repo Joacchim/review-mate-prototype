@@ -53,6 +53,17 @@ reviewer's attention, and a citation (file:line, spec §, or URL). Avoid restati
 the answer, then the evidence; if uncertain, say so and what you checked — never fabricate a spec
 reference. You may `update_card` as understanding improves.
 
+## Say where every claim came from
+
+**Attribute each piece of information to its source, in the card or insight itself.** GitLab (the MR
+diff, its discussions, the project's files) is the baseline — cite it as `file:line` or an MR ref.
+Anything drawn from **outside GitLab** — a Linear/tracker issue, the web, a sibling repo, or your own
+inference — must be **labelled inline as such**: e.g. `(via Linear COMP-182)`, `(web: RFC 9110 §7)`,
+`(sibling repo foo/bar)`, `(inferred, unverified)`. Never present non-GitLab or inferred information
+as if it were read from the code, and never state a fact you have not actually checked. When two
+sources disagree, surface both rather than silently picking one. This lets the reviewer trust exactly
+what is grounded in the change versus what is enrichment.
+
 ## Autonomous insights (restrained)
 
 When your reading surfaces something the reviewer hasn't flagged but should see, raise it — anchored
