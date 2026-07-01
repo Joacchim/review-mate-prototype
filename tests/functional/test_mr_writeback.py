@@ -76,6 +76,29 @@ async def test_resolve(writer, calls):  # AC-5
     assert params.get("resolved") == "true"
 
 
+async def test_unresolve_sends_resolved_false(writer, calls):
+    await writer.resolve(REF, "disc1", resolved=False)
+    assert calls[-1][2].get("resolved") == "false"
+
+
+async def test_reply_posts_to_the_discussion(writer, calls):
+    await writer.reply(REF, "disc1", "addressed in the latest push")
+    method, path, _params, body = calls[-1]
+    assert method == "POST" and path.endswith("/discussions/disc1/notes")
+    assert body == {"body": "addressed in the latest push"}
+
+
+async def test_writeback_thread_verbs_passthrough(session, writer, calls):
+    m = session[0]
+    wb = Writeback(m, writer)
+    await wb.reply(REF, "disc1", "reply text")
+    assert calls[-1][1].endswith("/discussions/disc1/notes")
+    await wb.resolve(REF, "disc1", resolved=False)
+    assert calls[-1][2].get("resolved") == "false"
+    await wb.approve(REF)
+    assert calls[-1][1].endswith("/merge_requests/42/approve")
+
+
 async def test_suggestion_has_block(writer, calls):  # AC-6
     await writer.suggest(REF, {"new_path": "a.py", "new_line": 12}, "fixed = True")
     body = calls[-1][3]["body"]

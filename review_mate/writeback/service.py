@@ -37,3 +37,15 @@ class Writeback:
             "sha": snap.mr.sha if snap.mr else None,  # fallback when diff_refs absent
         }
         return await self._writer.post_comment(ref, position, body)
+
+    async def reply(self, ref: MRRef, thread_id: str, body: str) -> dict:
+        """Reply to an existing discussion thread (capability: threads)."""
+        return await self._writer.reply(ref, thread_id, body)
+
+    async def resolve(self, ref: MRRef, thread_id: str, resolved: bool = True) -> dict:
+        """Resolve or unresolve a discussion thread — the "validate a comment" primitive."""
+        return await self._writer.resolve(ref, thread_id, resolved)
+
+    async def approve(self, ref: MRRef) -> dict:
+        """Approve the MR (capability: approvals)."""
+        return await self._writer.approve(ref)

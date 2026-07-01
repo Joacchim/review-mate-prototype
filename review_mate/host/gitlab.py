@@ -37,7 +37,7 @@ class GitLabProvider:
         proj = await self._get(f"/projects/{pid}")
         mr = await self._get(f"/projects/{pid}/merge_requests/{ref.iid}")
         changes = await self._get(f"/projects/{pid}/merge_requests/{ref.iid}/changes")
-        discussions = await self._get(f"/projects/{pid}/merge_requests/{ref.iid}/discussions")
+        threads = await self.fetch_threads(ref)
 
         metadata = MRMetadata(
             host=ref.host,
@@ -51,7 +51,7 @@ class GitLabProvider:
         return MRPayload(
             mr=metadata,
             files=[_to_file(c) for c in changes.get("changes", [])],
-            threads=[_to_thread(d) for d in discussions],
+            threads=threads,
             clone_url=proj.get("http_url_to_repo", ""),
         )
 
@@ -186,6 +186,13 @@ class GitLabProvider:
         return await self._get(f"/projects/{quote(path, safe='')}/merge_requests",
                                params={"state": "opened", "order_by": "updated_at", "per_page": per_page})
 
+    async def fetch_threads(self, ref: MRRef) -> list[ReviewThread]:
+        """The MR's discussions, mapped to the host-neutral review model — the read side of the
+        thread-conversation surface (used by initial load and by on-demand refresh)."""
+        pid = quote(ref.project, safe="")
+        discussions = await self._get(f"/projects/{pid}/merge_requests/{ref.iid}/discussions")
+        return [_to_thread(d) for d in discussions]
+
     async def issue_related_mrs(self, project: str, issue_iid: int) -> list[MRRef]:
         items = await self._get(
             f"/projects/{quote(project, safe='')}/issues/{issue_iid}/related_merge_requests"
@@ -242,12 +249,12 @@ class GitLabWriter:
             json={"body": body},
         )
 
-    async def resolve(self, ref: MRRef, discussion_id: str) -> dict:
+    async def resolve(self, ref: MRRef, discussion_id: str, resolved: bool = True) -> dict:
         self._require("threads")
         return await self._put(
             f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}"
             f"/discussions/{discussion_id}",
-            params={"resolved": "true"},
+            params={"resolved": "true" if resolved else "false"},
         )
 
     async def approve(self, ref: MRRef) -> dict:

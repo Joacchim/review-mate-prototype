@@ -47,6 +47,7 @@ class CheckoutHandle(BaseModel):
 class MRSource(Protocol):
     """Host seam → gitlab-host-adapter."""
     async def load(self, ref: MRRef) -> MRPayload: ...
+    async def fetch_threads(self, ref: MRRef) -> list[ReviewThread]: ...
 
 
 @runtime_checkable

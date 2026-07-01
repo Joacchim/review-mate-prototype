@@ -95,6 +95,15 @@ async def test_issue_related_mrs(provider):  # AC-6
     assert [r.iid for r in refs] == [42, 43]
 
 
+async def test_fetch_threads_maps_discussions(provider):
+    threads = await provider.fetch_threads(MRRef(host="gitlab", project="group/proj", iid=42))
+    assert len(threads) == 1
+    t = threads[0]
+    assert t.id == "disc1" and t.resolved is False
+    assert t.comments[0].body == "nit" and t.comments[0].author == "rev"
+    assert t.anchor == {"file": "a.py", "line": 1}
+
+
 async def test_search_fuzzy_text_falls_back_to_global(provider):
     # a query that names no project (only matches an MR title) still returns the global text hit
     items = await provider.search("cache")

@@ -20,6 +20,9 @@ class FakeMRSource:
             threads=[],
         )
 
+    async def fetch_threads(self, ref: MRRef):
+        return []
+
 
 def test_fake_satisfies_protocol():
     assert isinstance(FakeMRSource(), MRSource)

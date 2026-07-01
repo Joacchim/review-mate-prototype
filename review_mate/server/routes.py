@@ -13,7 +13,7 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from review_mate.seams import MRRef
-from review_mate.session.commands import MarkDraftPosted, parse_command
+from review_mate.session.commands import ApplyThread, MarkDraftPosted, parse_command
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import DraftStatus, Origin
 
@@ -159,7 +159,81 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             except Exception as exc:  # one bad anchor shouldn't sink the rest of the review
                 results.append({"highlight_id": d.highlight_id, "ok": False, "error": str(exc)})
         posted = sum(1 for r in results if r["ok"])
-        return JSONResponse({"posted": posted, "total": len(pending), "results": results})
+        approved = False
+        approve_error = None
+        body = await _maybe_json(request)
+        if isinstance(body, dict) and body.get("approve"):
+            try:
+                await writeback.approve(ref)   # capability-gated in the writer
+                approved = True
+            except Exception as exc:
+                approve_error = str(exc)
+        return JSONResponse({"posted": posted, "total": len(pending), "results": results,
+                             "approved": approved, "approve_error": approve_error})
+
+    async def _remirror_threads(actor, ref) -> list:
+        """Re-pull the MR's discussions from the host and re-mirror them into session state
+        (host is the single source of truth for threads). No-op without a provider."""
+        if provider is None or not hasattr(provider, "fetch_threads"):
+            return []
+        threads = await provider.fetch_threads(ref)
+        for t in threads:
+            await actor.submit(ApplyThread(thread=t), Origin.SYSTEM)
+        return threads
+
+    def _thread_ref(actor):
+        snap = actor.snapshot()
+        if snap.mr is None:
+            return None
+        return MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
+
+    async def reply_thread(request: Request) -> JSONResponse:
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        if writeback is None:
+            return JSONResponse({"error": "review posting unavailable"}, status_code=400)
+        ref = _thread_ref(actor)
+        if ref is None:
+            return JSONResponse({"error": "no MR loaded"}, status_code=400)
+        body = await _maybe_json(request)
+        text = body.get("body", "").strip() if isinstance(body, dict) else ""
+        if not text:
+            return JSONResponse({"error": "empty reply"}, status_code=400)
+        try:
+            await writeback.reply(ref, request.path_params["tid"], text)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        await _remirror_threads(actor, ref)
+        return JSONResponse({"ok": True})
+
+    async def resolve_thread(request: Request) -> JSONResponse:
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        if writeback is None:
+            return JSONResponse({"error": "review posting unavailable"}, status_code=400)
+        ref = _thread_ref(actor)
+        if ref is None:
+            return JSONResponse({"error": "no MR loaded"}, status_code=400)
+        body = await _maybe_json(request)
+        resolved = bool(body.get("resolved", True)) if isinstance(body, dict) else True
+        try:
+            await writeback.resolve(ref, request.path_params["tid"], resolved)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        await _remirror_threads(actor, ref)
+        return JSONResponse({"ok": True, "resolved": resolved})
+
+    async def refresh_threads(request: Request) -> JSONResponse:
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        ref = _thread_ref(actor)
+        if ref is None:
+            return JSONResponse({"error": "no MR loaded"}, status_code=400)
+        threads = await _remirror_threads(actor, ref)
+        return JSONResponse({"threads": len(threads)})
 
     async def end_session(request: Request) -> JSONResponse:
         try:
@@ -204,6 +278,9 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/sessions/{id}", end_session, methods=["DELETE"]),
         Route("/api/sessions/{id}/commands", submit_command, methods=["POST"]),
         Route("/api/sessions/{id}/submit-review", submit_review, methods=["POST"]),
+        Route("/api/sessions/{id}/threads/{tid}/reply", reply_thread, methods=["POST"]),
+        Route("/api/sessions/{id}/threads/{tid}/resolve", resolve_thread, methods=["POST"]),
+        Route("/api/sessions/{id}/refresh-threads", refresh_threads, methods=["POST"]),
         WebSocketRoute("/api/sessions/{id}/stream", stream),
     ]
 
