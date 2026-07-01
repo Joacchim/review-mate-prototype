@@ -5,6 +5,7 @@ JSON to review-mate's host-neutral models. Host specifics are confined here (hos
 """
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import quote
 
 import httpx
@@ -106,8 +107,9 @@ class GitLabProvider:
     async def search(self, query: str, limit: int = 15) -> list[dict]:
         """Suggest opened MRs matching a free-text query — the flexible lookup box's source.
 
-        Global MR text search (title/description) plus, when the query reads like a project path,
-        that project's opened MRs. Returns display items: {host, project, iid, title, url}.
+        Primary intent: when the query names a project (a full path like `group/sub/proj` or a bare
+        name like `proj`), list THAT project's opened MRs. Fuzzy free text falls back to a global MR
+        title/description search. Returns display items: {host, project, iid, title, url}.
         """
         query = (query or "").strip()
         if not query:
@@ -122,30 +124,67 @@ class GitLabProvider:
                 items.append({"host": ref.host, "project": ref.project, "iid": ref.iid,
                               "title": it.get("title", ""), "url": it.get("web_url", "")})
 
-        try:
-            rows = await self._get("/search", params={"scope": "merge_requests",
-                                                      "search": query, "state": "opened"})
-            for it in rows:
-                add(it)
-        except httpx.HTTPError:
-            pass
-
-        if "/" in query and len(items) < limit:
-            try:
-                projects = await self._get("/projects", params={"search": query.rsplit("/", 1)[-1],
-                                                               "simple": "true", "per_page": 5})
-                for p in projects:
-                    pid = quote(p.get("path_with_namespace", ""), safe="")
-                    if not pid:
-                        continue
-                    mrs = await self._get(f"/projects/{pid}/merge_requests",
-                                          params={"state": "opened", "per_page": 5})
-                    for it in mrs:
+        # 1. Project-first: resolve the projects the query might name, then list their opened MRs
+        #    concurrently (the query need not contain a slash — a bare name resolves too).
+        paths = await self._resolve_projects(query)
+        if paths:
+            fetched = await asyncio.gather(*(self._project_open_mrs(p) for p in paths),
+                                           return_exceptions=True)
+            for rows in fetched:
+                if isinstance(rows, list):
+                    for it in rows:
                         add(it)
+
+        # 2. Fuzzy fallback: only when the query named no project. A global MR text search matches
+        #    titles/descriptions across every visible project — useful for free text, but noise once
+        #    we already resolved the project the reviewer meant, so we skip it then.
+        if not items:
+            try:
+                rows = await self._get("/search", params={"scope": "merge_requests",
+                                                          "search": query, "state": "opened"})
+                for it in rows:
+                    add(it)
             except httpx.HTTPError:
                 pass
 
         return items[:limit]
+
+    async def _resolve_projects(self, query: str, limit: int = 5) -> list[str]:
+        """path_with_namespace values the query might name: an exact full-path hit first, then a
+        name search (the last path segment), so a bare name resolves as well as a full path. When
+        the query carries a namespace, name-search matches are narrowed to paths that contain it.
+
+        The name search is scoped to the reviewer's memberships (`membership=true`): on a large host
+        an unscoped search for a common name (e.g. "control-plane") is swamped by unrelated public
+        projects, burying the one the reviewer actually works on. A full path they can see but are
+        not a member of still resolves via the exact-path hit above."""
+        q = query.strip("/")
+        paths: list[str] = []
+        if "/" in q:  # exact full-path project id (url-encoded), e.g. group/sub/proj
+            try:
+                proj = await self._get(f"/projects/{quote(q, safe='')}")
+                pwn = proj.get("path_with_namespace")
+                if pwn:
+                    paths.append(pwn)
+            except httpx.HTTPError:
+                pass
+        try:
+            projects = await self._get("/projects", params={"search": q.rsplit("/", 1)[-1],
+                                                            "membership": "true",
+                                                            "simple": "true", "per_page": 20})
+            cands = [p.get("path_with_namespace") for p in projects if p.get("path_with_namespace")]
+            if "/" in q:  # a namespaced query disambiguates: keep only paths that contain it
+                cands = [c for c in cands if q in c] or cands
+            for c in cands:
+                if c not in paths:
+                    paths.append(c)
+        except httpx.HTTPError:
+            pass
+        return paths[:limit]
+
+    async def _project_open_mrs(self, path: str, per_page: int = 50) -> list[dict]:
+        return await self._get(f"/projects/{quote(path, safe='')}/merge_requests",
+                               params={"state": "opened", "order_by": "updated_at", "per_page": per_page})
 
     async def issue_related_mrs(self, project: str, issue_iid: int) -> list[MRRef]:
         items = await self._get(

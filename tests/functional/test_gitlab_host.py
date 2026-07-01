@@ -1,4 +1,6 @@
 """Functional tests for GitLabProvider against a fake GitLab API (httpx MockTransport)."""
+from urllib.parse import unquote
+
 import httpx
 import pytest
 
@@ -26,25 +28,36 @@ QUEUE = [{"web_url": "https://gitlab/group/proj/-/merge_requests/42"},
 SEARCH_HITS = [{"title": "fix cache", "web_url": "https://gitlab/group/proj/-/merge_requests/77"}]
 PROJECTS = [{"path_with_namespace": "group/proj"}]
 
+# The fake knows exactly one project: group/proj, named "proj", with two opened MRs (42, 43).
+
 
 def _handler(request: httpx.Request) -> httpx.Response:
     p = request.url.path
-    if p.endswith("/search"):
-        return httpx.Response(200, json=SEARCH_HITS)
+    params = dict(request.url.params)
+    # sub-resources of a specific MR
     if p.endswith("/changes"):
         return httpx.Response(200, json=CHANGES)
     if p.endswith("/discussions"):
         return httpx.Response(200, json=DISCUSSIONS)
-    if "/merge_requests/42" in p:
-        return httpx.Response(200, json=MR)
     if p.endswith("/related_merge_requests"):
         return httpx.Response(200, json=QUEUE)
+    if "/merge_requests/42" in p:
+        return httpx.Response(200, json=MR)
+    # any merge_requests listing — the global review-queue or a project's opened MRs
     if p.endswith("/merge_requests"):
         return httpx.Response(200, json=QUEUE)
+    # global cross-project MR text search — only "cache" matches an MR title here
+    if p.endswith("/search"):
+        return httpx.Response(200, json=SEARCH_HITS if params.get("search") == "cache" else [])
+    # project name search — only "proj" (or the full path) matches, and only when scoped to the
+    # reviewer's memberships (an unscoped name search must not resolve the project here)
     if p.endswith("/projects"):
-        return httpx.Response(200, json=PROJECTS)
+        matches = params.get("search") in ("proj", "group/proj") and params.get("membership") == "true"
+        return httpx.Response(200, json=PROJECTS if matches else [])
+    # exact project by url-encoded path — only group/proj exists
     if "/projects/" in p:
-        return httpx.Response(200, json=PROJECT)
+        ident = unquote(p.rsplit("/projects/", 1)[-1])
+        return httpx.Response(200, json=PROJECT) if ident == "group/proj" else httpx.Response(404, json={})
     return httpx.Response(404, json={})
 
 
@@ -82,7 +95,8 @@ async def test_issue_related_mrs(provider):  # AC-6
     assert [r.iid for r in refs] == [42, 43]
 
 
-async def test_search_returns_display_items(provider):
+async def test_search_fuzzy_text_falls_back_to_global(provider):
+    # a query that names no project (only matches an MR title) still returns the global text hit
     items = await provider.search("cache")
     assert items[0] == {"host": "gitlab", "project": "group/proj", "iid": 77,
                         "title": "fix cache", "url": "https://gitlab/group/proj/-/merge_requests/77"}
@@ -92,12 +106,25 @@ async def test_search_empty_query_short_circuits(provider):
     assert await provider.search("   ") == []
 
 
-async def test_search_dedupes_path_query_with_global_hits(provider):
-    # a slash query also pulls the project's opened MRs; the dupe (proj!77) collapses
+async def test_search_lists_project_mrs_by_full_path(provider):
+    # the primary intent: a project path lists THAT project's opened MRs, not a title keyword match
+    items = await provider.search("group/proj")
+    iids = sorted(it["iid"] for it in items)
+    assert iids == [42, 43] and all(it["project"] == "group/proj" for it in items)
+
+
+async def test_search_lists_project_mrs_by_bare_name(provider):
+    # the bug fix: a bare project name (no slash) also resolves the project and lists its MRs
+    items = await provider.search("proj")
+    iids = sorted(it["iid"] for it in items)
+    assert iids == [42, 43]
+
+
+async def test_search_dedupes_project_resolved_twice(provider):
+    # group/proj is resolved by both the exact-path hit and the name search; its MRs must not double
     items = await provider.search("group/proj")
     keys = [(it["project"], it["iid"]) for it in items]
     assert len(keys) == len(set(keys))
-    assert ("group/proj", 77) in keys
 
 
 def test_capabilities_cover_review_model():  # AC-7
