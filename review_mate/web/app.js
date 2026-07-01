@@ -18,8 +18,12 @@ let viewingPath = null;              // a non-diff file currently shown (plain v
 let railFilter = "all";              // index filter: all | context | comment | posted
 let railQuery = "";                  // index text search (file + comment + question)
 let railSearchFocused = false;       // restore search focus after a WS-driven re-render
-let selected = null;                 // {kind:"hl"|"insight"|"mr", id} shown in the detail overlay
+let selected = null;                 // {kind:"hl"|"insight"|"mr"|"thread", id} shown in the detail overlay
 const MR_KEY = "__mr__";             // draftBuffers/focus key for the (anchorless) MR-level comment
+let approveToggle = false;           // "Approve MR" checkbox on the submit bar
+let threadFilter = "unresolved";     // discussions filter: unresolved | all
+const threadReplyBuf = {};           // thread_id -> in-progress reply text (survives re-render)
+let threadReplyFocused = null;       // thread_id of the focused reply textarea, to restore after render
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -606,6 +610,8 @@ function renderRail() {
     insights.forEach((c) => el.appendChild(insightRow(c)));
   }
 
+  renderThreads(el);            // existing MR discussions — reply / resolve / refresh
+
   const pending = state.access_requests.filter((r) => r.status === "pending");
   el.appendChild(h3("Access requests"));
   if (!pending.length) el.appendChild(empty("none"));
@@ -762,6 +768,54 @@ function renderDetail() {
     return;
   }
 
+  if (selected && selected.kind === "thread") {
+    const t = (state.threads || []).find((x) => x.id === selected.id);
+    if (!t) { selected = null; el.hidden = true; el.innerHTML = ""; return; }
+    const canThreads = !state.mr || (state.mr.capabilities || {}).threads !== false;
+    const loc = t.anchor && t.anchor.file
+      ? `${t.anchor.file}${t.anchor.line ? ":" + t.anchor.line : ""}` : "whole MR";
+    el.hidden = false; el.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "dhead";
+    head.innerHTML = (t.resolved ? `<span class="chip posted">✓ resolved</span>` : `<span class="chip comment">open</span>`) +
+      `<span class="dlabel">${esc(loc)}</span>`;
+    head.appendChild(btn("×", "dclose", close));
+    el.appendChild(head);
+
+    const conv = document.createElement("div");
+    conv.className = "msgs";
+    (t.comments || []).forEach((c) => {
+      const d = document.createElement("div");
+      d.className = "msg agent";
+      d.innerHTML = `<div class="who">${esc(c.author)}</div><div class="md">${md(c.body)}</div>`;
+      conv.appendChild(d);
+    });
+    el.appendChild(conv);
+
+    if (canThreads) {
+      const rwrap = document.createElement("div");
+      rwrap.className = "draft";
+      const ta = document.createElement("textarea");
+      ta.className = "draftbox"; ta.placeholder = "reply to this thread…";
+      ta.value = threadReplyBuf[t.id] || "";
+      ta.oninput = (e) => { threadReplyBuf[t.id] = e.target.value; };
+      ta.onfocus = () => { threadReplyFocused = t.id; };
+      ta.onblur = () => { if (threadReplyFocused === t.id) threadReplyFocused = null; };
+      const row = document.createElement("div");
+      row.className = "draftbtns";
+      row.appendChild(btn("Reply", "btn", () => replyThread(t.id)));
+      if (t.anchor)  // only diff-anchored discussions are resolvable on GitLab
+        row.appendChild(btn(t.resolved ? "Reopen" : "Resolve", "btn ghost",
+          () => resolveThread(t.id, !t.resolved)));
+      rwrap.appendChild(ta); rwrap.appendChild(row);
+      el.appendChild(rwrap);
+      if (threadReplyFocused === t.id) {
+        ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+      }
+    }
+    return;
+  }
+
   const hl = selected ? state.highlights.find((h) => h.id === selected.id) : null;
   if (!hl) { selected = null; el.hidden = true; el.innerHTML = ""; return; }
   const card = state.cards.find((c) => c.highlight_id === hl.id);
@@ -836,29 +890,127 @@ function draftEditor(key, anchor, draft) {
   return wrap;
 }
 
+// existing MR discussions (host threads) — list, filter, and open a conversation in the overlay
+function renderThreads(el) {
+  const threads = state.threads || [];
+  const head = document.createElement("div");
+  head.className = "chathdr";
+  head.appendChild(h3("Discussions"));
+  head.appendChild(btn("↻ refresh", "btn ghost", refreshThreads));
+  el.appendChild(head);
+  if (!threads.length) { el.appendChild(empty("no discussions on this MR")); return; }
+
+  const seg = document.createElement("div");
+  seg.className = "seg";
+  const unresolved = threads.filter((t) => !t.resolved).length;
+  [["unresolved", `Unresolved ${unresolved}`], ["all", `All ${threads.length}`]].forEach(([k, label]) => {
+    seg.appendChild(btn(label, "btn" + (threadFilter === k ? " on" : ""),
+      () => { threadFilter = k; renderRail(); }));
+  });
+  el.appendChild(seg);
+
+  const shown = threadFilter === "all" ? threads : threads.filter((t) => !t.resolved);
+  if (!shown.length) { el.appendChild(empty("nothing unresolved — all threads addressed")); return; }
+  shown.forEach((t) => el.appendChild(threadRow(t)));
+}
+
+function threadRow(t) {
+  const active = selected && selected.kind === "thread" && selected.id === t.id;
+  const loc = t.anchor && t.anchor.file
+    ? `${t.anchor.file}${t.anchor.line ? ":" + t.anchor.line : ""}` : "whole MR";
+  const first = t.comments && t.comments.length ? t.comments[0] : null;
+  const prev = first ? `${first.author}: ${firstLine(first.body)}` : "(empty)";
+  const chip = t.resolved ? `<span class="chip posted">✓ resolved</span>`
+             : `<span class="chip comment">open</span>`;
+  const row = document.createElement("div");
+  row.className = "hrow" + (active ? " active" : "");
+  row.innerHTML =
+    `<div class="top">${chip}<span class="loc">${esc(loc)}</span>` +
+    (t.comments && t.comments.length > 1 ? `<span class="num">${t.comments.length}</span>` : "") +
+    `</div><div class="prev">${esc(prev)}</div>`;
+  row.onclick = () => { selected = { kind: "thread", id: t.id }; renderRail(); };
+  return row;
+}
+
+async function threadAction(path, body, okMsg) {
+  setStatus("…");
+  try {
+    const r = await fetch(`/api/sessions/${SID}/${path}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { setStatus("✕ " + (data.error || "failed")); return false; }
+    setStatus(okMsg || "");
+    return true;
+  } catch (e) { setStatus("✕ " + e); return false; }
+}
+
+async function refreshThreads() {
+  if (await threadAction("refresh-threads", {}, "discussions refreshed")) await load();
+}
+
+async function replyThread(tid) {
+  const body = (threadReplyBuf[tid] || "").trim();
+  if (!body) return;
+  if (await threadAction(`threads/${tid}/reply`, { body }, "reply posted")) {
+    delete threadReplyBuf[tid]; await load();
+  }
+}
+
+async function resolveThread(tid, resolved) {
+  if (await threadAction(`threads/${tid}/resolve`, { resolved }, resolved ? "resolved" : "reopened")) {
+    await load();
+  }
+}
+
 function renderReviewBar(el) {
-  if (!state.drafts.length) return;
   const pending = state.drafts.filter((d) => d.status !== "posted");
   const posted = state.drafts.filter((d) => d.status === "posted");
+  const canApprove = state.mr && (state.mr.capabilities || {}).approvals !== false;
+  // the bar is worth showing when there is something to submit or an approval to give
+  if (!pending.length && !posted.length && !canApprove) return;
+
   const bar = document.createElement("div");
   bar.className = "reviewbar sticky";
   const lbl = document.createElement("span");
   lbl.textContent = `Your review · ${pending.length} pending${posted.length ? ` · ${posted.length} posted` : ""}`;
   bar.appendChild(lbl);
-  if (pending.length) bar.appendChild(btn("Submit review", "btn primary", submitReview));
+
+  if (canApprove) {
+    const tog = document.createElement("label");
+    tog.className = "approve-tog";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = approveToggle;
+    cb.onchange = (e) => { approveToggle = e.target.checked; };
+    tog.appendChild(cb);
+    tog.appendChild(document.createTextNode(" Approve MR"));
+    bar.appendChild(tog);
+  }
+  // submittable when there are drafts to post, or an approve is toggled on (approve-only)
+  const label = pending.length ? "Submit review" : (approveToggle ? "Approve MR" : "Submit review");
+  const b = btn(label, "btn primary", submitReview);
+  if (!pending.length && !approveToggle) b.disabled = true;
+  bar.appendChild(b);
   el.appendChild(bar);
 }
 
 async function submitReview() {
-  setStatus("posting review…");
+  setStatus(approveToggle ? "submitting review…" : "posting review…");
   try {
-    const r = await fetch(`/api/sessions/${SID}/submit-review`, { method: "POST" });
+    const r = await fetch(`/api/sessions/${SID}/submit-review`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ approve: approveToggle }),
+    });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) { setStatus("✕ " + (data.error || "submit failed")); return; }
     const failed = (data.results || []).filter((x) => !x.ok);
-    setStatus(failed.length
-      ? `posted ${data.posted}/${data.total} — ${failed.length} failed`
-      : `posted ${data.posted} comment${data.posted === 1 ? "" : "s"}`);
+    const parts = [];
+    if (data.total) parts.push(failed.length ? `posted ${data.posted}/${data.total} — ${failed.length} failed`
+                                             : `posted ${data.posted} comment${data.posted === 1 ? "" : "s"}`);
+    if (data.approved) parts.push("approved");
+    else if (data.approve_error) parts.push("approve failed: " + data.approve_error);
+    setStatus(parts.join(" · ") || "nothing to submit");
+    approveToggle = false;
   } catch (e) { setStatus("✕ " + e); }
 }
 
