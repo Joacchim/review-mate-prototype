@@ -992,7 +992,12 @@ function draftEditor(key, anchor, draft) {
 
 // existing MR discussions (host threads) — list, filter, and open a conversation in the overlay
 function renderThreads(el) {
-  const threads = state.threads || [];
+  // a posted draft is already shown inline under its highlight ("your comment"); don't also list
+  // its thread here, or the reviewer's own comments double up once refresh re-mirrors them
+  const ownPosted = new Set((state.drafts || [])
+    .filter((d) => d.status === "posted" && d.thread_id)
+    .map((d) => d.thread_id));
+  const threads = (state.threads || []).filter((t) => !ownPosted.has(t.id));
   const head = document.createElement("div");
   head.className = "chathdr";
   head.appendChild(h3("Discussions"));
