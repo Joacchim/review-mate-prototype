@@ -231,7 +231,8 @@ class GitLabProvider:
         thread-conversation surface (used by initial load and by on-demand refresh)."""
         pid = quote(ref.project, safe="")
         discussions = await self._get(f"/projects/{pid}/merge_requests/{ref.iid}/discussions")
-        return [_to_thread(d) for d in discussions]
+        # drop system-note-only discussions (approvals, pushes, label changes, …) — not review threads
+        return [t for d in discussions if (t := _to_thread(d)).comments]
 
     async def blame(self, project: str, path: str, ref: str, start: int, end: int) -> list[dict]:
         """Last-touch info for a line range (the cheap context tier, D21) — GitLab file blame at
@@ -396,7 +397,9 @@ def _to_file(change: dict) -> FileEntry:
 
 
 def _to_thread(discussion: dict) -> ReviewThread:
-    notes = discussion.get("notes", []) or []
+    # keep only human notes — GitLab system notes (approved/unapproved, pushed commits, label and
+    # description changes, …) are MR-history noise, not review discussion
+    notes = [n for n in (discussion.get("notes") or []) if not n.get("system")]
     comments = [
         ThreadComment(id=str(n.get("id")), author=(n.get("author") or {}).get("username", ""),
                       body=n.get("body", ""), created_at=n.get("created_at", ""))

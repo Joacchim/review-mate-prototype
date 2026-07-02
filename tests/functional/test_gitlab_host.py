@@ -18,9 +18,14 @@ CHANGES = {"changes": [
     {"old_path": "b.py", "new_path": "b.py", "new_file": True, "deleted_file": False,
      "renamed_file": False, "diff": "@@ -0,0 +1 @@\n+hi\n"},
 ]}
-DISCUSSIONS = [{"id": "disc1", "notes": [
-    {"id": 1, "author": {"username": "rev"}, "body": "nit", "created_at": "t",
-     "position": {"new_path": "a.py", "new_line": 1}, "resolved": False}]}]
+DISCUSSIONS = [
+    {"id": "disc1", "notes": [
+        {"id": 1, "author": {"username": "rev"}, "body": "nit", "created_at": "t",
+         "position": {"new_path": "a.py", "new_line": 1}, "resolved": False}]},
+    # a system-note-only discussion (an approval) — MR-history noise, must be filtered out
+    {"id": "sys1", "notes": [
+        {"id": 2, "author": {"username": "rev"}, "body": "approved this merge request",
+         "system": True, "created_at": "t"}]}]
 QUEUE = [{"web_url": "https://gitlab/group/proj/-/merge_requests/42"},
          {"web_url": "https://gitlab/group/proj/-/merge_requests/43"}]
 
@@ -138,11 +143,11 @@ async def test_cheap_context_degrades_on_host_error():
     assert await p.linked_issues("group/proj", 42) == []
 
 
-async def test_fetch_threads_maps_discussions(provider):
+async def test_fetch_threads_maps_discussions_and_drops_system_notes(provider):
     threads = await provider.fetch_threads(MRRef(host="gitlab", project="group/proj", iid=42))
-    assert len(threads) == 1
+    assert [t.id for t in threads] == ["disc1"]   # the approval (system-note) discussion is filtered
     t = threads[0]
-    assert t.id == "disc1" and t.resolved is False
+    assert t.resolved is False
     assert t.comments[0].body == "nit" and t.comments[0].author == "rev"
     assert t.anchor == {"file": "a.py", "line": 1}
 
