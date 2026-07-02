@@ -7,6 +7,7 @@ seed. Shells out to the system `git`, inheriting ambient credentials (D8). Imple
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 from pathlib import Path
 
@@ -63,12 +64,21 @@ class WorkspaceManager:
         mirror = self.mirror_path(repo)
         if mirror.exists():
             return mirror
+        # Clone into a .tmp sibling and rename on success, so a failed/interrupted clone never
+        # leaves a poisoned empty mirror that mirror.exists() would then treat as complete forever.
+        tmp = mirror.with_name(mirror.name + ".tmp")
+        shutil.rmtree(tmp, ignore_errors=True)
         args = ["clone", "--bare", "--filter=blob:none"]
         seed = self.seeds.get(_key(repo))
         if seed:
             args += ["--reference", seed]
-        args += [repo.clone_url, str(mirror)]
-        await self._git(*args)
+        args += [repo.clone_url, str(tmp)]
+        try:
+            await self._git(*args)
+        except BaseException:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
+        tmp.replace(mirror)
         return mirror
 
     async def _ensure_commit(self, mirror: Path, commit: str) -> None:
@@ -88,12 +98,22 @@ class WorkspaceManager:
         except RuntimeError:
             return False
 
-    async def _git(self, *args: str) -> str:
+    async def _git(self, *args: str, timeout: float = 120.0) -> str:
+        # Never let git block on an interactive credential prompt (no ambient creds → the request
+        # would hang forever). Fail fast and bounded: prompts off, stdin closed, hard timeout.
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
         proc = await asyncio.create_subprocess_exec(
             "git", *args,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
-        out, err = await proc.communicate()
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise RuntimeError(f"git {' '.join(args)} timed out after {timeout:.0f}s")
         if proc.returncode != 0:
             raise RuntimeError(f"git {' '.join(args)} failed: {err.decode().strip()}")
         return out.decode()

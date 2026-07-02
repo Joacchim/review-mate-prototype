@@ -78,6 +78,17 @@ async def test_unknown_commit_raises(wm, source_repo):  # AC-7
         await wm.materialize(_repo(src), "0" * 40)
 
 
+async def test_failed_clone_leaves_no_poisoned_mirror(wm, tmp_path):
+    """A clone that fails must not leave an empty mirror behind — otherwise mirror.exists()
+    treats the broken shell as complete forever (the diff-versions "computing…" hang)."""
+    bogus = RepoRef(host="local", project="g/p", clone_url=str(tmp_path / "nope"))
+    with pytest.raises(Exception):
+        await wm.materialize(bogus, "0" * 40)
+    mirror = wm.mirror_path(bogus)
+    assert not mirror.exists()                                   # no poisoned mirror
+    assert not mirror.with_name(mirror.name + ".tmp").exists()   # tmp cleaned up too
+
+
 async def test_seed_clone_is_not_modified(tmp_path, source_repo):  # AC-4
     src, sha = source_repo
     seed = tmp_path / "seed"
