@@ -233,11 +233,12 @@ async function load() {
 
 async function toggleSinceLast() {
   sinceLast = !sinceLast;
+  render();   // swap to the panel now — it shows "computing…" while the (cold: clone + fetch) work runs
   if (sinceLast && sinceLastData === null) {
     try { sinceLastData = await fetch(`/api/sessions/${SID}/since-last`).then((r) => r.json()); }
     catch (e) { sinceLastData = { error: String(e) }; }
+    render();
   }
-  render();
 }
 
 // a highlight made against an earlier MR head — its lines may have moved since (diff-versions)
