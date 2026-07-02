@@ -17,13 +17,34 @@ from review_mate.session.state import (
 )
 
 
+def is_auth_error(exc: Exception) -> bool:
+    """A host auth failure (401/403) — should surface, not be masked as an empty result."""
+    resp = getattr(exc, "response", None)
+    return resp is not None and resp.status_code in (401, 403)
+
+
+async def _authed(client: httpx.AsyncClient, obj, method: str, url: str, **kw):
+    """Send with obj.token as a Bearer; on 401/403 reload the token once (so a side `glab auth`
+    refresh takes effect live) and retry. A still-failing auth error propagates (surfaced)."""
+    resp = await client.request(method, url, headers={"Authorization": f"Bearer {obj.token}"}, **kw)
+    if resp.status_code in (401, 403) and getattr(obj, "_reload_token", None) is not None:
+        fresh = obj._reload_token()
+        if fresh and fresh != obj.token:
+            obj.token = fresh
+            resp = await client.request(method, url,
+                                        headers={"Authorization": f"Bearer {obj.token}"}, **kw)
+    resp.raise_for_status()
+    return resp
+
+
 class GitLabProvider:
     def __init__(self, base_url: str, token: str, username: str, host: str = "gitlab",
-                 client: httpx.AsyncClient | None = None):
+                 client: httpx.AsyncClient | None = None, reload_token=None):
         self.base_url = base_url
         self.token = token
         self.username = username
         self.host = host
+        self._reload_token = reload_token   # () -> fresh token | None (live credential reload)
         self._client = client or httpx.AsyncClient(
             base_url=base_url, headers={"Authorization": f"Bearer {token}"},
             timeout=httpx.Timeout(15.0, connect=5.0),
@@ -132,7 +153,10 @@ class GitLabProvider:
             fetched = await asyncio.gather(*(self._project_open_mrs(p) for p in paths),
                                            return_exceptions=True)
             for rows in fetched:
-                if isinstance(rows, list):
+                if isinstance(rows, Exception):
+                    if is_auth_error(rows):
+                        raise rows        # auth failure must surface, not read as "no matches"
+                elif isinstance(rows, list):
                     for it in rows:
                         add(it)
 
@@ -145,8 +169,9 @@ class GitLabProvider:
                                                           "search": query, "state": "opened"})
                 for it in rows:
                     add(it)
-            except httpx.HTTPError:
-                pass
+            except httpx.HTTPError as exc:
+                if is_auth_error(exc):
+                    raise
 
         return items[:limit]
 
@@ -167,8 +192,9 @@ class GitLabProvider:
                 pwn = proj.get("path_with_namespace")
                 if pwn:
                     paths.append(pwn)
-            except httpx.HTTPError:
-                pass
+            except httpx.HTTPError as exc:
+                if is_auth_error(exc):
+                    raise          # a 404 here just means "not a real path"; a 401/403 must surface
         try:
             projects = await self._get("/projects", params={"search": q.rsplit("/", 1)[-1],
                                                             "membership": "true",
@@ -179,8 +205,9 @@ class GitLabProvider:
             for c in cands:
                 if c not in paths:
                     paths.append(c)
-        except httpx.HTTPError:
-            pass
+        except httpx.HTTPError as exc:
+            if is_auth_error(exc):
+                raise
         return paths[:limit]
 
     async def _project_open_mrs(self, path: str, per_page: int = 50) -> list[dict]:
@@ -243,9 +270,7 @@ class GitLabProvider:
         return [r for it in items if (r := parse_reference(it.get("web_url", ""), self.host))]
 
     async def _get(self, path: str, params: dict | None = None):
-        resp = await self._client.get(path, params=params,
-                                      headers={"Authorization": f"Bearer {self.token}"})
-        resp.raise_for_status()
+        resp = await _authed(self._client, self, "GET", path, params=params)
         return resp.json()
 
 
@@ -253,10 +278,11 @@ class GitLabWriter:
     """The write side: reviewer-authored comments, threads, suggestions, approvals — capability-gated."""
 
     def __init__(self, base_url: str, token: str, capabilities: dict[str, bool],
-                 client: httpx.AsyncClient | None = None):
+                 client: httpx.AsyncClient | None = None, reload_token=None):
         self.base_url = base_url
         self.token = token
         self._caps = dict(capabilities)
+        self._reload_token = reload_token   # () -> fresh token | None (live credential reload)
         self._client = client or httpx.AsyncClient(
             base_url=base_url, headers={"Authorization": f"Bearer {token}"},
             timeout=httpx.Timeout(15.0, connect=5.0),
@@ -331,20 +357,13 @@ class GitLabWriter:
         )
 
     async def _post(self, path: str, json: dict | None = None) -> dict:
-        resp = await self._client.post(path, json=json or {},
-                                       headers={"Authorization": f"Bearer {self.token}"})
-        resp.raise_for_status()
-        return resp.json()
+        return (await _authed(self._client, self, "POST", path, json=json or {})).json()
 
     async def _put(self, path: str, params: dict | None = None) -> dict:
-        resp = await self._client.put(path, params=params,
-                                      headers={"Authorization": f"Bearer {self.token}"})
-        resp.raise_for_status()
-        return resp.json()
+        return (await _authed(self._client, self, "PUT", path, params=params)).json()
 
     async def _delete(self, path: str) -> None:
-        resp = await self._client.delete(path, headers={"Authorization": f"Bearer {self.token}"})
-        resp.raise_for_status()
+        await _authed(self._client, self, "DELETE", path)
 
 
 def _position(position: dict) -> dict:

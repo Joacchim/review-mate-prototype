@@ -74,16 +74,25 @@ def resolve_gitlab_config() -> GitLabConfig | None:
     return GitLabConfig(base_url=base, token=token, username=(user or g_user or ""), host=host)
 
 
+def _token_reloader():
+    """Re-resolve the GitLab token from the environment / glab — so a side `glab auth` refresh
+    takes effect on a running server without a restart (used to retry after a 401)."""
+    cfg = resolve_gitlab_config()
+    return cfg.token if cfg else None
+
+
 def build_gitlab_provider(config: GitLabConfig,
                           client: httpx.AsyncClient | None = None) -> GitLabProvider:
     return GitLabProvider(base_url=config.base_url, token=config.token,
-                          username=config.username, host=config.host, client=client)
+                          username=config.username, host=config.host, client=client,
+                          reload_token=_token_reloader)
 
 
 def build_gitlab_writer(config: GitLabConfig,
                         client: httpx.AsyncClient | None = None) -> GitLabWriter:
     return GitLabWriter(base_url=config.base_url, token=config.token,
-                        capabilities=dict(GITLAB_CAPABILITIES), client=client)
+                        capabilities=dict(GITLAB_CAPABILITIES), client=client,
+                        reload_token=_token_reloader)
 
 
 def build_provider_from_env(client: httpx.AsyncClient | None = None):

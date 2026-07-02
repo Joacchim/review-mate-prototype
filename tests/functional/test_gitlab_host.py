@@ -179,6 +179,42 @@ async def test_search_dedupes_project_resolved_twice(provider):
     assert len(keys) == len(set(keys))
 
 
-def test_capabilities_cover_review_model():  # AC-7
+def _auth_handler(valid_token):
+    """A fake that 401s unless the request carries `Bearer <valid_token>`."""
+    def h(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("authorization") != f"Bearer {valid_token}":
+            return httpx.Response(401, json={"message": "401 Unauthorized"})
+        p = request.url.path
+        if p.endswith("/projects"):
+            return httpx.Response(200, json=[{"path_with_namespace": "group/proj"}])
+        if p.endswith("/merge_requests"):
+            return httpx.Response(200, json=[{"web_url": "https://gitlab/group/proj/-/merge_requests/1"}])
+        return httpx.Response(200, json=[])
+    return h
+
+
+def _provider_with(handler, token="stale", reload_token=None):
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://gitlab/api/v4")
+    return GitLabProvider(base_url="https://gitlab/api/v4", token=token, username="me",
+                          host="gitlab", client=client, reload_token=reload_token)
+
+
+async def test_search_surfaces_auth_error_instead_of_empty():
+    # a dead token → search raises (the route turns it into a visible 502), never a silent []
+    p = _provider_with(_auth_handler("never-matches"))
+    with pytest.raises(httpx.HTTPStatusError):
+        await p.search("proj")
+
+
+async def test_token_reloads_live_on_401_and_retries():
+    # simulate a side `glab auth` refresh: the reloader hands back a now-valid token, and the
+    # request succeeds on retry without a restart
+    p = _provider_with(_auth_handler("fresh"), token="stale", reload_token=lambda: "fresh")
+    items = await p.search("proj")
+    assert p.token == "fresh"                       # credentials reloaded in place
+    assert items and items[0]["project"] == "group/proj"
+
+
+async def test_capabilities_cover_review_model():  # AC-7
     for cap in ("threads", "suggestions", "approvals", "diff_versions"):
         assert GITLAB_CAPABILITIES.get(cap) is True

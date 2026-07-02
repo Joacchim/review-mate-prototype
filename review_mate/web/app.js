@@ -315,11 +315,22 @@ async function renderSuggestions(query) {
   land.appendChild(claudePanel);
   d.appendChild(land);
   if (!SID) { $("files").innerHTML = ""; $("rail").innerHTML = ""; }
-  let items = [];
-  try { items = await fetch(`/api/search?q=${encodeURIComponent(query)}`).then((r) => r.json()); } catch (e) {}
-  if (items && items.error) items = [];
+  let data = null;
+  try { data = await fetch(`/api/search?q=${encodeURIComponent(query)}`).then((r) => r.json()); }
+  catch (e) { data = { error: String(e) }; }
   if ($("ref").value.trim() !== query) return;  // box moved on while we fetched
   list.innerHTML = "";
+  if (data && data.error) {   // surface a real host failure instead of masking it as "no matches"
+    const auth = /401|403|unauthor|forbidden/i.test(data.error);
+    const err = document.createElement("div");
+    err.className = "searcherr";
+    err.textContent = auth
+      ? "⚠ GitLab authentication failed. Run `glab auth login` (or let glab refresh), then search again — the server reloads credentials automatically, no restart needed."
+      : "⚠ GitLab error: " + data.error;
+    list.appendChild(err);
+    return;
+  }
+  const items = Array.isArray(data) ? data : [];
   items.forEach((it) => {
     const b = document.createElement("button");
     b.className = "qitem";
