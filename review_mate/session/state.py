@@ -147,8 +147,10 @@ class DraftComment(BaseModel):
     id: str
     highlight_id: str | None = None    # the anchor (one draft per highlight); None = MR-level
     body: str
+    suggestion: str | None = None      # optional suggested-change replacement lines (coexists with body)
     status: DraftStatus = DraftStatus.DRAFT
     url: str | None = None             # the posted comment's URL, set on submit
+    thread_id: str | None = None       # the discussion this draft became, set on submit (draft-as-thread)
     created_at: str = ""
 
 

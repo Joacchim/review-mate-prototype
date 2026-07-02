@@ -110,6 +110,7 @@ class DraftPosted(_EventBase):
     type: Literal["draft_posted"] = "draft_posted"
     highlight_id: str | None = None
     url: str | None = None
+    thread_id: str | None = None       # the discussion the posted draft became (draft-as-thread)
 
 
 class SessionEnded(_EventBase):

@@ -145,16 +145,26 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             return JSONResponse({"error": "no MR loaded"}, status_code=400)
         ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
         pending = [d for d in snap.drafts if d.status is DraftStatus.DRAFT]
+        by_id = {h.id: h for h in snap.highlights}
         results = []
         for d in pending:
             try:
-                res = await writeback.post_comment(snap.id, d.highlight_id, d.body, ref)
-                # anchored comments return a discussion {notes:[…]}; an MR-level note returns the note
+                # compose prose + an optional fenced suggestion block (line-anchored only)
+                body = d.body or ""
+                hl = by_id.get(d.highlight_id) if d.highlight_id else None
+                if d.suggestion and hl is not None:
+                    span = max(hl.line_range.end - hl.line_range.start, 0)
+                    block = f"```suggestion:-0+{span}\n{d.suggestion}\n```"
+                    body = f"{body}\n\n{block}" if body.strip() else block
+                res = await writeback.post_comment(snap.id, d.highlight_id, body, ref)
+                # anchored comments return a discussion {id, notes:[…]}; an MR-level note returns the note
                 note = (res.get("notes") or [res])[0] if isinstance(res, dict) else {}
                 url = (f"{snap.mr.url}#note_{note.get('id')}"
                        if note.get("id") and snap.mr.url else None)
-                await actor.submit(MarkDraftPosted(highlight_id=d.highlight_id, url=url),
-                                   Origin.BROWSER)
+                thread_id = (str(res["id"]) if isinstance(res, dict) and d.highlight_id
+                             and res.get("id") is not None else None)
+                await actor.submit(MarkDraftPosted(highlight_id=d.highlight_id, url=url,
+                                                   thread_id=thread_id), Origin.BROWSER)
                 results.append({"highlight_id": d.highlight_id, "ok": True, "url": url})
             except Exception as exc:  # one bad anchor shouldn't sink the rest of the review
                 results.append({"highlight_id": d.highlight_id, "ok": False, "error": str(exc)})
@@ -247,6 +257,46 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             out["linked_issues"] = await provider.linked_issues(snap.mr.project, snap.mr.iid)
         return JSONResponse(out)
 
+    async def edit_note(request: Request) -> JSONResponse:
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        if writeback is None:
+            return JSONResponse({"error": "review posting unavailable"}, status_code=400)
+        ref = _thread_ref(actor)
+        if ref is None:
+            return JSONResponse({"error": "no MR loaded"}, status_code=400)
+        body = await _maybe_json(request)
+        text = body.get("body", "").strip() if isinstance(body, dict) else ""
+        if not text:
+            return JSONResponse({"error": "empty body"}, status_code=400)
+        try:
+            await writeback.edit_note(ref, request.path_params["tid"], request.path_params["nid"], text)
+        except Exception as exc:  # host enforces ownership → 403 surfaces here
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        await _remirror_threads(actor, ref)
+        return JSONResponse({"ok": True})
+
+    async def delete_note(request: Request) -> JSONResponse:
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        if writeback is None:
+            return JSONResponse({"error": "review posting unavailable"}, status_code=400)
+        ref = _thread_ref(actor)
+        if ref is None:
+            return JSONResponse({"error": "no MR loaded"}, status_code=400)
+        try:
+            await writeback.delete_note(ref, request.path_params["tid"], request.path_params["nid"])
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        await _remirror_threads(actor, ref)
+        return JSONResponse({"ok": True})
+
+    async def whoami(request: Request) -> JSONResponse:
+        """The reviewer's own host username — so the UI can mark 'your' notes (edit/delete)."""
+        return JSONResponse({"username": getattr(provider, "username", None)})
+
     async def refresh_threads(request: Request) -> JSONResponse:
         actor = manager.get(request.path_params["id"])
         if actor is None:
@@ -302,7 +352,10 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/sessions/{id}/submit-review", submit_review, methods=["POST"]),
         Route("/api/sessions/{id}/threads/{tid}/reply", reply_thread, methods=["POST"]),
         Route("/api/sessions/{id}/threads/{tid}/resolve", resolve_thread, methods=["POST"]),
+        Route("/api/sessions/{id}/threads/{tid}/notes/{nid}/edit", edit_note, methods=["POST"]),
+        Route("/api/sessions/{id}/threads/{tid}/notes/{nid}/delete", delete_note, methods=["POST"]),
         Route("/api/sessions/{id}/refresh-threads", refresh_threads, methods=["POST"]),
+        Route("/api/me", whoami, methods=["GET"]),
         Route("/api/sessions/{id}/context", context, methods=["GET"]),
         WebSocketRoute("/api/sessions/{id}/stream", stream),
     ]

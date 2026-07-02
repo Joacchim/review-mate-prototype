@@ -293,6 +293,22 @@ class GitLabWriter:
             f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}/approve"
         )
 
+    async def edit_note(self, ref: MRRef, discussion_id: str, note_id: str, body: str) -> dict:
+        self._require("threads")
+        return await self._put(
+            f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}"
+            f"/discussions/{discussion_id}/notes/{note_id}",
+            params={"body": body},
+        )
+
+    async def delete_note(self, ref: MRRef, discussion_id: str, note_id: str) -> dict:
+        self._require("threads")
+        await self._delete(
+            f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}"
+            f"/discussions/{discussion_id}/notes/{note_id}",
+        )
+        return {"ok": True}
+
     async def suggest(self, ref: MRRef, position: dict, suggestion: str) -> dict:
         self._require("suggestions")
         body = f"```suggestion:-0+0\n{suggestion}\n```"
@@ -312,6 +328,10 @@ class GitLabWriter:
                                       headers={"Authorization": f"Bearer {self.token}"})
         resp.raise_for_status()
         return resp.json()
+
+    async def _delete(self, path: str) -> None:
+        resp = await self._client.delete(path, headers={"Authorization": f"Bearer {self.token}"})
+        resp.raise_for_status()
 
 
 def _position(position: dict) -> dict:

@@ -88,6 +88,19 @@ async def test_reply_posts_to_the_discussion(writer, calls):
     assert body == {"body": "addressed in the latest push"}
 
 
+async def test_edit_note_puts_the_note(writer, calls):
+    await writer.edit_note(REF, "disc1", "7", "fixed wording")
+    method, path, params, _ = calls[-1]
+    assert method == "PUT" and path.endswith("/discussions/disc1/notes/7")
+    assert params.get("body") == "fixed wording"
+
+
+async def test_delete_note_deletes(writer, calls):
+    await writer.delete_note(REF, "disc1", "7")
+    method, path, _params, _ = calls[-1]
+    assert method == "DELETE" and path.endswith("/discussions/disc1/notes/7")
+
+
 async def test_writeback_thread_verbs_passthrough(session, writer, calls):
     m = session[0]
     wb = Writeback(m, writer)

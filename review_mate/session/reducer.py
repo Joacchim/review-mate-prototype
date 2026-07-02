@@ -78,6 +78,7 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
             if d.highlight_id == event.highlight_id:
                 d.status = DraftStatus.POSTED
                 d.url = event.url
+                d.thread_id = event.thread_id
     elif isinstance(event, ev.SessionEnded):
         s.status = SessionStatus.ENDED
     else:  # pragma: no cover - exhaustive over the Event union

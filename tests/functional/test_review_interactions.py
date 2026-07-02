@@ -5,8 +5,8 @@ import httpx
 from review_mate.host.base import CapabilityError, GITLAB_CAPABILITIES
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
-from review_mate.session.commands import ApplyMRMetadata, SaveDraft
-from review_mate.session.state import MRMetadata, Origin, ReviewThread, ThreadComment
+from review_mate.session.commands import AddHighlight, ApplyMRMetadata, SaveDraft
+from review_mate.session.state import LineRange, MRMetadata, Origin, ReviewThread, Side, ThreadComment
 from review_mate.seams import MRRef
 from review_mate.writeback.service import Writeback
 
@@ -28,7 +28,7 @@ class StubWriter:
             raise CapabilityError(cap)
 
     async def post_comment(self, ref, position, body):
-        self.calls.append(("post_comment", body)); return {"id": 1, "notes": [{"id": 1}]}
+        self.calls.append(("post_comment", body)); return {"id": "disc-new", "notes": [{"id": 1}]}
 
     async def post_mr_comment(self, ref, body):
         self.calls.append(("post_mr_comment", body)); return {"id": 2}
@@ -41,6 +41,12 @@ class StubWriter:
 
     async def approve(self, ref):
         self._guard("approvals"); self.calls.append(("approve",)); return {}
+
+    async def edit_note(self, ref, tid, nid, body):
+        self._guard("threads"); self.calls.append(("edit_note", tid, nid, body)); return {}
+
+    async def delete_note(self, ref, tid, nid):
+        self._guard("threads"); self.calls.append(("delete_note", tid, nid)); return {}
 
 
 class StubProvider:
@@ -165,6 +171,47 @@ async def test_context_degrades_without_provider(tmp_path):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
         r = await client.get(f"/api/sessions/{sid}/context?file=a.py&start=1&end=1")
         assert r.json() == {"blame": [], "linked_issues": []}
+    await manager.shutdown()
+
+
+async def test_submit_composes_suggestion_and_captures_thread_id(tmp_path):
+    writer = StubWriter()
+    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    async with client:
+        actor = manager.get(sid)
+        await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+                                        line_range=LineRange(start=5, end=6)), Origin.BROWSER)
+        hid = actor.snapshot().highlights[0].id
+        await actor.submit(SaveDraft(highlight_id=hid, body="prefer a guard",
+                                     suggestion="if x is not None:"), Origin.BROWSER)
+        r = await client.post(f"/api/sessions/{sid}/submit-review", json={})
+        assert r.json()["posted"] == 1
+    # the posted body carries prose + a fenced suggestion block spanning the highlight (span=1)
+    kind, body = writer.calls[-1]
+    assert kind == "post_comment"
+    assert "prefer a guard" in body and "```suggestion:-0+1" in body and "if x is not None:" in body
+    # the draft is linked to the discussion it became
+    assert manager.get(sid).snapshot().drafts[0].thread_id == "disc-new"
+    await manager.shutdown()
+
+
+async def test_edit_and_delete_note_routes(tmp_path):
+    writer = StubWriter()
+    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    async with client:
+        await client.post(f"/api/sessions/{sid}/threads/disc1/notes/7/edit", json={"body": "reworded"})
+        assert writer.calls[-1] == ("edit_note", "disc1", "7", "reworded")
+        await client.post(f"/api/sessions/{sid}/threads/disc1/notes/7/delete", json={})
+        assert writer.calls[-1] == ("delete_note", "disc1", "7")
+    await manager.shutdown()
+
+
+async def test_whoami_returns_reviewer_username(tmp_path):
+    class NamedProvider(StubProvider):
+        username = "reviewer-joe"
+    manager, sid, client = await _app_client(tmp_path, StubWriter(), NamedProvider())
+    async with client:
+        assert (await client.get("/api/me")).json() == {"username": "reviewer-joe"}
     await manager.shutdown()
 
 

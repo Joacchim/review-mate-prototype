@@ -102,7 +102,8 @@ class ClearChat(BaseModel):
 class SaveDraft(BaseModel):
     type: Literal["save_draft"] = "save_draft"
     highlight_id: str | None = None    # None = an MR-level review comment (a summary)
-    body: str
+    body: str = ""
+    suggestion: str | None = None      # optional suggested-change replacement lines (coexists with body)
 
 
 class RemoveDraft(BaseModel):
@@ -114,6 +115,7 @@ class MarkDraftPosted(BaseModel):
     type: Literal["mark_draft_posted"] = "mark_draft_posted"
     highlight_id: str | None = None
     url: str | None = None
+    thread_id: str | None = None       # the discussion the posted draft became (draft-as-thread)
 
 
 class EndSession(BaseModel):
@@ -255,8 +257,10 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
         existing = next((d for d in state.drafts if d.highlight_id == command.highlight_id), None)
         draft = DraftComment(id=existing.id if existing else _id(),
                              highlight_id=command.highlight_id, body=command.body,
+                             suggestion=command.suggestion,
                              status=existing.status if existing else DraftStatus.DRAFT,
                              url=existing.url if existing else None,
+                             thread_id=existing.thread_id if existing else None,
                              created_at=existing.created_at if existing else ts)
         return emit(ev.DraftSaved, draft=draft)
 
@@ -268,7 +272,8 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
     if isinstance(command, MarkDraftPosted):
         if not any(d.highlight_id == command.highlight_id for d in state.drafts):
             return Rejection(reason=f"no draft for highlight: {command.highlight_id}")
-        return emit(ev.DraftPosted, highlight_id=command.highlight_id, url=command.url)
+        return emit(ev.DraftPosted, highlight_id=command.highlight_id, url=command.url,
+                    thread_id=command.thread_id)
 
     if isinstance(command, ClearChat):
         return emit(ev.ChatCleared)

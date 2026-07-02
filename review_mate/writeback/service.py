@@ -49,3 +49,11 @@ class Writeback:
     async def approve(self, ref: MRRef) -> dict:
         """Approve the MR (capability: approvals)."""
         return await self._writer.approve(ref)
+
+    async def edit_note(self, ref: MRRef, thread_id: str, note_id: str, body: str) -> dict:
+        """Edit one of the reviewer's own notes (host enforces ownership; capability: threads)."""
+        return await self._writer.edit_note(ref, thread_id, note_id, body)
+
+    async def delete_note(self, ref: MRRef, thread_id: str, note_id: str) -> dict:
+        """Delete one of the reviewer's own notes (host enforces ownership; capability: threads)."""
+        return await self._writer.delete_note(ref, thread_id, note_id)
