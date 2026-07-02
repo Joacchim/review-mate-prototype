@@ -43,6 +43,17 @@ class WorkspaceManager:
         elif path.exists():  # fallback: drop the dir and prune dangling worktrees
             shutil.rmtree(path, ignore_errors=True)
 
+    async def range_diff(self, repo: RepoRef, old_base: str, old_head: str,
+                         new_base: str, new_head: str) -> str:
+        """A base-aware interdiff (diff-versions): how the branch's changeset evolved between two
+        versions, transparently ignoring target-base movement. A pure rebase yields an empty result.
+        Runs `git range-diff old_base..old_head new_base..new_head` in the bare mirror."""
+        mirror = await self._ensure_mirror(repo)
+        for sha in (old_base, old_head, new_base, new_head):
+            await self._ensure_commit(mirror, sha)
+        return await self._git("-C", str(mirror), "range-diff",
+                               f"{old_base}..{old_head}", f"{new_base}..{new_head}")
+
     # --- internals ----------------------------------------------------------
 
     def mirror_path(self, repo: RepoRef) -> Path:

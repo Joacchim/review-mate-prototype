@@ -65,6 +65,7 @@ class MRMetadata(BaseModel):
     sha: str
     author: str
     url: str
+    clone_url: str = ""                # repo clone URL — lets the server materialize a checkout (diff-versions)
     # host-neutral capability advertisement (design D6) — what the active provider supports
     capabilities: dict[str, bool] = Field(default_factory=dict)
     # diff version anchors (base/head/start sha) for precise write-back positions

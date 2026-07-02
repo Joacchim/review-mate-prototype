@@ -45,7 +45,8 @@ class GitLabProvider:
             iid=mr["iid"], title=mr["title"],
             source_branch=mr["source_branch"], target_branch=mr["target_branch"],
             sha=mr["sha"], author=(mr.get("author") or {}).get("username", ""),
-            url=mr.get("web_url", ""), capabilities=self.capabilities(),
+            url=mr.get("web_url", ""), clone_url=proj.get("http_url_to_repo", ""),
+            capabilities=self.capabilities(),
             diff_refs=mr.get("diff_refs") or {},
         )
         return MRPayload(

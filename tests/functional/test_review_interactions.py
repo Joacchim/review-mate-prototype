@@ -252,6 +252,43 @@ async def test_highlight_records_created_sha(tmp_path):
     await manager.shutdown()
 
 
+async def test_since_last_greyed_without_capability(tmp_path):
+    # MR advertises no diff_versions capability (and no workspace) → the toggle is greyed
+    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
+    async with client:
+        assert (await client.get(f"/api/sessions/{sid}/since-last")).json() == {"available": False}
+    await manager.shutdown()
+
+
+async def test_since_last_returns_the_interdiff(tmp_path):
+    from review_mate.kb.store import ReviewKB
+
+    class VProvider(StubProvider):
+        async def mr_versions(self, ref):
+            return [{"base_sha": "nb", "head_sha": "nh", "start_sha": "", "created_at": ""},
+                    {"base_sha": "ob", "head_sha": "oldwm", "start_sha": "", "created_at": ""}]
+
+    class Ws:
+        async def range_diff(self, repo, ob, oh, nb, nh):
+            self.args = (ob, oh, nb, nh)
+            return "1:  x ! 1:  y feat\n    @@ f.txt\n    +new line\n"
+
+    mr = MRMetadata(host="gitlab", project="g/p", iid=42, title="T", source_branch="x",
+                    target_branch="m", sha="head-now", author="a", url="u", clone_url="cu",
+                    capabilities={"diff_versions": True})
+    manager = SessionManager(root=tmp_path / "s"); manager._workspace = Ws()
+    kb = ReviewKB(root=tmp_path / "kb"); kb.set_watermark("gitlab", "g/p", 42, "oldwm")
+    app = create_app(manager=manager, with_mcp=False, provider=VProvider(), kb=kb)
+    sid = await manager.create()
+    await manager.get(sid).submit(ApplyMRMetadata(mr=mr), Origin.SYSTEM)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        r = (await c.get(f"/api/sessions/{sid}/since-last")).json()
+    assert r["available"] is True and r["empty"] is False and "new line" in r["interdiff"]
+    # the interdiff compares the watermark version (old) against the current version (new)
+    assert manager._workspace.args == ("ob", "oldwm", "nb", "nh")
+    await manager.shutdown()
+
+
 async def test_reply_capability_missing_returns_400(tmp_path):
     writer = StubWriter(fail="threads")
     manager, sid, client = await _app_client(tmp_path, writer, StubProvider())

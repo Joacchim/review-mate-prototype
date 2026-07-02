@@ -32,6 +32,8 @@ const suggBuf = {};                  // draft key -> in-progress suggested-chang
 const suggOpen = {};                 // draft key -> whether the suggestion editor is open
 const noteEdit = {};                 // note_id -> in-progress edit text (null/absent = not editing)
 let reviewStatus = null;             // {behind, watermark, head} — diff-versions awareness
+let sinceLast = false;               // showing the rebase-aware "since last review" interdiff
+let sinceLastData = null;            // fetched {available, empty, interdiff, error}
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -225,6 +227,16 @@ async function load() {
   if (!currentFile && state.files.length) currentFile = state.files[0].path;
   try { reviewStatus = await fetch(`/api/sessions/${SID}/review-status`).then((r) => r.json()); }
   catch (e) { reviewStatus = null; }
+  sinceLastData = null;   // refetch the interdiff lazily (the head may have moved)
+  render();
+}
+
+async function toggleSinceLast() {
+  sinceLast = !sinceLast;
+  if (sinceLast && sinceLastData === null) {
+    try { sinceLastData = await fetch(`/api/sessions/${SID}/since-last`).then((r) => r.json()); }
+    catch (e) { sinceLastData = { error: String(e) }; }
+  }
   render();
 }
 
@@ -476,6 +488,7 @@ function highlightExact(path, lo, hi) {
 function renderDiff() {
   const el = $("diff");
   el.innerHTML = "";
+  if (sinceLast) { renderSinceLast(el); return; }
   if (viewingPath) { renderFileView(el, viewingPath); return; }
   const file = state.files.find((f) => f.path === currentFile);
   if (!file) { el.innerHTML = '<div class="empty" style="padding:16px">select a file</div>'; return; }
@@ -490,6 +503,22 @@ function renderDiff() {
   });
   wireSelection(table, file.path);
   el.appendChild(table);
+}
+
+// the rebase-aware interdiff — how the branch's changeset evolved since the reviewed version (D-versions)
+function renderSinceLast(el) {
+  const name = document.createElement("div");
+  name.className = "fname"; name.textContent = "Changes since your last review · rebase noise excluded";
+  el.appendChild(name);
+  const d = sinceLastData;
+  const box = document.createElement("div");
+  box.style.padding = "12px 16px";
+  if (!d) { box.className = "empty"; box.textContent = "computing the interdiff…"; }
+  else if (d.available === false) { box.className = "empty"; box.textContent = "unavailable on this host"; }
+  else if (d.error) { box.className = "empty"; box.textContent = "couldn't compute: " + d.error; }
+  else if (d.empty) { box.className = "empty"; box.textContent = d.note || "No author changes since your last review (a rebase brought no new work)."; }
+  else { const pre = document.createElement("pre"); pre.className = "rangediff"; pre.textContent = d.interdiff; box.appendChild(pre); }
+  el.appendChild(box);
 }
 
 function renderFileView(el, path) {
@@ -1113,7 +1142,14 @@ function renderVersionBanner(el) {
   const bar = document.createElement("div");
   bar.className = "verbanner";
   bar.appendChild(document.createTextNode("Updated since your last review"));
-  bar.appendChild(btn("Mark reviewed", "btn ghost", markReviewed));
+  const controls = document.createElement("div"); controls.className = "vbctl";
+  const cap = state.mr && (state.mr.capabilities || {}).diff_versions === true;
+  const toggle = btn(sinceLast ? "Full diff" : "Since last review",
+                     "btn ghost" + (sinceLast ? " on" : ""), toggleSinceLast);
+  if (!cap) { toggle.disabled = true; toggle.title = "unavailable on this host"; }
+  controls.appendChild(toggle);
+  controls.appendChild(btn("Mark reviewed", "btn ghost", markReviewed));
+  bar.appendChild(controls);
   el.appendChild(bar);
 }
 

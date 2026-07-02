@@ -12,7 +12,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from review_mate.seams import MRRef
+from review_mate.seams import MRRef, RepoRef
 from review_mate.session.commands import ApplyThread, MarkDraftPosted, parse_command
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import DraftStatus, Origin
@@ -206,6 +206,37 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         return JSONResponse({"head": snap.mr.sha, "watermark": wm,
                              "behind": bool(wm and wm != snap.mr.sha)})
 
+    async def since_last(request: Request) -> JSONResponse:
+        """The rebase-aware delta since the reviewer's watermark — a base-aware interdiff
+        (git range-diff over the version bases). Greyed (available:False) where unsupported."""
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        snap = actor.snapshot()
+        if snap.mr is None:
+            return JSONResponse({"error": "no MR loaded"}, status_code=400)
+        workspace = getattr(manager, "_workspace", None)
+        cap = (snap.mr.capabilities or {}).get("diff_versions", False)
+        if provider is None or not hasattr(provider, "mr_versions") or workspace is None or not cap:
+            return JSONResponse({"available": False})   # the UI greys the "Since last review" toggle
+        wm = kb.get_watermark(snap.mr.host, snap.mr.project, snap.mr.iid) if kb is not None else None
+        if not wm or wm == snap.mr.sha:
+            return JSONResponse({"available": True, "empty": True, "interdiff": ""})  # nothing new
+        ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
+        versions = await provider.mr_versions(ref)
+        new = versions[0] if versions else None
+        old = next((v for v in versions if v["head_sha"] == wm), None)
+        if new is None or old is None:  # can't locate the reviewed version → don't guess
+            return JSONResponse({"available": True, "empty": True, "interdiff": "",
+                                 "note": "couldn't locate the version you last reviewed"})
+        repo = RepoRef(host=snap.mr.host, project=snap.mr.project, clone_url=snap.mr.clone_url)
+        try:
+            text = await workspace.range_diff(repo, old["base_sha"], old["head_sha"],
+                                              new["base_sha"], new["head_sha"])
+        except Exception as exc:
+            return JSONResponse({"available": True, "error": str(exc)})
+        return JSONResponse({"available": True, "empty": _interdiff_empty(text), "interdiff": text})
+
     async def _remirror_threads(actor, ref) -> list:
         """Re-pull the MR's discussions from the host and re-mirror them into session state
         (host is the single source of truth for threads). No-op without a provider."""
@@ -382,10 +413,21 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/sessions/{id}/refresh-threads", refresh_threads, methods=["POST"]),
         Route("/api/sessions/{id}/mark-reviewed", mark_reviewed, methods=["POST"]),
         Route("/api/sessions/{id}/review-status", review_status, methods=["GET"]),
+        Route("/api/sessions/{id}/since-last", since_last, methods=["GET"]),
         Route("/api/me", whoami, methods=["GET"]),
         Route("/api/sessions/{id}/context", context, methods=["GET"]),
         WebSocketRoute("/api/sessions/{id}/stream", stream),
     ]
+
+
+def _interdiff_empty(text: str) -> bool:
+    """A range-diff always prints a per-commit summary line, so 'empty' means no actual patch
+    content evolved — a pure rebase (all commits unchanged) rather than a real edit."""
+    for raw in text.splitlines():
+        s = raw.lstrip()
+        if s.startswith(("@@ ", "+", "-")) or " ! " in raw or " < " in raw:
+            return False
+    return True
 
 
 async def _maybe_json(request: Request):
