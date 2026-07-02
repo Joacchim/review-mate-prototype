@@ -27,6 +27,10 @@ let threadReplyFocused = null;       // thread_id of the focused reply textarea,
 const cheapCtx = {};                 // highlight_id -> {blame, linked_issues} | "loading" (D21 cheap tier)
 const askBuf = {};                   // highlight_id -> in-progress "ask Claude" question text
 let askFocused = null;               // highlight_id of the focused ask-context input, to restore after render
+let me = null;                       // the reviewer's own host username (to mark "your" notes)
+const suggBuf = {};                  // draft key -> in-progress suggested-change text
+const suggOpen = {};                 // draft key -> whether the suggestion editor is open
+const noteEdit = {};                 // note_id -> in-progress edit text (null/absent = not editing)
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -69,8 +73,27 @@ async function boot() {
   SID = params.get("s");
   if (!SID) return showLanding();
   $("sid").textContent = SID.slice(0, 8);
+  try { me = (await fetch("/api/me").then((r) => r.json())).username; } catch (e) { me = null; }
   await load();
   connectWS();
+}
+
+// the new-side content of a highlighted line range, pulled from the diff hunks (for suggestion pre-fill)
+function newSideLines(path, lo, hi) {
+  const file = state.files.find((f) => f.path === path);
+  if (!file) return "";
+  const out = [];
+  (file.hunks || []).forEach((h) => {
+    let newLine = 0;
+    (h.diff || "").split("\n").forEach((raw) => {
+      if (raw.startsWith("@@")) { const m = raw.match(/\+(\d+)/); if (m) newLine = parseInt(m[1], 10); return; }
+      if (raw === "") return;
+      if (raw[0] === "-") return;                       // deleted lines aren't on the new side
+      if (newLine >= lo && newLine <= hi) out.push(raw.slice(1));
+      newLine += 1;
+    });
+  });
+  return out.join("\n");
 }
 
 function setStatus(msg) { $("status").textContent = msg || ""; }
@@ -775,7 +798,6 @@ function renderDetail() {
   if (selected && selected.kind === "thread") {
     const t = (state.threads || []).find((x) => x.id === selected.id);
     if (!t) { selected = null; el.hidden = true; el.innerHTML = ""; return; }
-    const canThreads = !state.mr || (state.mr.capabilities || {}).threads !== false;
     const loc = t.anchor && t.anchor.file
       ? `${t.anchor.file}${t.anchor.line ? ":" + t.anchor.line : ""}` : "whole MR";
     el.hidden = false; el.innerHTML = "";
@@ -785,38 +807,7 @@ function renderDetail() {
       `<span class="dlabel">${esc(loc)}</span>`;
     head.appendChild(btn("×", "dclose", close));
     el.appendChild(head);
-
-    const conv = document.createElement("div");
-    conv.className = "msgs";
-    (t.comments || []).forEach((c) => {
-      const d = document.createElement("div");
-      d.className = "msg agent";
-      d.innerHTML = `<div class="who">${esc(c.author)}</div><div class="md">${md(c.body)}</div>`;
-      conv.appendChild(d);
-    });
-    el.appendChild(conv);
-
-    if (canThreads) {
-      const rwrap = document.createElement("div");
-      rwrap.className = "draft";
-      const ta = document.createElement("textarea");
-      ta.className = "draftbox"; ta.placeholder = "reply to this thread…";
-      ta.value = threadReplyBuf[t.id] || "";
-      ta.oninput = (e) => { threadReplyBuf[t.id] = e.target.value; };
-      ta.onfocus = () => { threadReplyFocused = t.id; };
-      ta.onblur = () => { if (threadReplyFocused === t.id) threadReplyFocused = null; };
-      const row = document.createElement("div");
-      row.className = "draftbtns";
-      row.appendChild(btn("Reply", "btn", () => replyThread(t.id)));
-      if (t.anchor)  // only diff-anchored discussions are resolvable on GitLab
-        row.appendChild(btn(t.resolved ? "Reopen" : "Resolve", "btn ghost",
-          () => resolveThread(t.id, !t.resolved)));
-      rwrap.appendChild(ta); rwrap.appendChild(row);
-      el.appendChild(rwrap);
-      if (threadReplyFocused === t.id) {
-        ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
-      }
-    }
+    el.appendChild(threadConversationBlock(t));
     return;
   }
 
@@ -859,7 +850,16 @@ function renderDetail() {
       el.appendChild(askContextControl(hl));
     }
   }
-  el.appendChild(draftEditor(hl.id, hl.id, draft));
+  // once posted, the reviewer's comment IS a live thread — show it inline (draft-as-thread)
+  const postedThread = posted && draft && draft.thread_id
+    ? (state.threads || []).find((x) => x.id === draft.thread_id) : null;
+  if (postedThread) {
+    const lbl = document.createElement("div"); lbl.className = "yourthread"; lbl.textContent = "your comment";
+    el.appendChild(lbl);
+    el.appendChild(threadConversationBlock(postedThread));
+  } else {
+    el.appendChild(draftEditor(hl.id, hl.id, draft));
+  }
 
   if (!posted && focusedDraft === hl.id) {  // restore focus across a WS re-render; never steal it
     const ta = el.querySelector("textarea.draftbox");
@@ -890,19 +890,43 @@ function draftEditor(key, anchor, draft) {
   ta.oninput = (e) => { draftBuffers[key] = e.target.value; };
   ta.onfocus = () => { focusedDraft = key; };
   ta.onblur = () => { if (focusedDraft === key) focusedDraft = null; };
+  wrap.appendChild(ta);
+
+  // an optional suggested change (line-anchored only) — coexists with the prose above
+  const canSuggest = anchor !== null && (!state.mr || (state.mr.capabilities || {}).suggestions !== false);
+  const sugActive = canSuggest && (suggOpen[key] || (draft && draft.suggestion != null));
+  let sta = null;
+  if (sugActive) {
+    const hl = state.highlights.find((h) => h.id === anchor);
+    const seed = (draft && draft.suggestion != null) ? draft.suggestion
+               : (hl ? newSideLines(hl.file, hl.line_range.start, hl.line_range.end) : "");
+    if (!(key in suggBuf)) suggBuf[key] = seed;
+    const lbl = document.createElement("div"); lbl.className = "suglbl"; lbl.textContent = "suggested change — edit the lines";
+    sta = document.createElement("textarea");
+    sta.className = "draftbox suggbox"; sta.spellcheck = false;
+    sta.value = suggBuf[key];
+    sta.oninput = (e) => { suggBuf[key] = e.target.value; };
+    wrap.appendChild(lbl); wrap.appendChild(sta);
+  }
+
   const row = document.createElement("div");
   row.className = "draftbtns";
   row.appendChild(btn(draft ? "Update" : "Save", "btn", () => {
     const body = ta.value.trim();
-    if (!body) return;
-    post({ type: "save_draft", highlight_id: anchor, body });
-    delete draftBuffers[key];
+    const suggestion = sugActive ? (suggBuf[key] != null ? suggBuf[key] : "") : null;
+    if (!body && !(suggestion && suggestion.trim())) return;   // need prose or a suggestion
+    post({ type: "save_draft", highlight_id: anchor, body, suggestion: suggestion });
+    delete draftBuffers[key]; delete suggBuf[key]; suggOpen[key] = false;
+  }));
+  if (canSuggest) row.appendChild(btn(sugActive ? "Drop suggestion" : "＋ Suggest a change", "btn ghost", () => {
+    if (sugActive) { suggOpen[key] = false; delete suggBuf[key]; }
+    else { suggOpen[key] = true; }
+    renderRail();
   }));
   if (draft) row.appendChild(btn("Remove", "btn ghost", () => {
     post({ type: "remove_draft", highlight_id: anchor });
-    delete draftBuffers[key];
+    delete draftBuffers[key]; delete suggBuf[key]; suggOpen[key] = false;
   }));
-  wrap.appendChild(ta);
   wrap.appendChild(row);
   return wrap;
 }
@@ -946,7 +970,22 @@ function threadRow(t) {
     (t.comments && t.comments.length > 1 ? `<span class="num">${t.comments.length}</span>` : "") +
     `</div><div class="prev">${esc(prev)}</div>`;
   row.onclick = () => { selected = { kind: "thread", id: t.id }; renderRail(); };
+  const m = matchingHighlight(t);   // anchored to a highlight → offer a jump
+  if (m) {
+    const jump = btn(`→ #${m.n}`, "btn ghost jump", (e) => {
+      e.stopPropagation(); selected = { kind: "hl", id: m.hl.id }; renderRail();
+    });
+    row.querySelector(".top").appendChild(jump);
+  }
   return row;
+}
+
+function matchingHighlight(t) {
+  if (!t.anchor || !t.anchor.file) return null;
+  const line = t.anchor.line;
+  const i = state.highlights.findIndex((h) => h.file === t.anchor.file && line != null &&
+    line >= h.line_range.start && line <= h.line_range.end);
+  return i >= 0 ? { hl: state.highlights[i], n: i + 1 } : null;
 }
 
 async function threadAction(path, body, okMsg) {
@@ -978,6 +1017,76 @@ async function resolveThread(tid, resolved) {
   if (await threadAction(`threads/${tid}/resolve`, { resolved }, resolved ? "resolved" : "reopened")) {
     await load();
   }
+}
+
+async function submitNoteEdit(tid, nid) {
+  const body = (noteEdit[nid] || "").trim();
+  if (!body) return;
+  if (await threadAction(`threads/${tid}/notes/${nid}/edit`, { body }, "edited")) {
+    delete noteEdit[nid]; await load();
+  }
+}
+
+async function deleteNote(tid, nid) {
+  if (!confirm("Delete this comment?")) return;
+  if (await threadAction(`threads/${tid}/notes/${nid}/delete`, {}, "deleted")) await load();
+}
+
+// the conversation for a thread — notes (edit/delete on your own) + reply + resolve.
+// Reused by the thread detail overlay and inline on a highlight whose comment became this thread.
+function threadConversationBlock(t) {
+  const canThreads = !state.mr || (state.mr.capabilities || {}).threads !== false;
+  const wrap = document.createElement("div");
+  const conv = document.createElement("div");
+  conv.className = "msgs";
+  (t.comments || []).forEach((c) => {
+    const d = document.createElement("div");
+    d.className = "msg agent";
+    if (noteEdit[c.id] !== undefined) {           // this note is being edited in place
+      const ta = document.createElement("textarea");
+      ta.className = "draftbox"; ta.value = noteEdit[c.id];
+      ta.oninput = (e) => { noteEdit[c.id] = e.target.value; };
+      const row = document.createElement("div"); row.className = "draftbtns";
+      row.appendChild(btn("Save", "btn", () => submitNoteEdit(t.id, c.id)));
+      row.appendChild(btn("Cancel", "btn ghost", () => { delete noteEdit[c.id]; renderRail(); }));
+      d.innerHTML = `<div class="who">${esc(c.author)}</div>`;
+      d.appendChild(ta); d.appendChild(row);
+    } else {
+      d.innerHTML = `<div class="who">${esc(c.author)}</div><div class="md">${md(c.body)}</div>`;
+      if (canThreads && me && c.author === me) {    // your own note → edit / delete
+        const acts = document.createElement("div"); acts.className = "noteacts";
+        acts.appendChild(btn("edit", "btn ghost", () => { noteEdit[c.id] = c.body; renderRail(); }));
+        acts.appendChild(btn("delete", "btn ghost", () => deleteNote(t.id, c.id)));
+        d.appendChild(acts);
+      }
+    }
+    conv.appendChild(d);
+  });
+  wrap.appendChild(conv);
+
+  if (canThreads) {
+    const rwrap = document.createElement("div");
+    rwrap.className = "draft";
+    const ta = document.createElement("textarea");
+    ta.className = "draftbox"; ta.placeholder = "reply to this thread…";
+    ta.value = threadReplyBuf[t.id] || "";
+    ta.oninput = (e) => { threadReplyBuf[t.id] = e.target.value; };
+    ta.onfocus = () => { threadReplyFocused = t.id; };
+    ta.onblur = () => { if (threadReplyFocused === t.id) threadReplyFocused = null; };
+    const row = document.createElement("div");
+    row.className = "draftbtns";
+    row.appendChild(btn("Reply", "btn", () => replyThread(t.id)));
+    if (t.anchor)  // only diff-anchored discussions are resolvable
+      row.appendChild(btn(t.resolved ? "Reopen" : "Resolve", "btn ghost",
+        () => resolveThread(t.id, !t.resolved)));
+    rwrap.appendChild(ta); rwrap.appendChild(row);
+    wrap.appendChild(rwrap);
+    if (threadReplyFocused === t.id) setTimeout(() => {
+      const el2 = rwrap.querySelector("textarea");
+      if (el2) { el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); }
+    }, 0);
+  }
+  return wrap;
 }
 
 function renderReviewBar(el) {
