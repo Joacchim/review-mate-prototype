@@ -88,6 +88,7 @@ class Highlight(BaseModel):
     question: str | None = None
     author: Origin = Origin.BROWSER
     created_at: str = ""
+    created_sha: str | None = None     # MR head SHA when made — flags "older version" after a push
     status: HighlightStatus = HighlightStatus.OPEN
     context_requested: bool = False    # the reviewer escalated this to the agent tier (D21)
 

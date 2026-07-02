@@ -31,6 +31,7 @@ let me = null;                       // the reviewer's own host username (to mar
 const suggBuf = {};                  // draft key -> in-progress suggested-change text
 const suggOpen = {};                 // draft key -> whether the suggestion editor is open
 const noteEdit = {};                 // note_id -> in-progress edit text (null/absent = not editing)
+let reviewStatus = null;             // {behind, watermark, head} — diff-versions awareness
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -222,7 +223,23 @@ async function loadRef(ref) {
 async function load() {
   state = await fetch(`/api/sessions/${SID}`).then((r) => r.json());
   if (!currentFile && state.files.length) currentFile = state.files[0].path;
+  try { reviewStatus = await fetch(`/api/sessions/${SID}/review-status`).then((r) => r.json()); }
+  catch (e) { reviewStatus = null; }
   render();
+}
+
+// a highlight made against an earlier MR head — its lines may have moved since (diff-versions)
+function isStale(hl) {
+  return !!(hl.created_sha && state.mr && state.mr.sha && hl.created_sha !== state.mr.sha);
+}
+
+async function markReviewed() {
+  setStatus("marking reviewed…");
+  try {
+    await fetch(`/api/sessions/${SID}/mark-reviewed`, { method: "POST" });
+    setStatus("marked reviewed up to the current version");
+    await load();
+  } catch (e) { setStatus("✕ " + e); }
 }
 
 let wsTimer = null;
@@ -620,6 +637,7 @@ function renderRail() {
   const el = $("rail");
   el.innerHTML = "";
 
+  renderVersionBanner(el);      // "updated since your last review" (diff-versions)
   renderReviewBar(el);          // sticky submit + counts
   renderMrRow(el);              // the MR-level review comment, pinned above the index
   renderRailTools(el);          // filter chips + text search
@@ -714,6 +732,7 @@ function hlRow(hl, n) {
     `<button class="x" title="discard">×</button>` +
     `<div class="top"><span class="num">#${n}</span>` +
     `<span class="chip ${st}">${chipLabel}</span>` +
+    (isStale(hl) ? `<span class="chip stale" title="made on an earlier version — its lines may have moved">older ver</span>` : "") +
     `<span class="loc">${esc(loc)}</span></div>` +
     `<div class="prev">${esc(prev)}</div>`;
   row.onclick = () => { selected = { kind: "hl", id: hl.id }; renderRail(); };
@@ -1087,6 +1106,15 @@ function threadConversationBlock(t) {
     }, 0);
   }
   return wrap;
+}
+
+function renderVersionBanner(el) {
+  if (!reviewStatus || !reviewStatus.behind) return;
+  const bar = document.createElement("div");
+  bar.className = "verbanner";
+  bar.appendChild(document.createTextNode("Updated since your last review"));
+  bar.appendChild(btn("Mark reviewed", "btn ghost", markReviewed));
+  el.appendChild(bar);
 }
 
 function renderReviewBar(el) {

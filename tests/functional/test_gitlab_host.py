@@ -34,12 +34,18 @@ PROJECTS = [{"path_with_namespace": "group/proj"}]
 BLAME = [{"commit": {"id": "abc123def456", "author_name": "dev", "committed_date": "2026-01-02",
                      "title": "add the guard"}, "lines": ["x = 1"]}]
 CLOSES_ISSUES = [{"iid": 7, "title": "Fix the leak", "web_url": "https://gitlab/group/proj/-/issues/7"}]
+VERSIONS = [{"base_commit_sha": "base2", "head_commit_sha": "head2", "start_commit_sha": "s2",
+             "created_at": "2026-02-02"},
+            {"base_commit_sha": "base1", "head_commit_sha": "head1", "start_commit_sha": "s1",
+             "created_at": "2026-01-01"}]
 
 
 def _handler(request: httpx.Request) -> httpx.Response:
     p = request.url.path
     params = dict(request.url.params)
     # sub-resources of a specific MR
+    if p.endswith("/versions"):
+        return httpx.Response(200, json=VERSIONS)
     if p.endswith("/blame"):
         return httpx.Response(200, json=BLAME)
     if p.endswith("/closes_issues"):
@@ -102,6 +108,13 @@ async def test_review_queue(provider):  # AC-5
 async def test_issue_related_mrs(provider):  # AC-6
     refs = await provider.issue_related_mrs("group/proj", 5)
     assert [r.iid for r in refs] == [42, 43]
+
+
+async def test_mr_versions_maps_bases_and_heads(provider):
+    vs = await provider.mr_versions(MRRef(host="gitlab", project="group/proj", iid=42))
+    assert vs[0] == {"base_sha": "base2", "head_sha": "head2", "start_sha": "s2",
+                     "created_at": "2026-02-02"}
+    assert [v["head_sha"] for v in vs] == ["head2", "head1"]
 
 
 async def test_blame_maps_last_touch(provider):

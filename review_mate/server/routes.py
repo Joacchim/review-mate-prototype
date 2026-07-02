@@ -23,7 +23,7 @@ ACTIVITY_TIMEOUT = 50.0
 
 
 def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broker=None,
-                 writeback=None, activity_broker=None) -> list:
+                 writeback=None, activity_broker=None, kb=None) -> list:
     async def create_session(request: Request) -> JSONResponse:
         body = await _maybe_json(request)
         raw = body.get("ref") if isinstance(body, dict) else None
@@ -178,8 +178,33 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
                 approved = True
             except Exception as exc:
                 approve_error = str(exc)
+        if kb is not None and snap.mr.sha:   # submitting a review advances the reviewed watermark
+            kb.set_watermark(snap.mr.host, snap.mr.project, snap.mr.iid, snap.mr.sha)
         return JSONResponse({"posted": posted, "total": len(pending), "results": results,
                              "approved": approved, "approve_error": approve_error})
+
+    async def mark_reviewed(request: Request) -> JSONResponse:
+        """Advance the reviewed watermark to the current head without submitting (diff-versions)."""
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        snap = actor.snapshot()
+        if snap.mr is None or kb is None:
+            return JSONResponse({"error": "unavailable"}, status_code=400)
+        kb.set_watermark(snap.mr.host, snap.mr.project, snap.mr.iid, snap.mr.sha)
+        return JSONResponse({"ok": True, "watermark": snap.mr.sha})
+
+    async def review_status(request: Request) -> JSONResponse:
+        """Whether the MR advanced past the reviewer's watermark (diff-versions awareness)."""
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        snap = actor.snapshot()
+        if snap.mr is None:
+            return JSONResponse({"behind": False, "watermark": None, "head": None})
+        wm = kb.get_watermark(snap.mr.host, snap.mr.project, snap.mr.iid) if kb is not None else None
+        return JSONResponse({"head": snap.mr.sha, "watermark": wm,
+                             "behind": bool(wm and wm != snap.mr.sha)})
 
     async def _remirror_threads(actor, ref) -> list:
         """Re-pull the MR's discussions from the host and re-mirror them into session state
@@ -355,6 +380,8 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/sessions/{id}/threads/{tid}/notes/{nid}/edit", edit_note, methods=["POST"]),
         Route("/api/sessions/{id}/threads/{tid}/notes/{nid}/delete", delete_note, methods=["POST"]),
         Route("/api/sessions/{id}/refresh-threads", refresh_threads, methods=["POST"]),
+        Route("/api/sessions/{id}/mark-reviewed", mark_reviewed, methods=["POST"]),
+        Route("/api/sessions/{id}/review-status", review_status, methods=["GET"]),
         Route("/api/me", whoami, methods=["GET"]),
         Route("/api/sessions/{id}/context", context, methods=["GET"]),
         WebSocketRoute("/api/sessions/{id}/stream", stream),

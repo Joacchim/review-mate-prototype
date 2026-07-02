@@ -55,7 +55,8 @@ def create_app(manager: SessionManager | None = None,
                with_mcp: bool = True,
                resolve_ref=None,
                provider=None,
-               writeback=None) -> Starlette:
+               writeback=None,
+               kb=None) -> Starlette:
     # the activity channel — ephemeral notification spine; one watcher covers every session
     # (review-fleet). The composition root owns it, wired in before restore_all attaches the
     # per-actor republishers.
@@ -74,8 +75,13 @@ def create_app(manager: SessionManager | None = None,
     from review_mate.lookup.broker import LookupBroker
     broker = LookupBroker()
 
+    # the user-wide review knowledge base — here it holds the per-MR reviewed watermark (diff-versions)
+    if kb is None:
+        from review_mate.kb.store import ReviewKB
+        kb = ReviewKB()
+
     routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider, broker=broker,
-                          writeback=writeback, activity_broker=activity_broker)
+                          writeback=writeback, activity_broker=activity_broker, kb=kb)
 
     mcp_app = None
     if with_mcp:
@@ -102,4 +108,5 @@ def create_app(manager: SessionManager | None = None,
     app.state.manager = manager
     app.state.broker = broker
     app.state.activity_broker = activity_broker
+    app.state.kb = kb
     return app

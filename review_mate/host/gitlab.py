@@ -186,6 +186,18 @@ class GitLabProvider:
         return await self._get(f"/projects/{quote(path, safe='')}/merge_requests",
                                params={"state": "opened", "order_by": "updated_at", "per_page": per_page})
 
+    async def mr_versions(self, ref: MRRef) -> list[dict]:
+        """The MR's diff versions (newest first): per-push base/head SHAs, for a base-aware
+        interdiff (diff-versions). Best-effort: [] on error / when unsupported."""
+        try:
+            rows = await self._get(
+                f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}/versions")
+        except httpx.HTTPError:
+            return []
+        return [{"base_sha": r.get("base_commit_sha"), "head_sha": r.get("head_commit_sha"),
+                 "start_sha": r.get("start_commit_sha"), "created_at": r.get("created_at", "")}
+                for r in rows]
+
     async def fetch_threads(self, ref: MRRef) -> list[ReviewThread]:
         """The MR's discussions, mapped to the host-neutral review model — the read side of the
         thread-conversation surface (used by initial load and by on-demand refresh)."""

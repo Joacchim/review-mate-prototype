@@ -33,6 +33,7 @@ class _KBData(BaseModel):
     repos: dict[str, RepoInfo] = Field(default_factory=dict)
     relationships: list[Relationship] = Field(default_factory=list)
     prefs: dict[str, object] = Field(default_factory=dict)
+    watermarks: dict[str, str] = Field(default_factory=dict)  # "host/project!iid" → reviewed head SHA
 
 
 class ReviewKB:
@@ -86,6 +87,19 @@ class ReviewKB:
 
     def get_pref(self, key: str, default=None):
         return self._data.prefs.get(key, default)
+
+    # --- reviewed watermark (diff-versions: the head SHA reviewed up to, per MR) -------------
+
+    @staticmethod
+    def _wm_key(host: str, project: str, iid) -> str:
+        return f"{host}/{project}!{iid}"
+
+    def get_watermark(self, host: str, project: str, iid) -> str | None:
+        return self._data.watermarks.get(self._wm_key(host, project, iid))
+
+    def set_watermark(self, host: str, project: str, iid, sha: str) -> None:
+        self._data.watermarks[self._wm_key(host, project, iid)] = sha
+        self._save()
 
     # --- seeding ------------------------------------------------------------
 

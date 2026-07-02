@@ -193,7 +193,8 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
     if isinstance(command, AddHighlight):
         hl = Highlight(id=_id(), file=command.file, side=command.side,
                        line_range=command.line_range, anchor=command.anchor,
-                       question=command.question, author=origin, created_at=ts)
+                       question=command.question, author=origin, created_at=ts,
+                       created_sha=state.mr.sha if state.mr else None)
         return emit(ev.HighlightAdded, highlight=hl)
 
     if isinstance(command, RemoveHighlight):

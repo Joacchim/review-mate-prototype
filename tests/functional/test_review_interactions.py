@@ -67,11 +67,14 @@ class StubProvider:
 
 
 async def _app_client(tmp_path, writer, provider):
+    from review_mate.kb.store import ReviewKB
     manager = SessionManager(root=tmp_path / "s")
+    kb = ReviewKB(root=tmp_path / "kb")            # tmp-rooted — never touch the real ~/.review-mate
     app = create_app(manager=manager, with_mcp=False, provider=provider,
-                     writeback=Writeback(manager, writer))
+                     writeback=Writeback(manager, writer), kb=kb)
     sid = await manager.create()
     await manager.get(sid).submit(ApplyMRMetadata(mr=MR), Origin.SYSTEM)
+    manager._test_kb = kb                          # expose to tests
     transport = httpx.ASGITransport(app=app)
     client = httpx.AsyncClient(transport=transport, base_url="http://t")
     return manager, sid, client
@@ -212,6 +215,40 @@ async def test_whoami_returns_reviewer_username(tmp_path):
     manager, sid, client = await _app_client(tmp_path, StubWriter(), NamedProvider())
     async with client:
         assert (await client.get("/api/me")).json() == {"username": "reviewer-joe"}
+    await manager.shutdown()
+
+
+async def test_review_status_and_mark_reviewed(tmp_path):
+    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
+    kb = manager._test_kb
+    async with client:
+        assert (await client.get(f"/api/sessions/{sid}/review-status")).json()["behind"] is False
+        kb.set_watermark(MR.host, MR.project, MR.iid, "old-sha")   # a prior review at an older head
+        st = (await client.get(f"/api/sessions/{sid}/review-status")).json()
+        assert st["behind"] is True and st["watermark"] == "old-sha" and st["head"] == "s"
+        assert (await client.post(f"/api/sessions/{sid}/mark-reviewed", json={})).json()["watermark"] == "s"
+        assert kb.get_watermark(MR.host, MR.project, MR.iid) == "s"
+        assert (await client.get(f"/api/sessions/{sid}/review-status")).json()["behind"] is False
+    await manager.shutdown()
+
+
+async def test_submit_advances_watermark(tmp_path):
+    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
+    kb = manager._test_kb
+    async with client:
+        kb.set_watermark(MR.host, MR.project, MR.iid, "old-sha")
+        await client.post(f"/api/sessions/{sid}/submit-review", json={})
+        assert kb.get_watermark(MR.host, MR.project, MR.iid) == "s"   # submitting advances it
+    await manager.shutdown()
+
+
+async def test_highlight_records_created_sha(tmp_path):
+    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
+    async with client:
+        actor = manager.get(sid)
+        await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+                                        line_range=LineRange(start=1, end=1)), Origin.BROWSER)
+        assert actor.snapshot().highlights[0].created_sha == "s"   # the MR head at creation
     await manager.shutdown()
 
 

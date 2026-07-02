@@ -40,3 +40,14 @@ def test_seed_preserves_enrichment(tmp_path):  # AC-6
              RepoInfo(project="g/q", group="g", purpose="seeded", mirror_path="")])
     assert kb.get_repo("g/p").purpose == "hand-written purpose"  # not clobbered
     assert kb.get_repo("g/q").purpose == "seeded"               # new one added
+
+
+def test_watermark_roundtrip_and_persists(tmp_path):  # diff-versions
+    kb = ReviewKB(root=tmp_path / "home")
+    assert kb.get_watermark("gitlab", "g/p", 42) is None
+    kb.set_watermark("gitlab", "g/p", 42, "sha-abc")
+    assert kb.get_watermark("gitlab", "g/p", 42) == "sha-abc"
+    # a fresh store over the same root reads the persisted watermark
+    assert ReviewKB(root=tmp_path / "home").get_watermark("gitlab", "g/p", 42) == "sha-abc"
+    # keyed per MR — a different iid is independent
+    assert kb.get_watermark("gitlab", "g/p", 43) is None
