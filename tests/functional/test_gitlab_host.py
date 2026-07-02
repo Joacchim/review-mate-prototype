@@ -9,7 +9,8 @@ from review_mate.host.base import GITLAB_CAPABILITIES
 from review_mate.seams import MRRef, MRSource
 
 
-PROJECT = {"path_with_namespace": "group/proj", "http_url_to_repo": "https://gitlab/group/proj.git"}
+PROJECT = {"path_with_namespace": "group/proj", "http_url_to_repo": "https://gitlab/group/proj.git",
+           "ssh_url_to_repo": "git@gitlab:group/proj.git"}
 MR = {"iid": 42, "title": "Add thing", "source_branch": "feat", "target_branch": "main",
       "sha": "deadbeef", "author": {"username": "dev"}, "web_url": "https://gitlab/group/proj/-/merge_requests/42"}
 CHANGES = {"changes": [
@@ -81,6 +82,18 @@ def _handler(request: httpx.Request) -> httpx.Response:
     return httpx.Response(404, json={})
 
 
+def test_glab_git_protocol_per_host_overrides_global(tmp_path, monkeypatch):
+    from review_mate.host.config import _glab_git_protocol
+    cfgdir = tmp_path / "glab-cli"; cfgdir.mkdir()
+    (cfgdir / "config.yml").write_text(
+        "git_protocol: https\nhosts:\n    gitlab.com:\n        git_protocol: ssh\n        user: me\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert _glab_git_protocol("gitlab.com") == "ssh"     # the host's own block wins
+    assert _glab_git_protocol("other.host") == "https"   # no block → the global default
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "absent"))
+    assert _glab_git_protocol("gitlab.com") is None      # no glab config → caller defaults to https
+
+
 @pytest.fixture
 def provider():
     client = httpx.AsyncClient(transport=httpx.MockTransport(_handler),
@@ -97,8 +110,18 @@ async def test_load_maps_payload(provider):  # AC-1, 7
     payload = await provider.load(MRRef(host="gitlab", project="group/proj", iid=42))
     assert payload.mr.iid == 42 and payload.mr.title == "Add thing"
     assert payload.mr.author == "dev"
-    assert payload.clone_url == "https://gitlab/group/proj.git"
+    assert payload.clone_url == "https://gitlab/group/proj.git"   # default: HTTPS clone URL
     assert [f.path for f in payload.files] == ["a.py", "b.py"]
+
+
+async def test_load_uses_ssh_clone_url_when_protocol_is_ssh():
+    # honoring the git access method the user chose in glab (git_protocol: ssh)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_handler), base_url="https://gitlab/api/v4")
+    p = GitLabProvider(base_url="https://gitlab/api/v4", token="t", username="me",
+                       host="gitlab", client=client, git_protocol="ssh")
+    payload = await p.load(MRRef(host="gitlab", project="group/proj", iid=42))
+    assert payload.clone_url == "git@gitlab:group/proj.git"
+    assert payload.mr.clone_url == "git@gitlab:group/proj.git"
     assert payload.files[1].change_type.value == "added"
     assert len(payload.threads) == 1 and payload.threads[0].comments[0].body == "nit"
     assert payload.mr.capabilities == GITLAB_CAPABILITIES

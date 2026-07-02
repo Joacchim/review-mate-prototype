@@ -18,11 +18,13 @@ from review_mate.host.gitlab import GitLabProvider, GitLabWriter
 
 
 class GitLabConfig:
-    def __init__(self, base_url: str, token: str, username: str, host: str):
+    def __init__(self, base_url: str, token: str, username: str, host: str,
+                 git_protocol: str = "https"):
         self.base_url = base_url          # …/api/v4
         self.token = token
         self.username = username
         self.host = host
+        self.git_protocol = git_protocol  # ssh|https — the git access method chosen in glab
 
 
 def _glab_credentials() -> tuple[str | None, str | None, str | None]:
@@ -40,6 +42,23 @@ def _glab_credentials() -> tuple[str | None, str | None, str | None]:
     if not token or set(token) <= {"*"}:  # masked or absent — fall back to the config file
         return _glab_config_credentials()
     return host, token, user
+
+
+def _glab_git_protocol(host: str | None) -> str | None:
+    """The git access method the user configured in glab — per-host block wins over the global
+    default. glab lets the user pick ssh or https; review-mate clones over whichever they chose."""
+    cfg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "glab-cli" / "config.yml"
+    if not cfg.exists():
+        return None
+    text = cfg.read_text()
+    if host:  # the host's own block (indented under `hosts:`) overrides the top-level default
+        block = re.search(rf"^\s+{re.escape(host)}:\s*$(.*?)(?=^\S|\Z)", text, re.M | re.S)
+        if block:
+            per_host = re.search(r"git_protocol:\s*(\w+)", block.group(1))
+            if per_host:
+                return per_host.group(1)
+    top = re.search(r"^git_protocol:\s*(\w+)", text, re.M)
+    return top.group(1) if top else None
 
 
 def _glab_config_credentials() -> tuple[str | None, str | None, str | None]:
@@ -71,7 +90,10 @@ def resolve_gitlab_config() -> GitLabConfig | None:
         host = g_host or "gitlab.com"
         base = f"https://{host}/api/v4"
     host = urlparse(base).netloc
-    return GitLabConfig(base_url=base, token=token, username=(user or g_user or ""), host=host)
+    protocol = (os.environ.get("REVIEW_MATE_GIT_PROTOCOL")
+                or _glab_git_protocol(host) or "https").lower()
+    return GitLabConfig(base_url=base, token=token, username=(user or g_user or ""),
+                        host=host, git_protocol=protocol)
 
 
 def _token_reloader():
@@ -85,7 +107,7 @@ def build_gitlab_provider(config: GitLabConfig,
                           client: httpx.AsyncClient | None = None) -> GitLabProvider:
     return GitLabProvider(base_url=config.base_url, token=config.token,
                           username=config.username, host=config.host, client=client,
-                          reload_token=_token_reloader)
+                          reload_token=_token_reloader, git_protocol=config.git_protocol)
 
 
 def build_gitlab_writer(config: GitLabConfig,

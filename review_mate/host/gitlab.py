@@ -39,11 +39,13 @@ async def _authed(client: httpx.AsyncClient, obj, method: str, url: str, **kw):
 
 class GitLabProvider:
     def __init__(self, base_url: str, token: str, username: str, host: str = "gitlab",
-                 client: httpx.AsyncClient | None = None, reload_token=None):
+                 client: httpx.AsyncClient | None = None, reload_token=None,
+                 git_protocol: str = "https"):
         self.base_url = base_url
         self.token = token
         self.username = username
         self.host = host
+        self.git_protocol = git_protocol   # the git access method the user chose in glab (ssh|https)
         self._reload_token = reload_token   # () -> fresh token | None (live credential reload)
         self._client = client or httpx.AsyncClient(
             base_url=base_url, headers={"Authorization": f"Bearer {token}"},
@@ -66,7 +68,7 @@ class GitLabProvider:
             iid=mr["iid"], title=mr["title"],
             source_branch=mr["source_branch"], target_branch=mr["target_branch"],
             sha=mr["sha"], author=(mr.get("author") or {}).get("username", ""),
-            url=mr.get("web_url", ""), clone_url=proj.get("http_url_to_repo", ""),
+            url=mr.get("web_url", ""), clone_url=_clone_url(proj, self.git_protocol),
             capabilities=self.capabilities(),
             diff_refs=mr.get("diff_refs") or {},
         )
@@ -74,7 +76,7 @@ class GitLabProvider:
             mr=metadata,
             files=[_to_file(c) for c in changes.get("changes", [])],
             threads=threads,
-            clone_url=proj.get("http_url_to_repo", ""),
+            clone_url=_clone_url(proj, self.git_protocol),
         )
 
     async def review_queue(self) -> list[MRRef]:
@@ -394,6 +396,15 @@ def _to_file(change: dict) -> FileEntry:
     old = change.get("old_path")
     return FileEntry(path=path, old_path=old if old and old != path else None,
                      change_type=ct, hunks=[{"diff": change.get("diff", "")}])
+
+
+def _clone_url(proj: dict, git_protocol: str) -> str:
+    """The clone URL matching the git access method the user chose in glab. SSH → ssh_url_to_repo
+    (the workspace clones with the user's ambient SSH key — no token, no secret on disk); otherwise
+    the HTTPS URL. Falls back to HTTPS if the host didn't advertise an SSH URL."""
+    if git_protocol == "ssh" and proj.get("ssh_url_to_repo"):
+        return proj["ssh_url_to_repo"]
+    return proj.get("http_url_to_repo", "")
 
 
 def _to_thread(discussion: dict) -> ReviewThread:

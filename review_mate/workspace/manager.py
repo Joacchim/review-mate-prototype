@@ -102,6 +102,7 @@ class WorkspaceManager:
         # Never let git block on an interactive credential prompt (no ambient creds → the request
         # would hang forever). Fail fast and bounded: prompts off, stdin closed, hard timeout.
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+        env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")   # SSH clones fail fast, never prompt
         proc = await asyncio.create_subprocess_exec(
             "git", *args,
             stdin=asyncio.subprocess.DEVNULL,
