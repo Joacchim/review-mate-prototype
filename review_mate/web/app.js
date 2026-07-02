@@ -1066,7 +1066,9 @@ async function threadAction(path, body, okMsg) {
 }
 
 async function refreshThreads() {
-  if (await threadAction("refresh-threads", {}, "discussions refreshed")) await load();
+  // re-syncs the whole MR from the host (head + diff + discussions), not just threads — so an
+  // updated MR is noticed and the "Since last review" banner can appear (diff-versions)
+  if (await threadAction("refresh-threads", {}, "re-synced with host")) await load();
 }
 
 async function replyThread(tid) {

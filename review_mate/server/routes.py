@@ -13,7 +13,9 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from review_mate.seams import MRRef, RepoRef
-from review_mate.session.commands import ApplyThread, MarkDraftPosted, parse_command
+from review_mate.session.commands import (
+    ApplyFiles, ApplyMRMetadata, ApplyThread, MarkDraftPosted, parse_command,
+)
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import DraftStatus, Origin
 
@@ -360,6 +362,18 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         ref = _thread_ref(actor)
         if ref is None:
             return JSONResponse({"error": "no MR loaded"}, status_code=400)
+        # Full re-sync from the host (the single source of truth): MR head + diff + discussions.
+        # A thread-only refresh left snap.mr.sha frozen at session creation, so an updated MR was
+        # never noticed — review-status compared the watermark against a stale head equal to it and
+        # "Since last review" (diff-versions) never engaged. Re-pull metadata + files when the host
+        # supports a full load; fall back to a thread-only re-mirror otherwise.
+        if provider is not None and hasattr(provider, "load"):
+            payload = await provider.load(ref)
+            await actor.submit(ApplyMRMetadata(mr=payload.mr), Origin.SYSTEM)
+            await actor.submit(ApplyFiles(files=payload.files), Origin.SYSTEM)
+            for t in payload.threads:
+                await actor.submit(ApplyThread(thread=t), Origin.SYSTEM)
+            return JSONResponse({"threads": len(payload.threads), "head": payload.mr.sha})
         threads = await _remirror_threads(actor, ref)
         return JSONResponse({"threads": len(threads)})
 

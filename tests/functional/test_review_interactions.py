@@ -232,6 +232,29 @@ async def test_review_status_and_mark_reviewed(tmp_path):
     await manager.shutdown()
 
 
+async def test_refresh_resyncs_advanced_head(tmp_path):
+    """Refresh re-pulls MR metadata, so a head that advanced since session creation is noticed:
+    review-status flips to 'behind' the watermark from the earlier review (diff-versions). Without
+    this, the session's head stayed frozen and 'Since last review' never engaged."""
+    from review_mate.seams import MRPayload
+
+    class LoadProvider(StubProvider):
+        """Its full load() returns the advanced head — the host having moved on since we opened."""
+        async def load(self, ref):
+            return MRPayload(mr=MR.model_copy(update={"sha": "head-2"}), files=[], threads=[])
+
+    manager, sid, client = await _app_client(tmp_path, StubWriter(), LoadProvider())
+    kb = manager._test_kb
+    async with client:
+        kb.set_watermark(MR.host, MR.project, MR.iid, "s")           # reviewed up to the opening head
+        assert (await client.get(f"/api/sessions/{sid}/review-status")).json()["behind"] is False
+        assert (await client.post(f"/api/sessions/{sid}/refresh-threads", json={})).json()["head"] == "head-2"
+        st = (await client.get(f"/api/sessions/{sid}/review-status")).json()
+        assert st == {"head": "head-2", "watermark": "s", "behind": True}
+    assert manager.get(sid).snapshot().mr.sha == "head-2"            # session now reflects the new head
+    await manager.shutdown()
+
+
 async def test_submit_advances_watermark(tmp_path):
     manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
     kb = manager._test_kb
