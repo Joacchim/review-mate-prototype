@@ -1159,7 +1159,9 @@ function renderVersionBanner(el) {
   if (!reviewStatus || !reviewStatus.behind) return;
   const bar = document.createElement("div");
   bar.className = "verbanner";
-  bar.appendChild(document.createTextNode("Updated since your last review"));
+  const lbl = document.createElement("span"); lbl.className = "vblabel";
+  lbl.textContent = "Updated since your last review";
+  bar.appendChild(lbl);
   const controls = document.createElement("div"); controls.className = "vbctl";
   const cap = state.mr && (state.mr.capabilities || {}).diff_versions === true;
   const toggle = btn(sinceLast ? "Full diff" : "Since last review",

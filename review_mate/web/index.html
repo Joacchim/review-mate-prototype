@@ -103,7 +103,9 @@
   .yourthread{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--fg2);margin:4px 0}
   .msg .noteacts{margin-top:3px;display:flex;gap:6px} .msg .noteacts .btn{font-size:10px;padding:0 4px}
   .hrow .btn.jump{margin-left:auto;font-size:10px;padding:0 5px}
-  .verbanner{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--accent-soft,#26324a);border:1px solid var(--accent-line,#3a4a6b);border-radius:8px;padding:8px 11px;margin-bottom:10px;font-size:12px}
+  .verbanner{display:flex;align-items:center;justify-content:space-between;gap:8px;background:rgba(110,168,254,.13);border:1px solid rgba(110,168,254,.4);border-left:3px solid var(--accent);border-radius:8px;padding:9px 12px;margin-bottom:10px;font-size:12px}
+  .verbanner .vblabel{font-weight:600;color:var(--fg);display:flex;align-items:center;gap:7px}
+  .verbanner .vblabel::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px rgba(110,168,254,.22);flex:none}
   .chip.stale{background:#5a3a1a;color:#f0c890;border-color:#7a5a2a}
   .verbanner .vbctl{display:flex;gap:6px} .btn.on{background:var(--accent,#4a6bd0);color:#fff}
   pre.rangediff{white-space:pre;overflow-x:auto;font-family:var(--mono,monospace);font-size:12px;line-height:1.5;margin:0}
