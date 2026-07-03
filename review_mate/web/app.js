@@ -13,7 +13,8 @@ const draftBuffers = {};   // highlight_id -> in-progress review-comment text (s
 let focusedDraft = null;   // highlight_id of the focused draft textarea, to restore after render
 let repoTree = null;                 // all repo paths (lazy-loaded when "show all" is on)
 let showAll = localStorage.getItem("rm-showall") === "1";
-const fileContents = {};             // path -> content (cache for non-diff file views)
+const fileContents = {};             // path -> content (cache for non-diff file views + unfold)
+const expandedGaps = {};             // path -> Set of gap-start new-line numbers the reviewer unfolded
 let viewingPath = null;              // a non-diff file currently shown (plain view)
 let railFilter = "all";              // index filter: all | context | comment | posted
 let railQuery = "";                  // index text search (file + comment + question)
@@ -558,11 +559,92 @@ function renderFileDiff(el, files, suffix, interactive) {
   const hl = interactive ? highlightLines(file.path) : new Set();
   const table = document.createElement("table");
   table.className = "hunk";
-  (file.hunks || []).forEach((h) => {
-    (splitMode ? splitRows : unifiedRows)(h.diff || "", hl, table);
-  });
+  if (!splitMode && interactive) {
+    // the full diff, unified: render with "unfold" bands revealing the context between hunks
+    const fileDiff = (file.hunks || []).map((h) => h.diff || "").join("\n");
+    renderUnifiedUnfoldable(table, fileDiff, file.path, hl);
+  } else {
+    (file.hunks || []).forEach((h) => {
+      (splitMode ? splitRows : unifiedRows)(h.diff || "", hl, table);
+    });
+  }
   if (interactive) wireSelection(table, file.path);
   el.appendChild(table);
+}
+
+// parse a unified file diff into hunks carrying their new-side start/count (from the @@ header)
+function parseHunks(fileDiff) {
+  const hunks = [];
+  let cur = null;
+  (fileDiff || "").split("\n").forEach((raw) => {
+    if (raw.startsWith("@@")) {
+      const mn = raw.match(/\+(\d+)(?:,(\d+))?/);
+      const newStart = mn ? parseInt(mn[1], 10) : 1;
+      const newCount = mn && mn[2] !== undefined ? parseInt(mn[2], 10) : 1;
+      cur = { newStart, newCount, lines: [] };
+      hunks.push(cur);
+    } else if (cur && raw !== "") {
+      cur.lines.push(raw);
+    }
+  });
+  return hunks;
+}
+
+// unified diff with GitHub-style unfold: gaps between hunks show a "⋯ show N lines" band that
+// reveals the real context (fetched from the file blob) on click. Gap sizes come from the @@ line
+// numbers, so the bands render before any fetch; only the revealed text needs the full file.
+function renderUnifiedUnfoldable(table, fileDiff, path, hl) {
+  const hunks = parseHunks(fileDiff);
+  const lines = fileContents[path] !== undefined ? fileContents[path].split("\n") : null;
+  const exp = expandedGaps[path] || new Set();
+  let cursor = 1;   // next not-yet-shown new-side line number
+  hunks.forEach((h) => {
+    renderGap(table, path, cursor, h.newStart - 1, lines, exp, hl);
+    let newLine = h.newStart;
+    h.lines.forEach((raw) => {
+      const kind = raw[0] === "+" ? "add" : raw[0] === "-" ? "del" : "ctx";
+      const tr = document.createElement("tr");
+      tr.className = "line " + kind + (kind !== "del" && hl.has(newLine) ? " hl" : "");
+      const code = `<td class="code"${kind !== "del" ? ` data-line="${newLine}"` : ""}>${esc(raw)}</td>`;
+      tr.innerHTML = `<td class="ln">${kind === "del" ? "" : newLine}</td>${code}`;
+      if (kind !== "del") newLine += 1;
+      table.appendChild(tr);
+    });
+    cursor = h.newStart + h.newCount;
+  });
+  if (lines) renderGap(table, path, cursor, lines.length, lines, exp, hl);   // trailing gap (length known)
+}
+
+// a gap of new-side lines [from..to]: either the revealed context rows, or a clickable unfold band
+function renderGap(table, path, from, to, lines, exp, hl) {
+  if (to < from) return;
+  if (exp.has(from) && lines) {
+    for (let n = from; n <= to; n++) {
+      const text = lines[n - 1] !== undefined ? lines[n - 1] : "";
+      const tr = document.createElement("tr");
+      tr.className = "line ctx" + (hl.has(n) ? " hl" : "");
+      tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${esc(" " + text)}</td>`;
+      table.appendChild(tr);
+    }
+    return;
+  }
+  const count = to - from + 1;
+  const tr = document.createElement("tr");
+  tr.className = "expand";
+  tr.innerHTML = `<td class="ln">⋯</td><td class="code exp">⋯ show ${count} line${count > 1 ? "s" : ""}</td>`;
+  tr.onclick = () => expandGap(path, from);
+  table.appendChild(tr);
+}
+
+async function expandGap(path, from) {
+  (expandedGaps[path] = expandedGaps[path] || new Set()).add(from);
+  if (fileContents[path] === undefined) {   // reveal needs the full blob — fetch once, then re-render
+    try {
+      const d = await fetch(`/api/sessions/${SID}/file?path=${encodeURIComponent(path)}`).then((r) => r.json());
+      fileContents[path] = (d && typeof d.content === "string") ? d.content : "";
+    } catch (e) { fileContents[path] = ""; }
+  }
+  renderDiff();
 }
 
 // "since last review" — a normal diff of the author's net changes, rendered per-file like the full

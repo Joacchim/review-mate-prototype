@@ -48,6 +48,8 @@
   tr.add td.code{background:var(--add);color:var(--addfg)} tr.add td.ln{background:var(--addln)}
   tr.del td.code{background:var(--del);color:var(--delfg)} tr.del td.ln{background:var(--delln)}
   tr.hh td{color:var(--accent);background:var(--panel2)}
+  tr.expand td{background:var(--panel2);color:var(--fg2);cursor:pointer;user-select:none} tr.expand td.ln{color:var(--accent)}
+  tr.expand:hover td.code.exp{color:var(--accent);text-decoration:underline}
   tr.line td.code{cursor:pointer} tr.line:hover td.code{outline:1px solid var(--accent);outline-offset:-1px}
   tr.hl td.code{box-shadow:inset 3px 0 0 var(--accent)}
   td.gap{background:var(--bg)}
