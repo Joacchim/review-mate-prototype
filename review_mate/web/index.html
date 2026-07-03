@@ -108,7 +108,18 @@
   .verbanner .vblabel::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px rgba(110,168,254,.22);flex:none}
   .chip.stale{background:#5a3a1a;color:#f0c890;border-color:#7a5a2a}
   .verbanner .vbctl{display:flex;gap:6px} .btn.on{background:var(--accent,#4a6bd0);color:#fff}
-  pre.rangediff{white-space:pre;overflow-x:auto;font-family:var(--mono,monospace);font-size:12px;line-height:1.5;margin:0}
+  /* rebase-aware interdiff (git range-diff), colorized */
+  .rdiff{font-family:var(--mono,monospace);font-size:12px;line-height:1.55;overflow-x:auto;padding:6px 0}
+  .rdiff .rdln{white-space:pre;padding:0 16px}
+  .rdiff .rd-add{background:var(--add);color:var(--addfg)}
+  .rdiff .rd-del{background:var(--del);color:var(--delfg)}
+  .rdiff .rd-ctx{color:var(--fg2)}
+  .rdiff .rd-file{color:var(--accent);font-weight:600;padding-top:6px}
+  .rdiff .rdcommit{white-space:pre-wrap;padding:6px 16px;margin-top:8px;border-left:3px solid var(--line2);font-weight:600}
+  .rdiff .rd-cmod{border-left-color:#d0a24a;color:#f0c88a}
+  .rdiff .rd-cnew{border-left-color:var(--addln);color:var(--addfg)}
+  .rdiff .rd-cdrop{border-left-color:var(--delln);color:var(--delfg)}
+  .rdiff .rd-csame{color:var(--fg2)}
   .searcherr{background:#5a1f1f;border:1px solid #7a3030;color:#f0c0c0;border-radius:6px;padding:9px 11px;font-size:12.5px;line-height:1.5}
   /* review drafts (now inside the detail overlay) */
   .draft{border-top:1px dashed var(--line);margin-top:10px;padding-top:10px}

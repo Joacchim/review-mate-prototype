@@ -523,14 +523,40 @@ function renderSinceLast(el) {
   name.className = "fname"; name.textContent = "Changes since your last review · rebase noise excluded";
   el.appendChild(name);
   const d = sinceLastData;
+  if (d && !d.error && d.available !== false && !d.empty) { el.appendChild(rangeDiffView(d.interdiff)); return; }
   const box = document.createElement("div");
   box.style.padding = "12px 16px";
   if (!d) { box.className = "empty"; box.textContent = "computing the interdiff…"; }
   else if (d.available === false) { box.className = "empty"; box.textContent = "unavailable on this host"; }
   else if (d.error) { box.className = "empty"; box.textContent = "couldn't compute: " + d.error; }
-  else if (d.empty) { box.className = "empty"; box.textContent = d.note || "No author changes since your last review (a rebase brought no new work)."; }
-  else { const pre = document.createElement("pre"); pre.className = "rangediff"; pre.textContent = d.interdiff; box.appendChild(pre); }
+  else { box.className = "empty"; box.textContent = d.note || "No author changes since your last review (a rebase brought no new work)."; }
   el.appendChild(box);
+}
+
+// git range-diff is a diff-of-diffs — dense as raw text. Colorize it: per-commit correspondence
+// lines become labeled headers (modified/new/dropped/unchanged), @@ lines mark the file, and the
+// interdiff body is tinted add/del. Heuristic on the leading marker column — not a full parse.
+function rangeDiffView(text) {
+  const wrap = document.createElement("div");
+  wrap.className = "rdiff";
+  const commitRe = /^\s*(?:\d+|-):\s+\S+\s+([=!<>])\s+(?:\d+|-):\s+\S+/;
+  const opClass = { "!": "rd-cmod", ">": "rd-cnew", "<": "rd-cdrop", "=": "rd-csame" };
+  (text || "").split("\n").forEach((line) => {
+    const div = document.createElement("div");
+    div.className = "rdln";
+    const cm = line.match(commitRe);
+    if (cm) {
+      div.className += " rdcommit " + (opClass[cm[1]] || "rd-csame");
+    } else {
+      const body = line.startsWith("    ") ? line.slice(4) : line;   // drop range-diff's outer indent
+      const c = body[0];                                             // the interdiff marker column
+      div.className += body.startsWith("@@") ? " rd-file"
+        : c === "+" ? " rd-add" : c === "-" ? " rd-del" : " rd-ctx";
+    }
+    div.textContent = line || "​";   // keep blank lines from collapsing
+    wrap.appendChild(div);
+  });
+  return wrap;
 }
 
 function renderFileView(el, path) {
