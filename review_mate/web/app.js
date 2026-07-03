@@ -523,7 +523,11 @@ function renderSinceLast(el) {
   name.className = "fname"; name.textContent = "Changes since your last review · rebase noise excluded";
   el.appendChild(name);
   const d = sinceLastData;
-  if (d && !d.error && d.available !== false && !d.empty) { el.appendChild(rangeDiffView(d.interdiff)); return; }
+  if (d && !d.error && d.available !== false && !d.empty) {
+    // normal unified diff (preferred) — a diff-of-diffs range-diff only on a conflicting replay
+    el.appendChild(d.mode === "rangediff" ? rangeDiffView(d.interdiff) : unifiedDiffView(d.diff));
+    return;
+  }
   const box = document.createElement("div");
   box.style.padding = "12px 16px";
   if (!d) { box.className = "empty"; box.textContent = "computing the interdiff…"; }
@@ -531,6 +535,25 @@ function renderSinceLast(el) {
   else if (d.error) { box.className = "empty"; box.textContent = "couldn't compute: " + d.error; }
   else { box.className = "empty"; box.textContent = d.note || "No author changes since your last review (a rebase brought no new work)."; }
   el.appendChild(box);
+}
+
+// a normal unified diff (git diff) — the author's net changes since the reviewed version, rendered
+// like any ordinary diff so the reviewer just reads +/- against what they last saw
+function unifiedDiffView(text) {
+  const wrap = document.createElement("div");
+  wrap.className = "udiff";
+  (text || "").split("\n").forEach((line) => {
+    const div = document.createElement("div");
+    div.className = "udln";
+    if (/^(diff --git|index |--- |\+\+\+ |new file|deleted file|rename |similarity )/.test(line)) div.className += " u-file";
+    else if (line.startsWith("@@")) div.className += " u-hunk";
+    else if (line[0] === "+") div.className += " u-add";
+    else if (line[0] === "-") div.className += " u-del";
+    else div.className += " u-ctx";
+    div.textContent = line || "​";   // keep blank lines from collapsing
+    wrap.appendChild(div);
+  });
+  return wrap;
 }
 
 // git range-diff is a diff-of-diffs — dense as raw text. Render it as a proper dual-column split.

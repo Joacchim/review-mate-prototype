@@ -283,7 +283,7 @@ async def test_since_last_greyed_without_capability(tmp_path):
     await manager.shutdown()
 
 
-async def test_since_last_returns_the_interdiff(tmp_path):
+async def test_since_last_prefers_a_normal_diff(tmp_path):
     from review_mate.kb.store import ReviewKB
 
     class VProvider(StubProvider):
@@ -291,7 +291,38 @@ async def test_since_last_returns_the_interdiff(tmp_path):
             return [{"base_sha": "nb", "head_sha": "nh", "start_sha": "", "created_at": ""},
                     {"base_sha": "ob", "head_sha": "oldwm", "start_sha": "", "created_at": ""}]
 
-    class Ws:
+    class Ws:  # exposes since_diff → the route must prefer it and never fall back
+        async def since_diff(self, repo, ob, oh, nb, nh):
+            self.args = (ob, oh, nb, nh)
+            return "diff --git a/f.txt b/f.txt\n@@ -1 +1,2 @@\n ctx\n+new line\n"
+
+        async def range_diff(self, *a):
+            raise AssertionError("should not fall back to range-diff when since_diff succeeds")
+
+    mr = MRMetadata(host="gitlab", project="g/p", iid=42, title="T", source_branch="x",
+                    target_branch="m", sha="head-now", author="a", url="u", clone_url="cu",
+                    capabilities={"diff_versions": True})
+    manager = SessionManager(root=tmp_path / "s"); manager._workspace = Ws()
+    kb = ReviewKB(root=tmp_path / "kb"); kb.set_watermark("gitlab", "g/p", 42, "oldwm")
+    app = create_app(manager=manager, with_mcp=False, provider=VProvider(), kb=kb)
+    sid = await manager.create()
+    await manager.get(sid).submit(ApplyMRMetadata(mr=mr), Origin.SYSTEM)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        r = (await c.get(f"/api/sessions/{sid}/since-last")).json()
+    assert r["mode"] == "diff" and r["empty"] is False and "new line" in r["diff"]
+    assert manager._workspace.args == ("oldwm", "nb", "nh") or manager._workspace.args == ("ob", "oldwm", "nb", "nh")
+    await manager.shutdown()
+
+
+async def test_since_last_falls_back_to_range_diff(tmp_path):
+    from review_mate.kb.store import ReviewKB
+
+    class VProvider(StubProvider):
+        async def mr_versions(self, ref):
+            return [{"base_sha": "nb", "head_sha": "nh", "start_sha": "", "created_at": ""},
+                    {"base_sha": "ob", "head_sha": "oldwm", "start_sha": "", "created_at": ""}]
+
+    class Ws:  # no since_diff (or a conflicting replay) → the route uses the range-diff
         async def range_diff(self, repo, ob, oh, nb, nh):
             self.args = (ob, oh, nb, nh)
             return "1:  x ! 1:  y feat\n    @@ f.txt\n    +new line\n"

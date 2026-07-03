@@ -108,7 +108,14 @@
   .verbanner .vblabel::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px rgba(110,168,254,.22);flex:none}
   .chip.stale{background:#5a3a1a;color:#f0c890;border-color:#7a5a2a}
   .verbanner .vbctl{display:flex;gap:6px} .btn.on{background:var(--accent,#4a6bd0);color:#fff}
-  /* rebase-aware interdiff (git range-diff), rendered as a dual-column (old|new) split */
+  /* "since last review" as a normal unified diff (preferred) */
+  .udiff{font-family:var(--mono,monospace);font-size:12.5px;line-height:1.5;overflow-x:auto;padding:6px 0}
+  .udiff .udln{white-space:pre-wrap;word-break:break-word;padding:0 16px}
+  .udiff .u-add{background:var(--add);color:var(--addfg)}
+  .udiff .u-del{background:var(--del);color:var(--delfg)}
+  .udiff .u-hunk{color:var(--accent)}
+  .udiff .u-file{color:var(--fg2);font-weight:600;padding-top:8px}
+  /* rebase-aware interdiff (git range-diff), dual-column (old|new) split — conflict fallback only */
   .rdiff{font-family:var(--mono,monospace);font-size:12px;line-height:1.55;overflow-x:auto;padding:6px 0}
   .rdiff .rdlegend{font-family:var(--sans,inherit);font-size:10.5px;color:var(--fg2);padding:2px 16px 8px}
   .rdiff .rdln{white-space:pre-wrap;padding:0 16px}

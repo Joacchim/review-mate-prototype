@@ -209,8 +209,10 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
                              "behind": bool(wm and wm != snap.mr.sha)})
 
     async def since_last(request: Request) -> JSONResponse:
-        """The rebase-aware delta since the reviewer's watermark — a base-aware interdiff
-        (git range-diff over the version bases). Greyed (available:False) where unsupported."""
+        """The delta since the reviewer's watermark, with target-branch (rebase) noise excluded.
+        Preferred form is a *normal* unified diff against the reviewed version (mode "diff"); it
+        falls back to the raw git range-diff (mode "rangediff") only when a replay conflicts.
+        Greyed (available:False) where unsupported."""
         actor = manager.get(request.path_params["id"])
         if actor is None:
             return JSONResponse({"error": "unknown session"}, status_code=404)
@@ -223,21 +225,32 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             return JSONResponse({"available": False})   # the UI greys the "Since last review" toggle
         wm = kb.get_watermark(snap.mr.host, snap.mr.project, snap.mr.iid) if kb is not None else None
         if not wm or wm == snap.mr.sha:
-            return JSONResponse({"available": True, "empty": True, "interdiff": ""})  # nothing new
+            return JSONResponse({"available": True, "empty": True, "mode": "diff", "diff": ""})  # nothing new
         ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
         versions = await provider.mr_versions(ref)
         new = versions[0] if versions else None
         old = next((v for v in versions if v["head_sha"] == wm), None)
         if new is None or old is None:  # can't locate the reviewed version → don't guess
-            return JSONResponse({"available": True, "empty": True, "interdiff": "",
+            return JSONResponse({"available": True, "empty": True, "mode": "diff", "diff": "",
                                  "note": "couldn't locate the version you last reviewed"})
         repo = RepoRef(host=snap.mr.host, project=snap.mr.project, clone_url=snap.mr.clone_url)
+        bases = (old["base_sha"], old["head_sha"], new["base_sha"], new["head_sha"])
+        # preferred: a plain diff against the reviewed version (reads like an ordinary diff)
+        if hasattr(workspace, "since_diff"):
+            try:
+                diff = await workspace.since_diff(repo, *bases)
+            except Exception as exc:
+                return JSONResponse({"available": True, "error": str(exc)})
+            if diff is not None:
+                return JSONResponse({"available": True, "mode": "diff",
+                                     "empty": not diff.strip(), "diff": diff})
+        # fallback: the raw range-diff (a conflicting replay, or a workspace without since_diff)
         try:
-            text = await workspace.range_diff(repo, old["base_sha"], old["head_sha"],
-                                              new["base_sha"], new["head_sha"])
+            text = await workspace.range_diff(repo, *bases)
         except Exception as exc:
             return JSONResponse({"available": True, "error": str(exc)})
-        return JSONResponse({"available": True, "empty": _interdiff_empty(text), "interdiff": text})
+        return JSONResponse({"available": True, "mode": "rangediff",
+                             "empty": _interdiff_empty(text), "interdiff": text})
 
     async def _remirror_threads(actor, ref) -> list:
         """Re-pull the MR's discussions from the host and re-mirror them into session state

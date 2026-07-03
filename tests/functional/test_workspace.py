@@ -38,6 +38,11 @@ def _repo(src: Path) -> RepoRef:
     return RepoRef(host="local", project="g/p", clone_url=str(src))
 
 
+def _rev(src: Path, ref: str = "HEAD") -> str:
+    return subprocess.run(["git", "rev-parse", ref], cwd=src, capture_output=True,
+                          text=True, env=_ENV).stdout.strip()
+
+
 @pytest.fixture
 def wm(tmp_path):
     return WorkspaceManager(root=tmp_path / "home")
@@ -87,6 +92,46 @@ async def test_failed_clone_leaves_no_poisoned_mirror(wm, tmp_path):
     mirror = wm.mirror_path(bogus)
     assert not mirror.exists()                                   # no poisoned mirror
     assert not mirror.with_name(mirror.name + ".tmp").exists()   # tmp cleaned up too
+
+
+async def test_since_diff_is_a_plain_diff_when_base_unchanged(wm, tmp_path):
+    """No rebase (just more commits pushed): since_diff is a plain head-to-head diff showing only
+    the new work — a line added in the reviewed version is context, not re-surfaced."""
+    src = tmp_path / "src"; src.mkdir()
+    _git("init", "-b", "main", cwd=src)
+    (src / "f.txt").write_text("a\n"); _git("add", ".", cwd=src); _git("commit", "-m", "base", cwd=src)
+    base = _rev(src)
+    (src / "f.txt").write_text("a\nb\n"); _git("commit", "-am", "add b", cwd=src)
+    reviewed = _rev(src)
+    (src / "f.txt").write_text("a\nb\nc\n"); _git("commit", "-am", "add c", cwd=src)
+    current = _rev(src)
+    diff = await wm.since_diff(_repo(src), base, reviewed, base, current)
+    assert "+c" in diff and "+b" not in diff   # only the new line c is added; b is untouched context
+
+
+async def test_since_diff_excludes_rebase_noise(wm, tmp_path):
+    """The branch was rebased onto a moved target: since_diff replays the current work onto the
+    reviewed base, so only the author's genuinely-new change shows — the target-branch change does not.
+    The target change sits far from the author's edit so the replay applies without conflict."""
+    body = "\n".join(f"l{i}" for i in range(1, 9)) + "\n"   # l1..l8 — room between top and bottom
+    src = tmp_path / "src"; src.mkdir()
+    _git("init", "-b", "main", cwd=src)
+    (src / "f.txt").write_text(body); _git("add", ".", cwd=src); _git("commit", "-m", "b0", cwd=src)
+    old_base = _rev(src)
+    _git("checkout", "-q", "-b", "featA", cwd=src)
+    (src / "f.txt").write_text(body + "AUTHOR\n"); _git("commit", "-am", "author work", cwd=src)
+    reviewed = _rev(src)
+    _git("checkout", "-q", "main", cwd=src)
+    moved = "L1 MOVED\n" + "\n".join(f"l{i}" for i in range(2, 9)) + "\n"   # target changes only l1
+    (src / "f.txt").write_text(moved); _git("commit", "-am", "target moves", cwd=src)
+    new_base = _rev(src)
+    _git("checkout", "-q", "-b", "featB", cwd=src)
+    (src / "f.txt").write_text(moved + "AUTHOR\nAUTHOR2\n"); _git("commit", "-am", "author work v2", cwd=src)
+    current = _rev(src)
+    diff = await wm.since_diff(_repo(src), old_base, reviewed, new_base, current)
+    assert diff is not None                 # the replay applied cleanly
+    assert "AUTHOR2" in diff                 # the author's genuinely-new line since review
+    assert "L1 MOVED" not in diff            # the target-branch (rebase) change is excluded
 
 
 async def test_seed_clone_is_not_modified(tmp_path, source_repo):  # AC-4

@@ -55,6 +55,38 @@ class WorkspaceManager:
         return await self._git("-C", str(mirror), "range-diff",
                                f"{old_base}..{old_head}", f"{new_base}..{new_head}")
 
+    async def since_diff(self, repo: RepoRef, old_base: str, old_head: str,
+                         new_base: str, new_head: str) -> str | None:
+        """A *normal* unified diff of the author's net changes since the reviewed version, with
+        target-branch (rebase) noise excluded — the reviewer reads it as an ordinary diff against
+        the version they last saw, not a diff-of-diffs. When the base hasn't moved, the head-to-head
+        diff is already clean; when it has, the current commits are replayed onto the reviewed base
+        first. Returns None if that replay conflicts, so the caller can fall back to the range-diff."""
+        mirror = await self._ensure_mirror(repo)
+        for sha in (old_base, old_head, new_base, new_head):
+            await self._ensure_commit(mirror, sha)
+        if old_base == new_base:   # no rebase happened → old_head..new_head is already noise-free
+            return await self._git("-C", str(mirror), "diff", old_head, new_head)
+        # base moved: replay the current commits onto the reviewed base, then diff against old_head
+        wt = self.root / "checkouts" / ("since-" + _key(repo))
+        shutil.rmtree(wt, ignore_errors=True)
+        await self._git("-C", str(mirror), "worktree", "add", "--detach", str(wt), new_head)
+        try:
+            try:
+                await self._git("-C", str(wt), "rebase", "--onto", old_base, new_base)
+            except RuntimeError:
+                try:
+                    await self._git("-C", str(wt), "rebase", "--abort")
+                except RuntimeError:
+                    pass
+                return None   # conflicting replay — caller falls back to the range-diff
+            return await self._git("-C", str(wt), "diff", old_head, "HEAD")
+        finally:
+            try:
+                await self._git("-C", str(mirror), "worktree", "remove", "--force", str(wt))
+            except RuntimeError:
+                shutil.rmtree(wt, ignore_errors=True)
+
     # --- internals ----------------------------------------------------------
 
     def mirror_path(self, repo: RepoRef) -> Path:
@@ -101,7 +133,12 @@ class WorkspaceManager:
     async def _git(self, *args: str, timeout: float = 120.0) -> str:
         # Never let git block on an interactive credential prompt (no ambient creds → the request
         # would hang forever). Fail fast and bounded: prompts off, stdin closed, hard timeout.
-        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
+               "GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true",   # never open an editor (rebase)
+               # a synthetic identity for the ephemeral replay commits since_diff creates — the
+               # server may have no git user configured, and these commits are thrown away anyway
+               "GIT_AUTHOR_NAME": "review-mate", "GIT_AUTHOR_EMAIL": "review-mate@localhost",
+               "GIT_COMMITTER_NAME": "review-mate", "GIT_COMMITTER_EMAIL": "review-mate@localhost"}
         env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")   # SSH clones fail fast, never prompt
         proc = await asyncio.create_subprocess_exec(
             "git", *args,
