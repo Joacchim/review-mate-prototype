@@ -15,6 +15,7 @@ let repoTree = null;                 // all repo paths (lazy-loaded when "show a
 let showAll = localStorage.getItem("rm-showall") === "1";
 const fileContents = {};             // path -> content (cache for non-diff file views + unfold)
 const expandedGaps = {};             // path -> Set of gap-start new-line numbers the reviewer unfolded
+const mdRendered = new Set();        // .md paths currently shown rendered (vs raw diff)
 let viewingPath = null;              // a non-diff file currently shown (plain view)
 let railFilter = "all";              // index filter: all | context | comment | posted
 let railQuery = "";                  // index text search (file + comment + question)
@@ -646,9 +647,15 @@ function renderFileDiff(el, files, suffix, interactive) {
   let file = files.find((f) => f.path === currentFile);
   if (!file && files.length) { currentFile = files[0].path; file = files[0]; }
   if (!file) { el.innerHTML = '<div class="empty" style="padding:16px">select a file</div>'; return; }
+  const isMd = interactive && /\.(md|markdown)$/i.test(file.path);   // full diff only (rendered = head)
   const name = document.createElement("div");
-  name.className = "fname"; name.textContent = file.path + suffix;
+  name.className = "fname";
+  const label = document.createElement("span"); label.textContent = file.path + suffix;
+  name.appendChild(label);
+  if (isMd) name.appendChild(btn(mdRendered.has(file.path) ? "◱ show diff" : "◱ rendered",
+                                 "btn ghost fnbtn", () => toggleMd(file.path)));
   el.appendChild(name);
+  if (isMd && mdRendered.has(file.path)) { renderMarkdownDoc(el, file.path); return; }
   const hl = interactive ? highlightLines(file.path) : new Set();
   const table = document.createElement("table");
   table.className = "hunk";
@@ -663,6 +670,28 @@ function renderFileDiff(el, files, suffix, interactive) {
   }
   if (interactive) wireSelection(table, file.path);
   el.appendChild(table);
+}
+
+// a rendered Markdown view of a doc's current version, toggled from the diff (the raw diff stays a
+// click away). Scroll-sync to the changed hunk is a future step — this gives the reading view.
+async function toggleMd(path) {
+  if (mdRendered.has(path)) mdRendered.delete(path); else mdRendered.add(path);
+  if (mdRendered.has(path) && fileContents[path] === undefined) {
+    try {
+      const d = await fetch(`/api/sessions/${SID}/file?path=${encodeURIComponent(path)}`).then((r) => r.json());
+      fileContents[path] = (d && typeof d.content === "string") ? d.content : "";
+    } catch (e) { fileContents[path] = ""; }
+  }
+  renderDiff();
+}
+
+function renderMarkdownDoc(el, path) {
+  const content = fileContents[path];
+  if (content === undefined) { el.appendChild(empty("loading " + path + "…")); return; }
+  const box = document.createElement("div");
+  box.className = "mdview md";
+  box.innerHTML = md(content);
+  el.appendChild(box);
 }
 
 // parse a unified file diff into hunks carrying their new-side start/count (from the @@ header)
