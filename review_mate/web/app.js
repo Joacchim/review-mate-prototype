@@ -866,7 +866,7 @@ function hlRow(hl, n) {
   const loc = `${hl.file}:${lr.start}${lr.end !== lr.start ? "-" + lr.end : ""}`;
   const chipLabel = { context: "context", comment: "comment", posted: "✓ posted" }[st];
   const prev = buf ? firstLine(buf)
-             : st === "context" ? (card ? "context ready" : "waiting for context…")
+             : st === "context" ? (card ? "context ready" : hl.context_requested ? "waiting for context…" : "")
              : firstLine(hl.question || "");
   const active = selected && selected.kind === "hl" && selected.id === hl.id;
   const row = document.createElement("div");
