@@ -74,6 +74,47 @@ function md(src) {
   return html;
 }
 
+// --- lightweight, self-contained syntax highlighting ------------------------
+// A conservative per-line tokenizer: strings, line comments (style by file type), numbers, and a
+// union keyword set. Escapes all text (XSS-safe); unknown file types are left plain. Per-line, so
+// multi-line strings/comments only colour to end of line — an accepted trade for zero dependencies.
+const SYNTAX_KW = new Set(("if else elif for while do switch case break continue return function " +
+  "func def class struct enum interface type const let var val fn import from export default void " +
+  "int float double bool boolean string char new delete try catch finally throw throws raise with " +
+  "as in is not and or async await yield lambda pass None True False null nil true false undefined " +
+  "this self super extends implements package namespace using module require public private " +
+  "protected static").split(" "));
+
+function langOf(path) {
+  const ext = (path.split(".").pop() || "").toLowerCase();
+  if (["js", "jsx", "ts", "tsx", "go", "rs", "c", "h", "cc", "cpp", "hpp", "java", "cs", "php", "swift", "kt", "scala"].includes(ext)) return { line: "//" };
+  if (["py", "rb", "sh", "bash", "zsh", "yml", "yaml", "toml", "pl", "r"].includes(ext)) return { line: "#" };
+  if (["sql", "lua", "hs"].includes(ext)) return { line: "--" };
+  if (["css", "scss", "less", "json"].includes(ext)) return { line: null };
+  return null;   // unknown → no highlighting (stay plain, never mis-colour)
+}
+
+function highlightCode(code, lang) {
+  if (!lang) return esc(code);
+  const cmtPat = lang.line ? lang.line.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ".*$" : "(?!)";
+  const re = new RegExp("(" + cmtPat + ")|(\"(?:\\\\.|[^\"\\\\])*\"?|'(?:\\\\.|[^'\\\\])*'?|`(?:\\\\.|[^`\\\\])*`?)|(\\b\\d[\\w.]*)|([A-Za-z_$][\\w$]*)", "gm");
+  let last = 0, m, out = "";
+  while ((m = re.exec(code))) {
+    if (m.index > last) out += esc(code.slice(last, m.index));
+    if (m[1]) out += `<span class="tok-cmt">${esc(m[1])}</span>`;
+    else if (m[2]) out += `<span class="tok-str">${esc(m[2])}</span>`;
+    else if (m[3]) out += `<span class="tok-num">${esc(m[3])}</span>`;
+    else if (m[4]) out += SYNTAX_KW.has(m[4]) ? `<span class="tok-kw">${esc(m[4])}</span>` : esc(m[4]);
+    last = re.lastIndex;
+    if (m.index === re.lastIndex) re.lastIndex++;   // guard against a zero-width match looping
+  }
+  out += esc(code.slice(last));
+  return out;
+}
+
+// a diff content line: keep its +/-/space marker plain, highlight the code after it
+function hlLine(raw, lang) { return esc(raw[0] || "") + highlightCode(raw.slice(1), lang); }
+
 // --- boot -------------------------------------------------------------------
 
 async function boot() {
@@ -664,8 +705,9 @@ function renderFileDiff(el, files, suffix, interactive) {
     const fileDiff = (file.hunks || []).map((h) => h.diff || "").join("\n");
     renderUnifiedUnfoldable(table, fileDiff, file.path, hl);
   } else {
+    const lang = langOf(file.path);
     (file.hunks || []).forEach((h) => {
-      (splitMode ? splitRows : unifiedRows)(h.diff || "", hl, table);
+      (splitMode ? splitRows : unifiedRows)(h.diff || "", hl, table, lang);
     });
   }
   if (interactive) wireSelection(table, file.path);
@@ -719,33 +761,34 @@ function renderUnifiedUnfoldable(table, fileDiff, path, hl) {
   const hunks = parseHunks(fileDiff);
   const lines = fileContents[path] !== undefined ? fileContents[path].split("\n") : null;
   const exp = expandedGaps[path] || new Set();
+  const lang = langOf(path);
   let cursor = 1;   // next not-yet-shown new-side line number
   hunks.forEach((h) => {
-    renderGap(table, path, cursor, h.newStart - 1, lines, exp, hl);
+    renderGap(table, path, cursor, h.newStart - 1, lines, exp, hl, lang);
     let newLine = h.newStart;
     h.lines.forEach((raw) => {
       const kind = raw[0] === "+" ? "add" : raw[0] === "-" ? "del" : "ctx";
       const tr = document.createElement("tr");
       tr.className = "line " + kind + (kind !== "del" && hl.has(newLine) ? " hl" : "");
-      const code = `<td class="code"${kind !== "del" ? ` data-line="${newLine}"` : ""}>${esc(raw)}</td>`;
+      const code = `<td class="code"${kind !== "del" ? ` data-line="${newLine}"` : ""}>${hlLine(raw, lang)}</td>`;
       tr.innerHTML = `<td class="ln">${kind === "del" ? "" : newLine}</td>${code}`;
       if (kind !== "del") newLine += 1;
       table.appendChild(tr);
     });
     cursor = h.newStart + h.newCount;
   });
-  if (lines) renderGap(table, path, cursor, lines.length, lines, exp, hl);   // trailing gap (length known)
+  if (lines) renderGap(table, path, cursor, lines.length, lines, exp, hl, lang);   // trailing gap (length known)
 }
 
 // a gap of new-side lines [from..to]: either the revealed context rows, or a clickable unfold band
-function renderGap(table, path, from, to, lines, exp, hl) {
+function renderGap(table, path, from, to, lines, exp, hl, lang) {
   if (to < from) return;
   if (exp.has(from) && lines) {
     for (let n = from; n <= to; n++) {
       const text = lines[n - 1] !== undefined ? lines[n - 1] : "";
       const tr = document.createElement("tr");
       tr.className = "line ctx" + (hl.has(n) ? " hl" : "");
-      tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${esc(" " + text)}</td>`;
+      tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${esc(" ") + highlightCode(text, lang)}</td>`;
       table.appendChild(tr);
     }
     return;
@@ -847,13 +890,14 @@ function renderFileView(el, path) {
   const content = fileContents[path];
   if (content === undefined) { el.appendChild(empty("loading " + path + "…")); return; }
   const hl = highlightLines(path);
+  const lang = langOf(path);
   const table = document.createElement("table");
   table.className = "hunk";
   content.split("\n").forEach((line, i) => {
     const n = i + 1;
     const tr = document.createElement("tr");
     tr.className = "line ctx" + (hl.has(n) ? " hl" : "");
-    tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${esc(line)}</td>`;
+    tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${highlightCode(line, lang)}</td>`;
     table.appendChild(tr);
   });
   wireSelection(table, path);
@@ -884,7 +928,7 @@ function commitSelection(path, a, b) {
   else post({ type: "add_highlight", file: path, side: "new", line_range: { start: lo, end: hi } });
 }
 
-function unifiedRows(diff, hl, table) {
+function unifiedRows(diff, hl, table, lang) {
   let newLine = 0;
   diff.split("\n").forEach((raw) => {
     if (raw === "") return;
@@ -897,14 +941,14 @@ function unifiedRows(diff, hl, table) {
     }
     const kind = raw[0] === "+" ? "add" : raw[0] === "-" ? "del" : "ctx";
     tr.className = "line " + kind + (kind !== "del" && hl.has(newLine) ? " hl" : "");
-    const code = `<td class="code"${kind !== "del" ? ` data-line="${newLine}"` : ""}>${esc(raw)}</td>`;
+    const code = `<td class="code"${kind !== "del" ? ` data-line="${newLine}"` : ""}>${hlLine(raw, lang)}</td>`;
     tr.innerHTML = `<td class="ln">${kind === "del" ? "" : newLine}</td>${code}`;
     if (kind !== "del") newLine += 1;
     table.appendChild(tr);
   });
 }
 
-function splitRows(diff, hl, table) {
+function splitRows(diff, hl, table, lang) {
   let oldLine = 0, newLine = 0;
   let pendDel = [], pendAdd = [];
   const flush = () => {
@@ -912,8 +956,8 @@ function splitRows(diff, hl, table) {
     for (let i = 0; i < n; i++) {
       const d = pendDel[i], a = pendAdd[i];
       const tr = document.createElement("tr"); tr.className = "line";
-      appendCell(tr, d ? "del" : "gap", d ? d.ln : "", d ? d.text : "", null, false);
-      appendCell(tr, a ? "add" : "gap", a ? a.ln : "", a ? a.text : "", a ? a.ln : null, a && hl.has(a.ln));
+      appendCell(tr, d ? "del" : "gap", d ? d.ln : "", d ? d.text : "", null, false, lang);
+      appendCell(tr, a ? "add" : "gap", a ? a.ln : "", a ? a.text : "", a ? a.ln : null, a && hl.has(a.ln), lang);
       table.appendChild(tr);
     }
     pendDel = []; pendAdd = [];
@@ -935,22 +979,23 @@ function splitRows(diff, hl, table) {
       flush();
       const tr = document.createElement("tr"); tr.className = "line";
       const txt = raw.slice(1);
-      appendCell(tr, "ctx", oldLine, txt, null, false);
-      appendCell(tr, "ctx", newLine, txt, newLine, hl.has(newLine));
+      appendCell(tr, "ctx", oldLine, txt, null, false, lang);
+      appendCell(tr, "ctx", newLine, txt, newLine, hl.has(newLine), lang);
       table.appendChild(tr); oldLine += 1; newLine += 1;
     }
   });
   flush();
 }
 
-function appendCell(tr, kind, ln, text, dataLine, isHl) {
+function appendCell(tr, kind, ln, text, dataLine, isHl, lang) {
   const tdLn = document.createElement("td");
   tdLn.className = "ln" + (kind === "gap" ? " gap" : kind === "del" ? " delln" : kind === "add" ? " addln" : "");
   tdLn.textContent = ln === "" ? "" : ln;
   const tdCode = document.createElement("td");
   tdCode.className = "code" + (kind === "gap" ? " gap" : kind === "del" ? " delc" : kind === "add" ? " addc" : "")
                    + (isHl ? " hlc" : "");
-  tdCode.textContent = text || "";
+  if (kind === "gap") tdCode.textContent = "";
+  else tdCode.innerHTML = highlightCode(text || "", lang);
   if (dataLine != null) tdCode.dataset.line = dataLine;  // new-side, selectable
   tr.appendChild(tdLn); tr.appendChild(tdCode);
 }
