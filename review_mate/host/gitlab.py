@@ -228,6 +228,26 @@ class GitLabProvider:
                  "start_sha": r.get("start_commit_sha"), "created_at": r.get("created_at", "")}
                 for r in rows]
 
+    async def commits(self, ref: MRRef) -> list[dict]:
+        """The MR's commits (oldest→newest, for per-commit review): sha, short id, title, message,
+        author. Best-effort: [] on error."""
+        try:
+            rows = await self._get(
+                f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}/commits")
+        except httpx.HTTPError:
+            return []
+        # GitLab returns newest-first; reverse so review reads in authoring order
+        return [{"sha": c.get("id", ""), "short_id": c.get("short_id", ""),
+                 "title": c.get("title", ""), "message": c.get("message", ""),
+                 "author": c.get("author_name", ""), "created_at": c.get("created_at", "")}
+                for c in reversed(rows)]
+
+    async def commit_diff(self, project: str, sha: str) -> list[FileEntry]:
+        """The per-file diff of one commit (against its parent) — the file set + hunks for reviewing
+        a single commit, shaped like the MR diff's files."""
+        rows = await self._get(f"/projects/{quote(project, safe='')}/repository/commits/{sha}/diff")
+        return [_to_file(c) for c in rows]
+
     async def fetch_threads(self, ref: MRRef) -> list[ReviewThread]:
         """The MR's discussions, mapped to the host-neutral review model — the read side of the
         thread-conversation surface (used by initial load and by on-demand refresh)."""

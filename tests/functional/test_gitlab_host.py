@@ -46,10 +46,23 @@ VERSIONS = [{"base_commit_sha": "base2", "head_commit_sha": "head2", "start_comm
              "created_at": "2026-01-01"}]
 
 
+COMMITS = [  # GitLab returns newest-first
+    {"id": "sha2", "short_id": "sha2sh", "title": "second", "message": "second\n\nbody",
+     "author_name": "dev", "created_at": "t2"},
+    {"id": "sha1", "short_id": "sha1sh", "title": "first", "message": "first", "author_name": "dev",
+     "created_at": "t1"}]
+COMMIT_DIFF = [{"old_path": "a.py", "new_path": "a.py", "new_file": False, "deleted_file": False,
+                "renamed_file": False, "diff": "@@ -1 +1 @@\n-x\n+y\n"}]
+
+
 def _handler(request: httpx.Request) -> httpx.Response:
     p = request.url.path
     params = dict(request.url.params)
     # sub-resources of a specific MR
+    if p.endswith("/commits"):
+        return httpx.Response(200, json=COMMITS)
+    if "/repository/commits/" in p and p.endswith("/diff"):
+        return httpx.Response(200, json=COMMIT_DIFF)
     if p.endswith("/versions"):
         return httpx.Response(200, json=VERSIONS)
     if p.endswith("/blame"):
@@ -125,6 +138,18 @@ async def test_load_uses_ssh_clone_url_when_protocol_is_ssh():
     assert payload.files[1].change_type.value == "added"
     assert len(payload.threads) == 1 and payload.threads[0].comments[0].body == "nit"
     assert payload.mr.capabilities == GITLAB_CAPABILITIES
+
+
+async def test_commits_mapped_oldest_first(provider):
+    cs = await provider.commits(MRRef(host="gitlab", project="group/proj", iid=42))
+    assert [c["sha"] for c in cs] == ["sha1", "sha2"]     # reversed into authoring order
+    assert cs[0]["title"] == "first" and cs[1]["short_id"] == "sha2sh"
+
+
+async def test_commit_diff_maps_files(provider):
+    files = await provider.commit_diff("group/proj", "sha2")
+    assert [f.path for f in files] == ["a.py"]
+    assert "+y" in files[0].hunks[0]["diff"]
 
 
 async def test_review_queue(provider):  # AC-5

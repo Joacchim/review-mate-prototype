@@ -252,6 +252,30 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         return JSONResponse({"available": True, "mode": "rangediff",
                              "empty": _interdiff_empty(text), "interdiff": text})
 
+    async def commits(request: Request) -> JSONResponse:
+        """The MR's commits, for per-commit review. Greyed (available:False) where unsupported."""
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        snap = actor.snapshot()
+        cap = snap.mr and (snap.mr.capabilities or {}).get("commits", False)
+        if snap.mr is None or provider is None or not hasattr(provider, "commits") or not cap:
+            return JSONResponse({"available": False, "commits": []})
+        ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
+        return JSONResponse({"available": True, "commits": await provider.commits(ref)})
+
+    async def commit_diff(request: Request) -> JSONResponse:
+        """One commit's per-file diff (files shaped like the full diff, so the browser reuses its
+        per-file renderer)."""
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        snap = actor.snapshot()
+        if snap.mr is None or provider is None or not hasattr(provider, "commit_diff"):
+            return JSONResponse({"error": "unavailable"}, status_code=400)
+        files = await provider.commit_diff(snap.mr.project, request.path_params["sha"])
+        return JSONResponse({"files": [f.model_dump(mode="json") for f in files]})
+
     async def _remirror_threads(actor, ref) -> list:
         """Re-pull the MR's discussions from the host and re-mirror them into session state
         (host is the single source of truth for threads). No-op without a provider."""
@@ -441,6 +465,8 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/sessions/{id}/mark-reviewed", mark_reviewed, methods=["POST"]),
         Route("/api/sessions/{id}/review-status", review_status, methods=["GET"]),
         Route("/api/sessions/{id}/since-last", since_last, methods=["GET"]),
+        Route("/api/sessions/{id}/commits", commits, methods=["GET"]),
+        Route("/api/sessions/{id}/commit/{sha}", commit_diff, methods=["GET"]),
         Route("/api/me", whoami, methods=["GET"]),
         Route("/api/sessions/{id}/context", context, methods=["GET"]),
         WebSocketRoute("/api/sessions/{id}/stream", stream),

@@ -22,6 +22,7 @@ GITLAB_CAPABILITIES: dict[str, bool] = {
     "approvals": True,
     "draft_reviews": True,
     "diff_versions": True,
+    "commits": True,
     "reactions": True,
     "labels": True,
     "reviewers": True,

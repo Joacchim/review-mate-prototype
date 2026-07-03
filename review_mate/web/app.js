@@ -33,6 +33,10 @@ const suggBuf = {};                  // draft key -> in-progress suggested-chang
 const suggOpen = {};                 // draft key -> whether the suggestion editor is open
 const noteEdit = {};                 // note_id -> in-progress edit text (null/absent = not editing)
 let reviewStatus = null;             // {behind, watermark, head} — diff-versions awareness
+let commitsMode = false;             // per-commit review: the diff pane shows one commit at a time
+let commitList = null;               // [{sha, short_id, title, message, …}] oldest→newest, or null
+let currentCommit = null;            // sha of the commit being reviewed
+const commitFiles = {};              // sha -> that commit's files (shaped like state.files)
 let sinceLast = false;               // showing the rebase-aware "since last review" interdiff
 let sinceLastData = null;            // fetched {available, empty, interdiff, error}
 
@@ -245,6 +249,7 @@ async function load() {
 async function toggleSinceLast() {
   sinceLast = !sinceLast;
   viewingPath = null;   // both views are diff views — drop any non-diff repo file being shown
+  if (sinceLast) { commitsMode = false; $("t-commits").classList.toggle("on", false); }  // one diff mode at a time
   render();   // swap to the panel now — it shows "computing…" while the (cold: clone + fetch) work runs
   if (sinceLast && sinceLastData === null) {
     try { sinceLastData = await fetch(`/api/sessions/${SID}/since-last`).then((r) => r.json()); }
@@ -296,6 +301,7 @@ function wireToolbar() {
     $("t-split").classList.toggle("on", splitMode);
     renderDiff();
   };
+  $("t-commits").onclick = toggleCommits;
   $("load").onclick = () => { const v = $("ref").value.trim(); loadRef(v); };
   $("ref").addEventListener("keydown", (e) => { if (e.key === "Enter") $("load").click(); });
   // live suggestions while typing — only on the landing page, so we never hijack a loaded diff
@@ -441,8 +447,13 @@ async function loadRepoTree() {
 function renderTree() {
   const el = $("files");
   el.innerHTML = "";
+  const inCommits = commitsMode && commitList && currentCommit;
   const inSince = sinceFilesReady();
-  if (inSince) {   // the tree lists the since-last delta's files; "show all repo files" doesn't apply
+  if (inCommits) {   // the tree lists the current commit's files
+    const hdr = document.createElement("label");
+    hdr.className = "treehdr"; hdr.textContent = "files in this commit";
+    el.appendChild(hdr);
+  } else if (inSince) {   // the tree lists the since-last delta's files; "show all repo files" doesn't apply
     const hdr = document.createElement("label");
     hdr.className = "treehdr"; hdr.textContent = "changed since your last review";
     el.appendChild(hdr);
@@ -462,10 +473,13 @@ function renderTree() {
   const files = activeFiles();
   const diffPaths = new Set(files.map((f) => f.path));
   const entries = files.map((f) => ({ path: f.path, change_type: f.change_type, diff: true }));
-  if (!inSince && showAll && repoTree) {
+  if (!inSince && !inCommits && showAll && repoTree) {
     repoTree.forEach((p) => { if (!diffPaths.has(p)) entries.push({ path: p, diff: false }); });
   }
-  if (!entries.length) { el.appendChild(empty(inSince ? "no changes since your last review" : "no files")); return; }
+  if (!entries.length) {
+    el.appendChild(empty(inCommits ? "this commit changed no files" : inSince ? "no changes since your last review" : "no files"));
+    return;
+  }
   const wrap = document.createElement("div");
   wrap.className = "tree";
   renderNode(buildTree(entries), "", 0, wrap);
@@ -535,15 +549,94 @@ function sinceFilesReady() {
   return sinceLast && sinceLastData && sinceLastData.mode === "diff" && Array.isArray(sinceLastData.files);
 }
 function activeFiles() {
-  return sinceFilesReady() ? sinceLastData.files : state.files;
+  if (commitsMode && currentCommit && commitFiles[currentCommit]) return commitFiles[currentCommit];
+  if (sinceFilesReady()) return sinceLastData.files;
+  return state.files;
 }
 
 function renderDiff() {
   const el = $("diff");
   el.innerHTML = "";
+  if (commitsMode) { renderCommitView(el); return; }
   if (sinceLast) { renderSinceLast(el); return; }
   if (viewingPath) { renderFileView(el, viewingPath); return; }
   renderFileDiff(el, state.files, "  ·  click a line, or drag to select a block", true);
+}
+
+// --- per-commit review ------------------------------------------------------
+
+async function toggleCommits() {
+  commitsMode = !commitsMode;
+  $("t-commits").classList.toggle("on", commitsMode);
+  if (commitsMode) {
+    sinceLast = false; viewingPath = null;   // one diff mode at a time; both are diff views
+    if (commitList === null) {
+      render();   // show "loading commits…" while the list is fetched
+      try {
+        const d = await fetch(`/api/sessions/${SID}/commits`).then((r) => r.json());
+        commitList = Array.isArray(d.commits) ? d.commits : [];
+      } catch (e) { commitList = []; }
+      if (commitList.length && !currentCommit) currentCommit = commitList[0].sha;
+    }
+    if (currentCommit && !commitFiles[currentCommit]) await loadCommit(currentCommit);
+  }
+  render();
+}
+
+async function loadCommit(sha) {
+  try {
+    const d = await fetch(`/api/sessions/${SID}/commit/${encodeURIComponent(sha)}`).then((r) => r.json());
+    commitFiles[sha] = Array.isArray(d.files) ? d.files : [];
+  } catch (e) { commitFiles[sha] = []; }
+}
+
+async function selectCommit(sha) {
+  currentCommit = sha; currentFile = null;   // reset to the new commit's first file
+  if (!commitFiles[sha]) { render(); await loadCommit(sha); }
+  render();
+}
+
+function stepCommit(delta) {
+  if (!commitList || !commitList.length) return;
+  const i = commitList.findIndex((c) => c.sha === currentCommit);
+  const j = Math.min(commitList.length - 1, Math.max(0, (i < 0 ? 0 : i) + delta));
+  if (commitList[j]) selectCommit(commitList[j].sha);
+}
+
+function renderCommitView(el) {
+  if (commitList === null) { el.appendChild(empty("loading commits…")); return; }
+  if (!commitList.length) { el.appendChild(empty("no commits on this MR")); return; }
+  const i = Math.max(0, commitList.findIndex((c) => c.sha === currentCommit));
+  const c = commitList[i];
+
+  const bar = document.createElement("div");
+  bar.className = "commitbar";
+  const prev = btn("◀", "btn ghost", () => stepCommit(-1)); if (i <= 0) prev.disabled = true;
+  const next = btn("▶", "btn ghost", () => stepCommit(1)); if (i >= commitList.length - 1) next.disabled = true;
+  const pos = document.createElement("span"); pos.className = "cpos"; pos.textContent = `commit ${i + 1}/${commitList.length}`;
+  const sel = document.createElement("select"); sel.className = "csel";
+  commitList.forEach((x, k) => {
+    const o = document.createElement("option");
+    o.value = x.sha; o.textContent = `${k + 1}. ${(x.short_id || x.sha.slice(0, 8))} — ${x.title}`;
+    if (x.sha === c.sha) o.selected = true;
+    sel.appendChild(o);
+  });
+  sel.onchange = () => selectCommit(sel.value);
+  bar.appendChild(prev); bar.appendChild(pos); bar.appendChild(next); bar.appendChild(sel);
+  el.appendChild(bar);
+
+  const msg = document.createElement("div");
+  msg.className = "commitmsg";
+  const body = (c.message || c.title || "").trim();
+  msg.innerHTML = `<div class="ct">${esc(c.title || "")}</div>` +
+    (body && body !== (c.title || "").trim() ? `<div class="cb">${esc(body)}</div>` : "");
+  el.appendChild(msg);
+
+  const files = commitFiles[c.sha];
+  if (!files) { el.appendChild(empty("loading commit…")); return; }
+  if (!files.length) { el.appendChild(empty("this commit changed no files")); return; }
+  // read-only: a commit diff's line numbers are at that commit, not the MR head — don't anchor highlights
+  renderFileDiff(el, files, `  ·  in ${c.short_id || c.sha.slice(0, 8)}`, false);
 }
 
 // render one file's diff (the current selection) from a file set — shared by the full diff and the

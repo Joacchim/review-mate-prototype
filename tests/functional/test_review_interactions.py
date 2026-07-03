@@ -317,6 +317,42 @@ async def test_since_last_prefers_a_normal_diff(tmp_path):
     await manager.shutdown()
 
 
+async def test_commits_and_commit_diff_routes(tmp_path):
+    from review_mate.session.state import FileEntry, ChangeType
+
+    class CProvider(StubProvider):
+        async def commits(self, ref):
+            return [{"sha": "s1", "short_id": "s1sh", "title": "first", "message": "m"}]
+
+        async def commit_diff(self, project, sha):
+            self.seen = (project, sha)
+            return [FileEntry(path="a.py", change_type=ChangeType.MODIFIED,
+                              hunks=[{"diff": "@@ -1 +1 @@\n+z\n"}])]
+
+    mr = MRMetadata(host="gitlab", project="g/p", iid=42, title="T", source_branch="x",
+                    target_branch="m", sha="h", author="a", url="u", capabilities={"commits": True})
+    manager = SessionManager(root=tmp_path / "s")
+    app = create_app(manager=manager, with_mcp=False, provider=CProvider())
+    sid = await manager.create()
+    await manager.get(sid).submit(ApplyMRMetadata(mr=mr), Origin.SYSTEM)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        cs = (await c.get(f"/api/sessions/{sid}/commits")).json()
+        assert cs["available"] is True and [x["sha"] for x in cs["commits"]] == ["s1"]
+        dd = (await c.get(f"/api/sessions/{sid}/commit/s1")).json()
+    assert [f["path"] for f in dd["files"]] == ["a.py"]
+    assert dd["files"][0]["change_type"] == "modified" and "+z" in dd["files"][0]["hunks"][0]["diff"]
+    await manager.shutdown()
+
+
+async def test_commits_greyed_without_capability(tmp_path):
+    # the module MR fixture advertises no "commits" capability → the route greys out
+    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
+    async with client:
+        r = (await client.get(f"/api/sessions/{sid}/commits")).json()
+    assert r == {"available": False, "commits": []}
+    await manager.shutdown()
+
+
 def test_split_unified_diff_into_files():
     from review_mate.server.routes import _split_unified_diff
     text = ("diff --git a/x.py b/x.py\nindex 111..222 100644\n--- a/x.py\n+++ b/x.py\n"
