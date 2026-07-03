@@ -197,8 +197,14 @@ function renderQueue(box, items) {
 }
 
 async function loadRef(ref) {
+  ref = (ref || "").trim();
+  if (!ref) {   // no input → don't create an empty, MR-less session; nudge toward a ref or the list
+    setStatus("enter an MR URL or group/proj!iid — or pick one from the list below");
+    $("ref").focus();
+    return;
+  }
   const btn = $("load");
-  btn.disabled = true; btn.textContent = "Loading…"; setStatus("resolving " + (ref || "(queue)") + "…");
+  btn.disabled = true; btn.textContent = "Loading…"; setStatus("resolving " + ref + "…");
   try {
     const r = await fetch("/api/sessions", {
       method: "POST", headers: { "content-type": "application/json" },
