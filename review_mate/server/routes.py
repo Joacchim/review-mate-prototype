@@ -243,7 +243,7 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
                 return JSONResponse({"available": True, "error": str(exc)})
             if diff is not None:
                 return JSONResponse({"available": True, "mode": "diff",
-                                     "empty": not diff.strip(), "diff": diff})
+                                     "empty": not diff.strip(), "files": _split_unified_diff(diff)})
         # fallback: the raw range-diff (a conflicting replay, or a workspace without since_diff)
         try:
             text = await workspace.range_diff(repo, *bases)
@@ -445,6 +445,51 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/sessions/{id}/context", context, methods=["GET"]),
         WebSocketRoute("/api/sessions/{id}/stream", stream),
     ]
+
+
+def _split_unified_diff(text: str) -> list:
+    """Split `git diff` output into per-file entries shaped like FileEntry (path, old_path,
+    change_type, hunks:[{diff}]) so the browser renders the since-last diff file-by-file, exactly
+    like the full diff. The hunk `diff` is the text from the first @@ onward (what the row renderer
+    consumes); the file-header lines are parsed for metadata, not shown."""
+    files: list = []
+    cur = None
+    inhunk = False
+    for line in (text or "").splitlines():
+        if line.startswith("diff --git "):
+            cur = {"path": "", "old_path": None, "change_type": "modified", "hunks": [{"diff": ""}]}
+            rest = line[len("diff --git "):]
+            if rest.startswith("a/"):
+                idx = rest.find(" b/")
+                if idx != -1:
+                    cur["old_path"], cur["path"] = rest[2:idx], rest[idx + 3:]
+            files.append(cur)
+            inhunk = False
+        elif cur is None:
+            continue
+        elif inhunk:
+            cur["hunks"][0]["diff"] += line + "\n"
+        elif line.startswith("@@"):
+            inhunk = True
+            cur["hunks"][0]["diff"] += line + "\n"
+        elif line.startswith("new file"):
+            cur["change_type"] = "added"
+        elif line.startswith("deleted file"):
+            cur["change_type"] = "deleted"
+        elif line.startswith("rename from "):
+            cur["old_path"] = line[len("rename from "):]; cur["change_type"] = "renamed"
+        elif line.startswith("rename to "):
+            cur["path"] = line[len("rename to "):]; cur["change_type"] = "renamed"
+        elif line.startswith("--- ") and not line.endswith("/dev/null"):
+            cur["old_path"] = line[6:] if line.startswith("--- a/") else line[4:]
+        elif line.startswith("+++ ") and not line.endswith("/dev/null"):
+            cur["path"] = line[6:] if line.startswith("+++ b/") else line[4:]
+    for f in files:
+        if not f["path"] and f["old_path"]:      # deletion: +++ was /dev/null
+            f["path"] = f["old_path"]
+        if f["old_path"] == f["path"]:
+            f["old_path"] = None
+    return files
 
 
 def _interdiff_empty(text: str) -> bool:

@@ -294,7 +294,8 @@ async def test_since_last_prefers_a_normal_diff(tmp_path):
     class Ws:  # exposes since_diff → the route must prefer it and never fall back
         async def since_diff(self, repo, ob, oh, nb, nh):
             self.args = (ob, oh, nb, nh)
-            return "diff --git a/f.txt b/f.txt\n@@ -1 +1,2 @@\n ctx\n+new line\n"
+            return ("diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n"
+                    "@@ -1 +1,2 @@\n ctx\n+new line\n")
 
         async def range_diff(self, *a):
             raise AssertionError("should not fall back to range-diff when since_diff succeeds")
@@ -309,9 +310,26 @@ async def test_since_last_prefers_a_normal_diff(tmp_path):
     await manager.get(sid).submit(ApplyMRMetadata(mr=mr), Origin.SYSTEM)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         r = (await c.get(f"/api/sessions/{sid}/since-last")).json()
-    assert r["mode"] == "diff" and r["empty"] is False and "new line" in r["diff"]
-    assert manager._workspace.args == ("oldwm", "nb", "nh") or manager._workspace.args == ("ob", "oldwm", "nb", "nh")
+    assert r["mode"] == "diff" and r["empty"] is False                       # per-file, like the full diff
+    assert [f["path"] for f in r["files"]] == ["f.txt"]
+    assert "+new line" in r["files"][0]["hunks"][0]["diff"]
+    assert manager._workspace.args == ("ob", "oldwm", "nb", "nh")
     await manager.shutdown()
+
+
+def test_split_unified_diff_into_files():
+    from review_mate.server.routes import _split_unified_diff
+    text = ("diff --git a/x.py b/x.py\nindex 111..222 100644\n--- a/x.py\n+++ b/x.py\n"
+            "@@ -1,2 +1,3 @@\n a\n b\n+c\n"
+            "diff --git a/new.txt b/new.txt\nnew file mode 100644\n--- /dev/null\n+++ b/new.txt\n"
+            "@@ -0,0 +1 @@\n+hello\n"
+            "diff --git a/old.txt b/old.txt\ndeleted file mode 100644\n--- a/old.txt\n+++ /dev/null\n"
+            "@@ -1 +0,0 @@\n-bye\n")
+    files = _split_unified_diff(text)
+    assert [f["path"] for f in files] == ["x.py", "new.txt", "old.txt"]
+    assert [f["change_type"] for f in files] == ["modified", "added", "deleted"]
+    hunk = files[0]["hunks"][0]["diff"]
+    assert hunk.startswith("@@") and "+c" in hunk and "index 111" not in hunk   # header stripped
 
 
 async def test_since_last_falls_back_to_range_diff(tmp_path):

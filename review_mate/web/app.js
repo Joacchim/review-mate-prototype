@@ -233,6 +233,7 @@ async function load() {
 
 async function toggleSinceLast() {
   sinceLast = !sinceLast;
+  viewingPath = null;   // both views are diff views — drop any non-diff repo file being shown
   render();   // swap to the panel now — it shows "computing…" while the (cold: clone + fetch) work runs
   if (sinceLast && sinceLastData === null) {
     try { sinceLastData = await fetch(`/api/sessions/${SID}/since-last`).then((r) => r.json()); }
@@ -393,6 +394,11 @@ function render() {
   } else {
     $("mr").textContent = "(no MR loaded)";
   }
+  // keep the selected file valid for the active set (full vs since-last) so tree + diff agree
+  if (!viewingPath) {
+    const files = activeFiles();
+    if (files.length && !files.some((f) => f.path === currentFile)) currentFile = files[0].path;
+  }
   renderTree();
   renderDiff();
   renderRail();
@@ -424,23 +430,31 @@ async function loadRepoTree() {
 function renderTree() {
   const el = $("files");
   el.innerHTML = "";
-  const hdr = document.createElement("label");
-  hdr.className = "treehdr";
-  hdr.innerHTML = `<input type="checkbox" ${showAll ? "checked" : ""}> show all repo files`;
-  hdr.querySelector("input").onchange = async (e) => {
-    showAll = e.target.checked;
-    localStorage.setItem("rm-showall", showAll ? "1" : "0");
-    if (showAll && repoTree === null) { hdr.lastChild.textContent = " loading repo…"; await loadRepoTree(); }
-    renderTree();
-  };
-  el.appendChild(hdr);
+  const inSince = sinceFilesReady();
+  if (inSince) {   // the tree lists the since-last delta's files; "show all repo files" doesn't apply
+    const hdr = document.createElement("label");
+    hdr.className = "treehdr"; hdr.textContent = "changed since your last review";
+    el.appendChild(hdr);
+  } else {
+    const hdr = document.createElement("label");
+    hdr.className = "treehdr";
+    hdr.innerHTML = `<input type="checkbox" ${showAll ? "checked" : ""}> show all repo files`;
+    hdr.querySelector("input").onchange = async (e) => {
+      showAll = e.target.checked;
+      localStorage.setItem("rm-showall", showAll ? "1" : "0");
+      if (showAll && repoTree === null) { hdr.lastChild.textContent = " loading repo…"; await loadRepoTree(); }
+      renderTree();
+    };
+    el.appendChild(hdr);
+  }
 
-  const diffPaths = new Set(state.files.map((f) => f.path));
-  const entries = state.files.map((f) => ({ path: f.path, change_type: f.change_type, diff: true }));
-  if (showAll && repoTree) {
+  const files = activeFiles();
+  const diffPaths = new Set(files.map((f) => f.path));
+  const entries = files.map((f) => ({ path: f.path, change_type: f.change_type, diff: true }));
+  if (!inSince && showAll && repoTree) {
     repoTree.forEach((p) => { if (!diffPaths.has(p)) entries.push({ path: p, diff: false }); });
   }
-  if (!entries.length) { el.appendChild(empty("no files")); return; }
+  if (!entries.length) { el.appendChild(empty(inSince ? "no changes since your last review" : "no files")); return; }
   const wrap = document.createElement("div");
   wrap.className = "tree";
   renderNode(buildTree(entries), "", 0, wrap);
@@ -504,63 +518,65 @@ function highlightExact(path, lo, hi) {
   return state.highlights.find((h) => h.file === path && h.line_range.start === lo && h.line_range.end === hi);
 }
 
+// the per-file diffs currently in play: the since-last delta when that mode is on and parsed, else
+// the full MR diff. Lets the file tree and the diff pane share one path for both views.
+function sinceFilesReady() {
+  return sinceLast && sinceLastData && sinceLastData.mode === "diff" && Array.isArray(sinceLastData.files);
+}
+function activeFiles() {
+  return sinceFilesReady() ? sinceLastData.files : state.files;
+}
+
 function renderDiff() {
   const el = $("diff");
   el.innerHTML = "";
   if (sinceLast) { renderSinceLast(el); return; }
   if (viewingPath) { renderFileView(el, viewingPath); return; }
-  const file = state.files.find((f) => f.path === currentFile);
+  renderFileDiff(el, state.files, "  ·  click a line, or drag to select a block", true);
+}
+
+// render one file's diff (the current selection) from a file set — shared by the full diff and the
+// per-file since-last view. interactive=false → read-only (no highlight overlay, no line selection),
+// used for since-last where line numbers may sit on a replayed base and shouldn't anchor highlights.
+function renderFileDiff(el, files, suffix, interactive) {
+  let file = files.find((f) => f.path === currentFile);
+  if (!file && files.length) { currentFile = files[0].path; file = files[0]; }
   if (!file) { el.innerHTML = '<div class="empty" style="padding:16px">select a file</div>'; return; }
   const name = document.createElement("div");
-  name.className = "fname"; name.textContent = file.path + "  ·  click a line, or drag to select a block";
+  name.className = "fname"; name.textContent = file.path + suffix;
   el.appendChild(name);
-  const hl = highlightLines(file.path);
+  const hl = interactive ? highlightLines(file.path) : new Set();
   const table = document.createElement("table");
   table.className = "hunk";
   (file.hunks || []).forEach((h) => {
     (splitMode ? splitRows : unifiedRows)(h.diff || "", hl, table);
   });
-  wireSelection(table, file.path);
+  if (interactive) wireSelection(table, file.path);
   el.appendChild(table);
 }
 
-// the rebase-aware interdiff — how the branch's changeset evolved since the reviewed version (D-versions)
+// "since last review" — a normal diff of the author's net changes, rendered per-file like the full
+// diff (falls back to the flat range-diff only when a conflicting replay forced that mode)
 function renderSinceLast(el) {
-  const name = document.createElement("div");
-  name.className = "fname"; name.textContent = "Changes since your last review · rebase noise excluded";
-  el.appendChild(name);
   const d = sinceLastData;
   if (d && !d.error && d.available !== false && !d.empty) {
-    // normal unified diff (preferred) — a diff-of-diffs range-diff only on a conflicting replay
-    el.appendChild(d.mode === "rangediff" ? rangeDiffView(d.interdiff) : unifiedDiffView(d.diff));
+    if (d.mode === "rangediff") {
+      const name = document.createElement("div");
+      name.className = "fname"; name.textContent = "Changes since your last review · rebase noise excluded";
+      el.appendChild(name);
+      el.appendChild(rangeDiffView(d.interdiff));
+      return;
+    }
+    renderFileDiff(el, d.files || [], "  ·  since your last review", false);
     return;
   }
   const box = document.createElement("div");
   box.style.padding = "12px 16px";
-  if (!d) { box.className = "empty"; box.textContent = "computing the interdiff…"; }
+  if (!d) { box.className = "empty"; box.textContent = "computing the diff…"; }
   else if (d.available === false) { box.className = "empty"; box.textContent = "unavailable on this host"; }
   else if (d.error) { box.className = "empty"; box.textContent = "couldn't compute: " + d.error; }
   else { box.className = "empty"; box.textContent = d.note || "No author changes since your last review (a rebase brought no new work)."; }
   el.appendChild(box);
-}
-
-// a normal unified diff (git diff) — the author's net changes since the reviewed version, rendered
-// like any ordinary diff so the reviewer just reads +/- against what they last saw
-function unifiedDiffView(text) {
-  const wrap = document.createElement("div");
-  wrap.className = "udiff";
-  (text || "").split("\n").forEach((line) => {
-    const div = document.createElement("div");
-    div.className = "udln";
-    if (/^(diff --git|index |--- |\+\+\+ |new file|deleted file|rename |similarity )/.test(line)) div.className += " u-file";
-    else if (line.startsWith("@@")) div.className += " u-hunk";
-    else if (line[0] === "+") div.className += " u-add";
-    else if (line[0] === "-") div.className += " u-del";
-    else div.className += " u-ctx";
-    div.textContent = line || "​";   // keep blank lines from collapsing
-    wrap.appendChild(div);
-  });
-  return wrap;
 }
 
 // git range-diff is a diff-of-diffs — dense as raw text. Render it as a proper dual-column split.
