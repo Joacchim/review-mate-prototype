@@ -533,28 +533,48 @@ function renderSinceLast(el) {
   el.appendChild(box);
 }
 
-// git range-diff is a diff-of-diffs — dense as raw text. Colorize it: per-commit correspondence
-// lines become labeled headers (modified/new/dropped/unchanged), @@ lines mark the file, and the
-// interdiff body is tinted add/del. Heuristic on the leading marker column — not a full parse.
+// git range-diff is a diff-of-diffs — dense as raw text. Render it as a proper dual-column split.
+// The format is deterministic: cols 0-3 are indent, col 4 is the OUTER marker (was the line in the
+// reviewed patch / is it in the current one: ' '=both, '-'=old-only, '+'=new-only, '@'=section),
+// col 5+ is the INNER patch line with its own +/-. Two gutters show old|new presence, the row is
+// tinted by the since-review delta, and the code cell keeps the patch-level +/- coloring.
 function rangeDiffView(text) {
   const wrap = document.createElement("div");
   wrap.className = "rdiff";
   const commitRe = /^\s*(?:\d+|-):\s+\S+\s+([=!<>])\s+(?:\d+|-):\s+\S+/;
   const opClass = { "!": "rd-cmod", ">": "rd-cnew", "<": "rd-cdrop", "=": "rd-csame" };
+  const legend = document.createElement("div");
+  legend.className = "rdlegend";
+  legend.textContent = "old = in the version you reviewed · new = in the current version · tinted row = changed since your review";
+  wrap.appendChild(legend);
+
+  let table = null;
+  const header = (cls, txt) => {
+    table = null;
+    const h = document.createElement("div");
+    h.className = "rdln " + cls;
+    h.textContent = txt;
+    wrap.appendChild(h);
+  };
+  const cell = (cls, txt) => { const c = document.createElement("td"); c.className = cls; c.textContent = txt; return c; };
+
   (text || "").split("\n").forEach((line) => {
-    const div = document.createElement("div");
-    div.className = "rdln";
     const cm = line.match(commitRe);
-    if (cm) {
-      div.className += " rdcommit " + (opClass[cm[1]] || "rd-csame");
-    } else {
-      const body = line.startsWith("    ") ? line.slice(4) : line;   // drop range-diff's outer indent
-      const c = body[0];                                             // the interdiff marker column
-      div.className += body.startsWith("@@") ? " rd-file"
-        : c === "+" ? " rd-add" : c === "-" ? " rd-del" : " rd-ctx";
-    }
-    div.textContent = line || "​";   // keep blank lines from collapsing
-    wrap.appendChild(div);
+    if (cm) { header("rdcommit " + (opClass[cm[1]] || "rd-csame"), line); return; }
+    if (/^\s{0,4}@@ /.test(line) && line[4] === "@") { header("rd-file", line.replace(/^\s+/, "")); return; }
+
+    const outer = line[4] || " ";                 // present-in-old / present-in-new marker
+    const inner = line.slice(5);                  // the underlying patch line (keeps its own +/-)
+    const im = inner[0];                          // patch-level add / del / hunk
+    if (!table) { table = document.createElement("table"); table.className = "rdtable"; wrap.appendChild(table); }
+    const tr = document.createElement("tr");
+    tr.className = outer === "+" ? "rd-add" : outer === "-" ? "rd-del" : "rd-ctx";
+    const oldPresent = outer === " " || outer === "-";
+    const newPresent = outer === " " || outer === "+";
+    tr.appendChild(cell("rg" + (outer === "-" ? " g-del" : ""), outer === "-" ? "−" : oldPresent ? "·" : ""));
+    tr.appendChild(cell("rg" + (outer === "+" ? " g-add" : ""), outer === "+" ? "+" : newPresent ? "·" : ""));
+    tr.appendChild(cell("rc" + (im === "+" ? " i-add" : im === "-" ? " i-del" : im === "@" ? " i-hunk" : ""), inner));
+    table.appendChild(tr);
   });
   return wrap;
 }
