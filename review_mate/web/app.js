@@ -384,8 +384,15 @@ function renderClaudeAnswer(req, panel) {
 }
 
 function render() {
-  $("mr").textContent = state.mr
-    ? `${state.mr.project} !${state.mr.iid} — ${state.mr.title}` : "(no MR loaded)";
+  if (state.mr) {
+    const m = state.mr;
+    // the project!iid path links back to the MR on the host, so reviewers can jump to the source
+    const path = `${esc(m.project)} !${m.iid}`;
+    const link = m.url ? `<a class="mrlink" href="${esc(m.url)}" target="_blank" rel="noopener">${path} ↗</a>` : path;
+    $("mr").innerHTML = `${link} — ${esc(m.title)}`;
+  } else {
+    $("mr").textContent = "(no MR loaded)";
+  }
   renderTree();
   renderDiff();
   renderRail();
