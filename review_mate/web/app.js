@@ -151,7 +151,8 @@ async function showLanding() {
   let sessions = [];
   try { sessions = await fetch("/api/sessions").then((r) => r.json()); } catch (e) {}
   if (!Array.isArray(sessions)) sessions = [];
-  renderOpenSessions(land, sessions.filter((s) => s.status === "active"));
+  const active = sessions.filter((s) => s.status === "active");
+  renderOpenSessions(land, active);
 
   const head = document.createElement("div");
   head.innerHTML = `<h2>Pick a merge request</h2>`;
@@ -163,11 +164,14 @@ async function showLanding() {
   let items = [];
   try { items = await fetch("/api/queue").then((r) => r.json()); } catch (e) {}
   if (items && items.error) items = [];
-  renderQueue(queueBox, items);
+  renderQueue(queueBox, items, active);
 }
 
-function renderQueue(box, items) {
+function renderQueue(box, items, openSessions) {
   box.innerHTML = "";
+  // drop MRs already open as reviews — they're listed under "Open reviews" above, not the queue
+  const open = new Set((openSessions || []).map((s) => `${s.project}!${s.iid}`));
+  items = items.filter((it) => !open.has(`${it.project}!${it.iid}`));
   if (!items.length) {
     box.appendChild(empty("your review queue is empty here — paste an MR reference in the top bar (URL or group/proj!iid)."));
     return;
