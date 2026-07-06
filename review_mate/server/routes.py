@@ -171,6 +171,14 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             except Exception as exc:  # one bad anchor shouldn't sink the rest of the review
                 results.append({"highlight_id": d.highlight_id, "ok": False, "error": str(exc)})
         posted = sum(1 for r in results if r["ok"])
+        if posted:
+            # surface the just-posted comments as live threads in session state — otherwise the
+            # inline "your comment" block (and its Resolve control) can't find its thread until a
+            # manual refresh, since submit only recorded the thread_id on the draft
+            try:
+                await _remirror_threads(actor, ref)
+            except Exception:
+                pass
         approved = False
         approve_error = None
         body = await _maybe_json(request)

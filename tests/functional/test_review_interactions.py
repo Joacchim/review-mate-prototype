@@ -177,6 +177,24 @@ async def test_context_degrades_without_provider(tmp_path):
     await manager.shutdown()
 
 
+async def test_submit_surfaces_posted_thread_into_state(tmp_path):
+    # after posting, the comment's thread must land in state so the inline "your comment" block
+    # (and its Resolve control) can find it — without waiting for a manual refresh
+    posted = [ReviewThread(id="disc-new", anchor={"file": "a.py", "side": "new", "line": 5},
+                           comments=[ThreadComment(id="1", author="me", body="prefer a guard")])]
+    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider(threads=posted))
+    async with client:
+        actor = manager.get(sid)
+        await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+                                        line_range=LineRange(start=5, end=6)), Origin.BROWSER)
+        hid = actor.snapshot().highlights[0].id
+        await actor.submit(SaveDraft(highlight_id=hid, body="prefer a guard"), Origin.BROWSER)
+        await client.post(f"/api/sessions/{sid}/submit-review", json={})
+    threads = manager.get(sid).snapshot().threads
+    assert [t.id for t in threads] == ["disc-new"] and threads[0].anchor is not None   # resolvable inline
+    await manager.shutdown()
+
+
 async def test_submit_composes_suggestion_and_captures_thread_id(tmp_path):
     writer = StubWriter()
     manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
