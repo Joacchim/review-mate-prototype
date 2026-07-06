@@ -56,17 +56,21 @@ class WorkspaceManager:
                                f"{old_base}..{old_head}", f"{new_base}..{new_head}")
 
     async def since_diff(self, repo: RepoRef, old_base: str, old_head: str,
-                         new_base: str, new_head: str) -> str | None:
-        """A *normal* unified diff of the author's net changes since the reviewed version, with
-        target-branch (rebase) noise excluded — the reviewer reads it as an ordinary diff against
-        the version they last saw, not a diff-of-diffs. When the base hasn't moved, the head-to-head
-        diff is already clean; when it has, the current commits are replayed onto the reviewed base
-        first. Returns None if that replay conflicts, so the caller can fall back to the range-diff."""
+                         new_base: str, new_head: str) -> dict:
+        """A *normal* unified diff of the author's changes since the reviewed version, so the reviewer
+        reads an ordinary per-file diff, never a diff-of-diffs. Returns {"diff": str, "clean": bool}:
+        clean=True when target-branch (rebase) noise was excluded — the base hadn't moved (a plain
+        head-to-head diff), or the current commits replayed cleanly onto the reviewed base. clean=False
+        when the base moved *and* that replay conflicted (or the old base is unknown): the result is
+        then the raw old_head..new_head diff — still a readable normal diff, but may include target-
+        branch changes. Only raises if a required commit can't be fetched."""
         mirror = await self._ensure_mirror(repo)
         for sha in (old_base, old_head, new_base, new_head):
-            await self._ensure_commit(mirror, sha)
-        if old_base == new_base:   # no rebase happened → old_head..new_head is already noise-free
-            return await self._git("-C", str(mirror), "diff", old_head, new_head)
+            if sha:
+                await self._ensure_commit(mirror, sha)
+        plain = lambda: self._git("-C", str(mirror), "diff", old_head, new_head)
+        if not old_base or not new_base or old_base == new_base:   # no rebase (or base unknown) → clean
+            return {"diff": await plain(), "clean": True}
         # base moved: replay the current commits onto the reviewed base, then diff against old_head
         wt = self.root / "checkouts" / ("since-" + _key(repo))
         shutil.rmtree(wt, ignore_errors=True)
@@ -79,8 +83,10 @@ class WorkspaceManager:
                     await self._git("-C", str(wt), "rebase", "--abort")
                 except RuntimeError:
                     pass
-                return None   # conflicting replay — caller falls back to the range-diff
-            return await self._git("-C", str(wt), "diff", old_head, "HEAD")
+                # replay conflicted — a plain diff is noisier but still a readable normal diff,
+                # far better for the reviewer than the raw range-diff (diff-of-diffs)
+                return {"diff": await plain(), "clean": False}
+            return {"diff": await self._git("-C", str(wt), "diff", old_head, "HEAD"), "clean": True}
         finally:
             try:
                 await self._git("-C", str(mirror), "worktree", "remove", "--force", str(wt))

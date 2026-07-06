@@ -229,24 +229,31 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
         versions = await provider.mr_versions(ref)
         new = versions[0] if versions else None
-        old = next((v for v in versions if v["head_sha"] == wm), None)
-        if new is None or old is None:  # can't locate the reviewed version → don't guess
+        if new is None:
             return JSONResponse({"available": True, "empty": True, "mode": "diff", "diff": "",
-                                 "note": "couldn't locate the version you last reviewed"})
+                                 "note": "no diff versions on this MR"})
+        old = next((v for v in versions if v["head_sha"] == wm), None)
+        old_base = old["base_sha"] if old else None   # unknown → since_diff does a plain wm..head diff
         repo = RepoRef(host=snap.mr.host, project=snap.mr.project, clone_url=snap.mr.clone_url)
-        bases = (old["base_sha"], old["head_sha"], new["base_sha"], new["head_sha"])
-        # preferred: a plain diff against the reviewed version (reads like an ordinary diff)
+        bases = (old_base, wm, new["base_sha"], new["head_sha"])
+        # preferred: a normal per-file diff against the reviewed version (never a diff-of-diffs)
         if hasattr(workspace, "since_diff"):
+            res, err = None, "since-last unavailable"
             try:
-                diff = await workspace.since_diff(repo, *bases)
+                res = await workspace.since_diff(repo, *bases)
             except Exception as exc:
-                return JSONResponse({"available": True, "error": str(exc)})
-            if diff is not None:
-                return JSONResponse({"available": True, "mode": "diff",
-                                     "empty": not diff.strip(), "files": _split_unified_diff(diff)})
-        # fallback: the raw range-diff (a conflicting replay, or a workspace without since_diff)
+                err = str(exc)
+            if res is not None:
+                payload = {"available": True, "mode": "diff", "empty": not res["diff"].strip(),
+                           "files": _split_unified_diff(res["diff"])}
+                if not res.get("clean", True):
+                    payload["note"] = ("the reviewed version was rebased — showing the raw diff, "
+                                       "which may include target-branch changes")
+                return JSONResponse(payload)
+            return JSONResponse({"available": True, "error": err})
+        # workspace without since_diff → the raw range-diff
         try:
-            text = await workspace.range_diff(repo, *bases)
+            text = await workspace.range_diff(repo, old_base, wm, new["base_sha"], new["head_sha"])
         except Exception as exc:
             return JSONResponse({"available": True, "error": str(exc)})
         return JSONResponse({"available": True, "mode": "rangediff",

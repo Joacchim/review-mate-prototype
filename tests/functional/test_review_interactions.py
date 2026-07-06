@@ -294,8 +294,8 @@ async def test_since_last_prefers_a_normal_diff(tmp_path):
     class Ws:  # exposes since_diff → the route must prefer it and never fall back
         async def since_diff(self, repo, ob, oh, nb, nh):
             self.args = (ob, oh, nb, nh)
-            return ("diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n"
-                    "@@ -1 +1,2 @@\n ctx\n+new line\n")
+            return {"clean": True, "diff": ("diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n"
+                                            "@@ -1 +1,2 @@\n ctx\n+new line\n")}
 
         async def range_diff(self, *a):
             raise AssertionError("should not fall back to range-diff when since_diff succeeds")

@@ -105,8 +105,9 @@ async def test_since_diff_is_a_plain_diff_when_base_unchanged(wm, tmp_path):
     reviewed = _rev(src)
     (src / "f.txt").write_text("a\nb\nc\n"); _git("commit", "-am", "add c", cwd=src)
     current = _rev(src)
-    diff = await wm.since_diff(_repo(src), base, reviewed, base, current)
-    assert "+c" in diff and "+b" not in diff   # only the new line c is added; b is untouched context
+    res = await wm.since_diff(_repo(src), base, reviewed, base, current)
+    assert res["clean"] is True
+    assert "+c" in res["diff"] and "+b" not in res["diff"]   # only the new line c; b is untouched context
 
 
 async def test_since_diff_excludes_rebase_noise(wm, tmp_path):
@@ -128,10 +129,31 @@ async def test_since_diff_excludes_rebase_noise(wm, tmp_path):
     _git("checkout", "-q", "-b", "featB", cwd=src)
     (src / "f.txt").write_text(moved + "AUTHOR\nAUTHOR2\n"); _git("commit", "-am", "author work v2", cwd=src)
     current = _rev(src)
-    diff = await wm.since_diff(_repo(src), old_base, reviewed, new_base, current)
-    assert diff is not None                 # the replay applied cleanly
-    assert "AUTHOR2" in diff                 # the author's genuinely-new line since review
-    assert "L1 MOVED" not in diff            # the target-branch (rebase) change is excluded
+    res = await wm.since_diff(_repo(src), old_base, reviewed, new_base, current)
+    assert res["clean"] is True              # the replay applied cleanly, so noise was excluded
+    assert "AUTHOR2" in res["diff"]          # the author's genuinely-new line since review
+    assert "L1 MOVED" not in res["diff"]     # the target-branch (rebase) change is excluded
+
+
+async def test_since_diff_falls_back_to_plain_on_conflict(wm, tmp_path):
+    """When the base moved AND the replay conflicts (author + target edited the same lines), since_diff
+    returns clean=False with the raw old_head..new_head diff — a readable normal diff, not None."""
+    src = tmp_path / "src"; src.mkdir()
+    _git("init", "-b", "main", cwd=src)
+    (src / "f.txt").write_text("L1\nL2\nL3\n"); _git("add", ".", cwd=src); _git("commit", "-m", "b0", cwd=src)
+    old_base = _rev(src)
+    _git("checkout", "-q", "-b", "featA", cwd=src)
+    (src / "f.txt").write_text("L1\nAUTHOR\nL3\n"); _git("commit", "-am", "author edits L2", cwd=src)
+    reviewed = _rev(src)
+    _git("checkout", "-q", "main", cwd=src)
+    (src / "f.txt").write_text("L1\nTARGET\nL3\n"); _git("commit", "-am", "target edits L2", cwd=src)
+    new_base = _rev(src)
+    _git("checkout", "-q", "-b", "featB", cwd=src)
+    (src / "f.txt").write_text("L1\nAUTHOR2\nL3\n"); _git("commit", "-am", "author edits L2 again", cwd=src)
+    current = _rev(src)
+    res = await wm.since_diff(_repo(src), old_base, reviewed, new_base, current)
+    assert res["clean"] is False             # the replay onto the old base conflicted
+    assert "AUTHOR2" in res["diff"]          # still a readable normal diff (raw old_head..new_head)
 
 
 async def test_seed_clone_is_not_modified(tmp_path, source_repo):  # AC-4

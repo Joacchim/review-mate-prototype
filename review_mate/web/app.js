@@ -845,6 +845,7 @@ function renderSinceLast(el) {
       el.appendChild(rangeDiffView(d.interdiff));
       return;
     }
+    if (d.note) { const n = document.createElement("div"); n.className = "sincenote"; n.textContent = "⚠ " + d.note; el.appendChild(n); }
     renderFileDiff(el, d.files || [], "  ·  since your last review", false);
     return;
   }
