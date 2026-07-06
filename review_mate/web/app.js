@@ -14,7 +14,7 @@ let focusedDraft = null;   // highlight_id of the focused draft textarea, to res
 let repoTree = null;                 // all repo paths (lazy-loaded when "show all" is on)
 let showAll = localStorage.getItem("rm-showall") === "1";
 const fileContents = {};             // path -> content (cache for non-diff file views + unfold)
-const expandedGaps = {};             // path -> Set of gap-start new-line numbers the reviewer unfolded
+const expandedGaps = {};             // path -> Map of gap-start -> {top, bot, all} lines unfolded
 const mdRendered = new Set();        // .md paths currently shown rendered (vs raw diff)
 let viewingPath = null;              // a non-diff file currently shown (plain view)
 let railFilter = "all";              // index filter: all | context | comment | posted
@@ -760,7 +760,7 @@ function parseHunks(fileDiff) {
 function renderUnifiedUnfoldable(table, fileDiff, path, hl) {
   const hunks = parseHunks(fileDiff);
   const lines = fileContents[path] !== undefined ? fileContents[path].split("\n") : null;
-  const exp = expandedGaps[path] || new Set();
+  const exp = expandedGaps[path] || new Map();
   const lang = langOf(path);
   let cursor = 1;   // next not-yet-shown new-side line number
   hunks.forEach((h) => {
@@ -780,29 +780,50 @@ function renderUnifiedUnfoldable(table, fileDiff, path, hl) {
   if (lines) renderGap(table, path, cursor, lines.length, lines, exp, hl, lang);   // trailing gap (length known)
 }
 
-// a gap of new-side lines [from..to]: either the revealed context rows, or a clickable unfold band
+const UNFOLD_CHUNK = 20;   // lines revealed per incremental unfold step
+
+// a gap of new-side lines [from..to]: revealed context rows at the edges (grown incrementally) and,
+// for whatever is still collapsed in the middle, a band offering ▼/▲ N-more and "show all".
 function renderGap(table, path, from, to, lines, exp, hl, lang) {
   if (to < from) return;
-  if (exp.has(from) && lines) {
-    for (let n = from; n <= to; n++) {
-      const text = lines[n - 1] !== undefined ? lines[n - 1] : "";
-      const tr = document.createElement("tr");
-      tr.className = "line ctx" + (hl.has(n) ? " hl" : "");
-      tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${esc(" ") + highlightCode(text, lang)}</td>`;
-      table.appendChild(tr);
+  const size = to - from + 1;
+  const g = exp.get(from) || { top: 0, bot: 0, all: false };
+  const ctxRow = (n) => {
+    const text = lines && lines[n - 1] !== undefined ? lines[n - 1] : "";
+    const tr = document.createElement("tr");
+    tr.className = "line ctx" + (hl.has(n) ? " hl" : "");
+    tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${esc(" ") + highlightCode(text, lang)}</td>`;
+    table.appendChild(tr);
+  };
+  if ((g.all || g.top + g.bot >= size) && lines) { for (let n = from; n <= to; n++) ctxRow(n); return; }
+  const topN = Math.min(g.top, size);
+  const botN = Math.min(g.bot, size - topN);
+  if (lines) for (let n = from; n < from + topN; n++) ctxRow(n);          // revealed near the previous hunk
+  const mFrom = from + topN, mTo = to - botN, mSize = mTo - mFrom + 1;    // still-collapsed middle
+  if (mSize > 0) {
+    const tr = document.createElement("tr"); tr.className = "expand";
+    const ln = document.createElement("td"); ln.className = "ln"; ln.textContent = "⋯";
+    const cell = document.createElement("td"); cell.className = "code exp";
+    const link = (txt, kind) => { const s = document.createElement("span"); s.className = "exlink"; s.textContent = txt; s.onclick = () => expandGap(path, from, kind); return s; };
+    if (mSize <= UNFOLD_CHUNK) {
+      cell.appendChild(link(`⋯ show ${mSize} line${mSize > 1 ? "s" : ""}`, "all"));
+    } else {
+      cell.appendChild(link(`▼ ${UNFOLD_CHUNK}`, "top"));       // reveal downward from the top of the gap
+      cell.append(" · "); cell.appendChild(link(`⋯ all ${mSize}`, "all"));
+      cell.append(" · "); cell.appendChild(link(`▲ ${UNFOLD_CHUNK}`, "bot"));  // reveal upward from the bottom
     }
-    return;
+    tr.appendChild(ln); tr.appendChild(cell); table.appendChild(tr);
   }
-  const count = to - from + 1;
-  const tr = document.createElement("tr");
-  tr.className = "expand";
-  tr.innerHTML = `<td class="ln">⋯</td><td class="code exp">⋯ show ${count} line${count > 1 ? "s" : ""}</td>`;
-  tr.onclick = () => expandGap(path, from);
-  table.appendChild(tr);
+  if (lines) for (let n = to - botN + 1; n <= to; n++) ctxRow(n);          // revealed near the next hunk
 }
 
-async function expandGap(path, from) {
-  (expandedGaps[path] = expandedGaps[path] || new Set()).add(from);
+async function expandGap(path, from, kind) {
+  const m = expandedGaps[path] = expandedGaps[path] || new Map();
+  const g = m.get(from) || { top: 0, bot: 0, all: false };
+  if (kind === "all") g.all = true;
+  else if (kind === "top") g.top += UNFOLD_CHUNK;
+  else if (kind === "bot") g.bot += UNFOLD_CHUNK;
+  m.set(from, g);
   if (fileContents[path] === undefined) {   // reveal needs the full blob — fetch once, then re-render
     try {
       const d = await fetch(`/api/sessions/${SID}/file?path=${encodeURIComponent(path)}`).then((r) => r.json());
@@ -1508,21 +1529,39 @@ function threadConversationBlock(t) {
 }
 
 function renderVersionBanner(el) {
-  if (!reviewStatus || !reviewStatus.behind) return;
-  const bar = document.createElement("div");
-  bar.className = "verbanner";
-  const lbl = document.createElement("span"); lbl.className = "vblabel";
-  lbl.textContent = "Updated since your last review";
-  bar.appendChild(lbl);
-  const controls = document.createElement("div"); controls.className = "vbctl";
+  if (!reviewStatus) return;
   const cap = state.mr && (state.mr.capabilities || {}).diff_versions === true;
-  const toggle = btn(sinceLast ? "Full diff" : "Since last review",
-                     "btn ghost" + (sinceLast ? " on" : ""), toggleSinceLast);
-  if (!cap) { toggle.disabled = true; toggle.title = "unavailable on this host"; }
-  controls.appendChild(toggle);
-  controls.appendChild(btn("Mark reviewed", "btn ghost", markReviewed));
-  bar.appendChild(controls);
-  el.appendChild(bar);
+  if (!cap) return;
+  if (reviewStatus.behind) {
+    // the MR advanced past the reviewed watermark — offer the interdiff + advance the watermark
+    const bar = document.createElement("div");
+    bar.className = "verbanner";
+    const lbl = document.createElement("span"); lbl.className = "vblabel";
+    lbl.textContent = "Updated since your last review";
+    bar.appendChild(lbl);
+    const controls = document.createElement("div"); controls.className = "vbctl";
+    const toggle = btn(sinceLast ? "Full diff" : "Since last review",
+                       "btn ghost" + (sinceLast ? " on" : ""), toggleSinceLast);
+    controls.appendChild(toggle);
+    controls.appendChild(btn("Mark reviewed", "btn ghost", markReviewed));
+    bar.appendChild(controls);
+    el.appendChild(bar);
+  } else if (!reviewStatus.watermark) {
+    // no baseline yet → let the reviewer set one, so incremental review can engage on later pushes
+    // (this is the only entry point to the *first* watermark; submitting a review also sets it)
+    const bar = document.createElement("div");
+    bar.className = "verbanner baseline";
+    const lbl = document.createElement("span"); lbl.className = "vblabel";
+    lbl.textContent = "Set a baseline for incremental review";
+    bar.appendChild(lbl);
+    const controls = document.createElement("div"); controls.className = "vbctl";
+    const b = btn("Mark reviewed up to here", "btn ghost", markReviewed);
+    b.title = "record the current version as reviewed — then \"Since last review\" shows only later changes";
+    controls.appendChild(b);
+    bar.appendChild(controls);
+    el.appendChild(bar);
+  }
+  // else: caught up (watermark == head) — nothing to show
 }
 
 function renderReviewBar(el) {
