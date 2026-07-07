@@ -17,10 +17,17 @@ session, not one shared with the reviewer's chat.
 
 ## Prerequisites
 
-- The review-mate server is running (`uv run review-mate`), serving the UI, `/api`, and `/mcp`.
-- The `review-mate` MCP server is registered: `claude mcp add --transport http review-mate
-  http://127.0.0.1:8765/mcp/` — the **trailing slash is required** (a POST to `/mcp` returns 405).
-  Register before launching this session; MCP tools load at session start.
+- The `review-mate` MCP is **auto-registered from the project `.mcp.json`** (HTTP,
+  `http://127.0.0.1:8765/mcp/` — trailing slash required; a POST to `/mcp` returns 405). Approve it
+  once when Claude Code prompts; no manual `claude mcp add`.
+- The review-mate server (`uv run review-mate`) — which serves the UI, `/api`, and `/mcp` — **must
+  be up when this session starts**, because MCP tools bind at session start. Starting the server
+  mid-session does **not** make the tools appear (a skill can't fix this from inside the session) —
+  restart the session once the server is up.
+- **First action:** confirm the server answers —
+  `curl -s -m 5 -o /dev/null -w "%{http_code}" "http://127.0.0.1:8765/api/activity?since=0"`. If it
+  fails, tell the reviewer to start `uv run review-mate` and (if `mcp__review-mate__*` tools are
+  absent) relaunch this session; do not proceed against a dead server.
 
 ## State you keep (in working memory)
 
