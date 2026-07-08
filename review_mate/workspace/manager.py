@@ -22,6 +22,17 @@ class WorkspaceManager:
         (self.root / "mirrors").mkdir(parents=True, exist_ok=True)
         (self.root / "checkouts").mkdir(parents=True, exist_ok=True)
         self._mirror_of: dict[str, Path] = {}  # checkout path -> mirror path
+        self._repo_locks: dict[str, asyncio.Lock] = {}  # per-repo: serialize clone + shared worktree ops
+
+    def _repo_lock(self, repo: RepoRef) -> asyncio.Lock:
+        """One lock per repo — serializes the bare-mirror clone and the shared since-diff worktree,
+        so a background prefetch racing a user toggle (or two sessions on the same repo) can't
+        double-clone or collide on the same worktree path. Created lazily (no await → race-free)."""
+        key = _key(repo)
+        lock = self._repo_locks.get(key)
+        if lock is None:
+            lock = self._repo_locks[key] = asyncio.Lock()
+        return lock
 
     # --- Workspace seam -----------------------------------------------------
 
@@ -71,27 +82,29 @@ class WorkspaceManager:
         plain = lambda: self._git("-C", str(mirror), "diff", old_head, new_head)
         if not old_base or not new_base or old_base == new_base:   # no rebase (or base unknown) → clean
             return {"diff": await plain(), "clean": True}
-        # base moved: replay the current commits onto the reviewed base, then diff against old_head
-        wt = self.root / "checkouts" / ("since-" + _key(repo))
-        shutil.rmtree(wt, ignore_errors=True)
-        await self._git("-C", str(mirror), "worktree", "add", "--detach", str(wt), new_head)
-        try:
+        # base moved: replay the current commits onto the reviewed base, then diff against old_head.
+        # The worktree path is shared per repo, so serialize (a prefetch may race a user toggle).
+        async with self._repo_lock(repo):
+            wt = self.root / "checkouts" / ("since-" + _key(repo))
+            shutil.rmtree(wt, ignore_errors=True)
+            await self._git("-C", str(mirror), "worktree", "add", "--detach", str(wt), new_head)
             try:
-                await self._git("-C", str(wt), "rebase", "--onto", old_base, new_base)
-            except RuntimeError:
                 try:
-                    await self._git("-C", str(wt), "rebase", "--abort")
+                    await self._git("-C", str(wt), "rebase", "--onto", old_base, new_base)
                 except RuntimeError:
-                    pass
-                # replay conflicted — a plain diff is noisier but still a readable normal diff,
-                # far better for the reviewer than the raw range-diff (diff-of-diffs)
-                return {"diff": await plain(), "clean": False}
-            return {"diff": await self._git("-C", str(wt), "diff", old_head, "HEAD"), "clean": True}
-        finally:
-            try:
-                await self._git("-C", str(mirror), "worktree", "remove", "--force", str(wt))
-            except RuntimeError:
-                shutil.rmtree(wt, ignore_errors=True)
+                    try:
+                        await self._git("-C", str(wt), "rebase", "--abort")
+                    except RuntimeError:
+                        pass
+                    # replay conflicted — a plain diff is noisier but still a readable normal diff,
+                    # far better for the reviewer than the raw range-diff (diff-of-diffs)
+                    return {"diff": await plain(), "clean": False}
+                return {"diff": await self._git("-C", str(wt), "diff", old_head, "HEAD"), "clean": True}
+            finally:
+                try:
+                    await self._git("-C", str(mirror), "worktree", "remove", "--force", str(wt))
+                except RuntimeError:
+                    shutil.rmtree(wt, ignore_errors=True)
 
     # --- internals ----------------------------------------------------------
 
@@ -102,21 +115,24 @@ class WorkspaceManager:
         mirror = self.mirror_path(repo)
         if mirror.exists():
             return mirror
-        # Clone into a .tmp sibling and rename on success, so a failed/interrupted clone never
-        # leaves a poisoned empty mirror that mirror.exists() would then treat as complete forever.
-        tmp = mirror.with_name(mirror.name + ".tmp")
-        shutil.rmtree(tmp, ignore_errors=True)
-        args = ["clone", "--bare", "--filter=blob:none"]
-        seed = self.seeds.get(_key(repo))
-        if seed:
-            args += ["--reference", seed]
-        args += [repo.clone_url, str(tmp)]
-        try:
-            await self._git(*args)
-        except BaseException:
+        async with self._repo_lock(repo):
+            if mirror.exists():   # a concurrent caller cloned it while we waited on the lock
+                return mirror
+            # Clone into a .tmp sibling and rename on success, so a failed/interrupted clone never
+            # leaves a poisoned empty mirror that mirror.exists() would then treat as complete forever.
+            tmp = mirror.with_name(mirror.name + ".tmp")
             shutil.rmtree(tmp, ignore_errors=True)
-            raise
-        tmp.replace(mirror)
+            args = ["clone", "--bare", "--filter=blob:none"]
+            seed = self.seeds.get(_key(repo))
+            if seed:
+                args += ["--reference", seed]
+            args += [repo.clone_url, str(tmp)]
+            try:
+                await self._git(*args)
+            except BaseException:
+                shutil.rmtree(tmp, ignore_errors=True)
+                raise
+            tmp.replace(mirror)
         return mirror
 
     async def _ensure_commit(self, mirror: Path, commit: str) -> None:

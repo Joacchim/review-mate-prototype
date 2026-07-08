@@ -40,7 +40,9 @@ let commitList = null;               // [{sha, short_id, title, message, …}] o
 let currentCommit = null;            // sha of the commit being reviewed
 const commitFiles = {};              // sha -> that commit's files (shaped like state.files)
 let sinceLast = false;               // showing the rebase-aware "since last review" interdiff
-let sinceLastData = null;            // fetched {available, empty, interdiff, error}
+let sinceLastData = null;            // fetched {available, empty, mode, files|interdiff, error}
+let sinceLastHead = null;            // the head sinceLastData was computed for (invalidate when it moves)
+let sinceLastPrefetching = false;    // a background warm of the interdiff is in flight
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -287,7 +289,16 @@ async function load() {
   catch (e) { reviewStatus = null; }
   try { approvalStatus = await fetch(`/api/sessions/${SID}/approval-status`).then((r) => r.json()); }
   catch (e) { approvalStatus = null; }
-  sinceLastData = null;   // refetch the interdiff lazily (the head may have moved)
+  const head = reviewStatus ? reviewStatus.head : null;
+  if (head !== sinceLastHead) { sinceLastData = null; sinceLastHead = head; }   // invalidate only when the head moved
+  // warm the interdiff in the background once the MR is behind, so the first toggle is instant
+  if (reviewStatus && reviewStatus.behind && sinceLastData === null && !sinceLastPrefetching) {
+    sinceLastPrefetching = true;
+    fetch(`/api/sessions/${SID}/since-last`).then((r) => r.json())
+      .then((d) => { sinceLastData = d; })
+      .catch(() => {})
+      .finally(() => { sinceLastPrefetching = false; if (sinceLast) render(); });
+  }
   render();
 }
 
@@ -296,7 +307,9 @@ async function toggleSinceLast() {
   viewingPath = null;   // both views are diff views — drop any non-diff repo file being shown
   if (sinceLast) { commitsMode = false; $("t-commits").classList.toggle("on", false); }  // one diff mode at a time
   render();   // swap to the panel now — it shows "computing…" while the (cold: clone + fetch) work runs
-  if (sinceLast && sinceLastData === null) {
+  // usually the background warm (in load) already has it; only fetch here if it didn't, and never
+  // race that in-flight warm — its .finally re-renders when it lands
+  if (sinceLast && sinceLastData === null && !sinceLastPrefetching) {
     try { sinceLastData = await fetch(`/api/sessions/${SID}/since-last`).then((r) => r.json()); }
     catch (e) { sinceLastData = { error: String(e) }; }
     render();

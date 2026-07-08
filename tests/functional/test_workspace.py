@@ -135,6 +135,20 @@ async def test_since_diff_excludes_rebase_noise(wm, tmp_path):
     assert "L1 MOVED" not in res["diff"]     # the target-branch (rebase) change is excluded
 
 
+async def test_concurrent_mirror_use_clones_once(wm, source_repo):
+    """The per-repo lock serializes the bare-mirror clone: two concurrent callers (a prefetch racing
+    a user toggle) must not double-clone or leave a poisoned .tmp behind."""
+    import asyncio
+    src, sha = source_repo   # base==head → since_diff takes the plain path (no worktree, just the mirror)
+    r1, r2 = await asyncio.gather(
+        wm.since_diff(_repo(src), sha, sha, sha, sha),
+        wm.since_diff(_repo(src), sha, sha, sha, sha))
+    assert r1["clean"] and r2["clean"]
+    entries = list((wm.root / "mirrors").iterdir())
+    assert len([m for m in entries if m.name.endswith(".git")]) == 1   # one mirror
+    assert not [m for m in entries if m.name.endswith(".tmp")]         # no leftover partial clone
+
+
 async def test_since_diff_falls_back_to_plain_on_conflict(wm, tmp_path):
     """When the base moved AND the replay conflicts (author + target edited the same lines), since_diff
     returns clean=False with the raw old_head..new_head diff — a readable normal diff, not None."""
