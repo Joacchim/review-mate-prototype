@@ -14,7 +14,12 @@ def main(argv: list[str] | None = None) -> None:
 
     import uvicorn
 
-    uvicorn.run(create_app(), host=args.host, port=args.port)
+    # Cap the graceful-shutdown drain: the server holds long-poll requests (/api/activity ~50s,
+    # wait_for_* ~25-30s) and websockets open, and uvicorn otherwise waits for every one of them to
+    # finish before exiting — so a single SIGINT appears to hang until a second, forceful one. With a
+    # short cap, quick in-flight requests still finish but the long-lived ones are force-closed, so
+    # one Ctrl-C exits within ~2s. (manager.shutdown() in the lifespan then cancels the background tasks.)
+    uvicorn.run(create_app(), host=args.host, port=args.port, timeout_graceful_shutdown=2)
 
 
 if __name__ == "__main__":
