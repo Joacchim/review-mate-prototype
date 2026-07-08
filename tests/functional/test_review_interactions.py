@@ -380,6 +380,26 @@ async def test_commits_and_commit_diff_routes(tmp_path):
     await manager.shutdown()
 
 
+async def test_sessions_status_hub_computes_git_update(tmp_path):
+    from review_mate.kb.store import ReviewKB
+
+    class VProvider(StubProvider):   # current head is HEAD2; fetch_threads inherited (no threads)
+        async def mr_versions(self, ref):
+            return [{"base_sha": "b", "head_sha": "HEAD2", "start_sha": "", "created_at": ""}]
+
+    mr = MRMetadata(host="gitlab", project="g/p", iid=42, title="T", source_branch="x",
+                    target_branch="m", sha="HEAD1", author="a", url="u")
+    manager = SessionManager(root=tmp_path / "s")
+    kb = ReviewKB(root=tmp_path / "kb"); kb.set_watermark("gitlab", "g/p", 42, "HEAD1")  # reviewed HEAD1
+    app = create_app(manager=manager, with_mcp=False, provider=VProvider(), kb=kb)
+    sid = await manager.create()
+    await manager.get(sid).submit(ApplyMRMetadata(mr=mr), Origin.SYSTEM)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        r = (await c.get("/api/sessions/status")).json()   # also proves /status isn't caught by /{id}
+    assert r[sid]["state"] == "git_update" and r[sid]["behind"] is True   # head moved past the watermark
+    await manager.shutdown()
+
+
 async def test_commits_greyed_without_capability(tmp_path):
     # the module MR fixture advertises no "commits" capability → the route greys out
     manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())

@@ -17,7 +17,7 @@ from review_mate.session.commands import (
     ApplyFiles, ApplyMRMetadata, MarkDraftPosted, ReplaceThreads, parse_command,
 )
 from review_mate.session.manager import SessionManager
-from review_mate.session.state import DraftStatus, Origin
+from review_mate.session.state import DraftStatus, Origin, SessionStatus
 
 # server-side long-poll ceiling for GET /api/activity: under common idle cutoffs, and short enough
 # that the coordinator gets a regular tick (to re-evaluate the idle-reap bound) even when quiet.
@@ -116,6 +116,48 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
 
     async def list_sessions(request: Request) -> JSONResponse:
         return JSONResponse([s.model_dump(mode="json") for s in manager.list()])
+
+    async def sessions_status(request: Request) -> JSONResponse:
+        """Per-open-review state for the landing hub: git-behind (reviewed watermark vs current
+        head), open-discussion count, and draft/submit state. Fans out host calls per active
+        session — a manual "check for updates", not a background poll (respects D19)."""
+        out = {}
+        for summ in manager.list():
+            if summ.status is not SessionStatus.ACTIVE:
+                continue
+            actor = manager.get(summ.id)
+            if actor is None:
+                continue
+            snap = actor.snapshot()
+            if snap.mr is None:
+                continue
+            ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
+            head = snap.mr.sha
+            unresolved = 0
+            if provider is not None:
+                try:
+                    versions = await provider.mr_versions(ref) if hasattr(provider, "mr_versions") else []
+                    if versions and versions[0].get("head_sha"):
+                        head = versions[0]["head_sha"]
+                except Exception:
+                    pass
+                try:
+                    if hasattr(provider, "fetch_threads"):
+                        unresolved = sum(1 for t in await provider.fetch_threads(ref) if not t.resolved)
+                except Exception:
+                    pass
+            wm = kb.get_watermark(snap.mr.host, snap.mr.project, snap.mr.iid) if kb is not None else None
+            pending = sum(1 for d in snap.drafts if d.status is DraftStatus.DRAFT)
+            posted = sum(1 for d in snap.drafts if d.status is DraftStatus.POSTED)
+            behind = bool(wm and head and wm != head)
+            state = ("in_progress" if pending else       # you have unsubmitted comments
+                     "git_update" if behind else          # branch advanced past your review
+                     "discussions" if unresolved else      # open discussions, no git change
+                     "reviewed" if (wm and head and wm == head) or posted else  # up to date
+                     "new")                                # nothing established yet
+            out[summ.id] = {"state": state, "behind": behind, "unresolved": unresolved,
+                            "pending": pending, "posted": posted}
+        return JSONResponse(out)
 
     async def get_session(request: Request) -> JSONResponse:
         actor = manager.get(request.path_params["id"])
@@ -480,6 +522,7 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/sessions/{id}/file", get_file, methods=["GET"]),
         Route("/api/sessions", create_session, methods=["POST"]),
         Route("/api/sessions", list_sessions, methods=["GET"]),
+        Route("/api/sessions/status", sessions_status, methods=["GET"]),   # before /{id} — literal wins
         Route("/api/sessions/{id}", get_session, methods=["GET"]),
         Route("/api/sessions/{id}", end_session, methods=["DELETE"]),
         Route("/api/sessions/{id}/commands", submit_command, methods=["POST"]),

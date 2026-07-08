@@ -13,6 +13,8 @@ const draftBuffers = {};   // highlight_id -> in-progress review-comment text (s
 let focusedDraft = null;   // highlight_id of the focused draft textarea, to restore after render
 let repoTree = null;                 // all repo paths (lazy-loaded when "show all" is on)
 let showAll = localStorage.getItem("rm-showall") === "1";
+let sessionStates = null;            // sid -> {state, behind, unresolved, pending, posted} from the hub check
+let checkingStates = false;          // a hub "check for updates" fan-out is in flight
 const fileContents = {};             // path -> content (cache for non-diff file views + unfold)
 const expandedGaps = {};             // path -> Map of gap-start -> {top, bot, all} lines unfolded
 const mdRendered = new Set();        // .md paths currently shown rendered (vs raw diff)
@@ -152,11 +154,31 @@ function newSideLines(path, lo, hi) {
 function setStatus(msg) { $("status").textContent = msg || ""; }
 
 // the queue page doubles as the session hub: resume or close an in-flight review
+// the per-review state (from a hub "check for updates") → a chip label + a row class for colour
+const REVIEW_STATE = {
+  git_update:  { label: "↑ git update",       cls: "st-git" },
+  discussions: { label: "open discussions",   cls: "st-disc" },
+  in_progress: { label: "in progress",        cls: "st-prog" },
+  reviewed:    { label: "reviewed",           cls: "st-done" },
+  new:         { label: "not started",        cls: "st-new" },
+};
+
+async function checkReviewStates() {
+  if (checkingStates) return;
+  checkingStates = true;
+  setStatus("checking your open reviews…");
+  try { sessionStates = await fetch("/api/sessions/status").then((r) => r.json()); }
+  catch (e) { setStatus("✕ " + e); }
+  finally { checkingStates = false; setStatus(""); showLanding(); }   // re-render with the states
+}
+
 function renderOpenSessions(land, sessions) {
   if (!sessions.length) return;
-  const h = document.createElement("h2");
-  h.textContent = "Open reviews";
-  land.appendChild(h);
+  const hd = document.createElement("div");
+  hd.className = "hubhdr";
+  hd.appendChild(h2("Open reviews"));
+  hd.appendChild(btn(checkingStates ? "checking…" : "↻ check for updates", "btn ghost", checkReviewStates));
+  land.appendChild(hd);
   const list = document.createElement("div");
   list.style.margin = "0 0 26px";
   sessions
@@ -168,11 +190,14 @@ function renderOpenSessions(land, sessions) {
       if (s.cards) bits.push(`${s.cards} card${s.cards > 1 ? "s" : ""}`);
       if (s.drafts_pending) bits.push(`${s.drafts_pending} draft${s.drafts_pending > 1 ? "s" : ""}`);
       if (s.drafts_posted) bits.push(`${s.drafts_posted} posted`);
+      const st = sessionStates && sessionStates[s.id];
+      const meta = st && REVIEW_STATE[st.state] || null;
+      if (meta && st.state === "discussions" && st.unresolved) meta.label = `${st.unresolved} open discussion${st.unresolved > 1 ? "s" : ""}`;
       const row = document.createElement("div");
-      row.className = "sitem";
+      row.className = "sitem" + (meta ? " " + meta.cls : "");
       row.innerHTML =
         `<button class="x" title="close review">×</button>` +
-        `<div class="t">${esc(s.title || "(untitled review)")}</div>` +
+        `<div class="t">${meta ? `<span class="ststate">${esc(meta.label)}</span> ` : ""}${esc(s.title || "(untitled review)")}</div>` +
         `<div class="m">${loc}${bits.length ? " · " + bits.join(" · ") : ""}</div>`;
       row.onclick = () => { location.search = `?s=${s.id}`; };
       row.querySelector(".x").onclick = (e) => {
@@ -1754,6 +1779,7 @@ function goToHighlight(hl) {
   if (cell) cell.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
+function h2(t) { const e = document.createElement("h2"); e.textContent = t; return e; }
 function h3(t) { const e = document.createElement("h3"); e.textContent = t; return e; }
 function empty(t) { const e = document.createElement("div"); e.className = "empty"; e.textContent = t; return e; }
 function btn(t, cls, fn) { const b = document.createElement("button"); b.className = cls; b.textContent = t; b.onclick = fn; return b; }
