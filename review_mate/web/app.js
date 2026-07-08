@@ -642,6 +642,38 @@ function highlightLines(path) {
   return set;
 }
 
+// new-side lines carrying a host discussion (GitLab thread), for a distinct diff overlay
+function threadLines(path) {
+  const set = new Set();
+  (state.threads || []).forEach((t) => {
+    if (t.anchor && t.anchor.file === path && t.anchor.line != null) set.add(t.anchor.line);
+  });
+  return set;
+}
+
+// after a diff table is built, mark rows whose new-side line has a host discussion (tr.thl)
+function overlayThreadAnchors(table, path) {
+  threadLines(path).forEach((n) => {
+    const cell = table.querySelector(`td.code[data-line="${n}"]`);
+    if (cell && cell.closest("tr")) cell.closest("tr").classList.add("thl");
+  });
+}
+
+// navigate the (full) diff to a file:line — used to jump from a discussion to its code
+function jumpToCode(file, line) {
+  if (commitsMode) { commitsMode = false; $("t-commits").classList.toggle("on", false); }
+  sinceLast = false; viewingPath = null;   // the anchor is in head coords — show the full diff
+  currentFile = file;
+  render();
+  setTimeout(() => {
+    const cell = line != null && $("diff").querySelector(`td.code[data-line="${line}"]`);
+    if (!cell) return;
+    cell.scrollIntoView({ block: "center", behavior: "smooth" });
+    const row = cell.closest("tr");
+    if (row) { row.classList.add("flash"); setTimeout(() => row.classList.remove("flash"), 1600); }
+  }, 0);
+}
+
 function highlightExact(path, lo, hi) {
   return state.highlights.find((h) => h.file === path && h.line_range.start === lo && h.line_range.end === hi);
 }
@@ -792,6 +824,7 @@ function renderFileDiff(el, files, suffix, interactive) {
   }
   if (interactive) wireSelection(table, file.path);
   el.appendChild(table);
+  if (interactive) overlayThreadAnchors(table, file.path);   // mark host-discussion lines (head coords)
 }
 
 // a rendered Markdown view of a doc's current version, toggled from the diff (the raw diff stays a
@@ -1504,7 +1537,12 @@ function threadRow(t) {
     (t.comments && t.comments.length > 1 ? `<span class="num">${t.comments.length}</span>` : "") +
     `</div><div class="prev">${esc(prev)}</div>`;
   row.onclick = () => { selected = { kind: "thread", id: t.id }; renderRail(); };
-  const m = matchingHighlight(t);   // anchored to a highlight → offer a jump
+  if (t.anchor && t.anchor.file) {   // the location links to the code — jump the diff there + flash
+    const locEl = row.querySelector(".loc");
+    locEl.classList.add("jumpcode"); locEl.title = "jump to this line in the diff";
+    locEl.onclick = (e) => { e.stopPropagation(); jumpToCode(t.anchor.file, t.anchor.line); };
+  }
+  const m = matchingHighlight(t);   // also overlaps one of your highlights → offer a jump to it
   if (m) {
     const jump = btn(`→ #${m.n}`, "btn ghost jump", (e) => {
       e.stopPropagation(); selected = { kind: "hl", id: m.hl.id }; renderRail();
