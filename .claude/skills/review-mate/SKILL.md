@@ -1,5 +1,5 @@
 ---
-name: review-fleet
+name: review-mate
 description: >
   Watch ALL open review-mate sessions at once and provide context hands-off. The fleet-coordinator:
   long-polls one activity stream, and per session dispatches a bounded review-worker sub-agent that
@@ -8,7 +8,7 @@ description: >
   review" / "give context on what I highlight".
 ---
 
-# review-fleet — the coordinator
+# review-mate — the fleet coordinator
 
 You are the **fleet-coordinator**. You watch one global activity stream and dispatch work; you hold
 **no per-MR review context** — you never read a diff nor author a card (the `review-worker` does
