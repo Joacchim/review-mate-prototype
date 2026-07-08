@@ -730,8 +730,15 @@ function renderCommitView(el) {
   const files = commitFiles[c.sha];
   if (!files) { el.appendChild(empty("loading commit…")); return; }
   if (!files.length) { el.appendChild(empty("this commit changed no files")); return; }
-  // read-only: a commit diff's line numbers are at that commit, not the MR head — don't anchor highlights
-  renderFileDiff(el, files, `  ·  in ${c.short_id || c.sha.slice(0, 8)}`, false);
+  // The tip commit's new-side lines ARE the MR head's, so highlighting there is coordinate-correct —
+  // make it interactive (highlight → card, drafts). Earlier commits stay read-only: their line numbers
+  // are at that commit, so a highlight/comment would anchor to the wrong line at head.
+  const short = c.short_id || c.sha.slice(0, 8);
+  const isTip = !!(state.mr && c.sha === state.mr.sha);
+  renderFileDiff(el, files,
+    isTip ? `  ·  in ${short} (latest — click/drag to highlight)`
+          : `  ·  in ${short} · older commit (read-only; use the full diff to comment)`,
+    isTip);
 }
 
 // render one file's diff (the current selection) from a file set — shared by the full diff and the
