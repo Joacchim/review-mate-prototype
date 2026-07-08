@@ -86,6 +86,11 @@ on its next interaction). Then spawn:
 Record `{session_id: S → (worker handle, now)}`. The worker resolves its backlog and returns
 (parks); you wake it again with `SendMessage` on the next activity for `S`.
 
+Workers investigate code in a **strict priority order — code-graph utilities → LSP → grep** (see the
+`review-worker` agent): prefer a configured code-review-graph, then a language server, and fall back
+to grep only when neither is available — applied in the MR's own mirror and in any consented sibling
+repo's mirror alike. The coordinator's own inline lookup discovery still uses `search_mrs` (GitLab).
+
 ## Why bounded, not a daemon
 
 A sub-agent does not loop autonomously — it parks after yielding and resumes only on your
