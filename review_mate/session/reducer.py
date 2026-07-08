@@ -60,6 +60,8 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
                 break
         if not replaced:
             s.threads.append(event.thread)
+    elif isinstance(event, ev.ThreadsReplaced):
+        s.threads = list(event.threads)   # reconcile against the host's full current set (drops removed)
     elif isinstance(event, ev.MessagePosted):
         s.messages.append(event.message)
     elif isinstance(event, ev.ChatCleared):

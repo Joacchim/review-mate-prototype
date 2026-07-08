@@ -92,6 +92,11 @@ class ThreadApplied(_EventBase):
     thread: ReviewThread
 
 
+class ThreadsReplaced(_EventBase):
+    type: Literal["threads_replaced"] = "threads_replaced"
+    threads: list[ReviewThread]
+
+
 class MessagePosted(_EventBase):
     type: Literal["message_posted"] = "message_posted"
     message: ChatMessage
@@ -128,7 +133,7 @@ Event = Annotated[
         HighlightAdded, HighlightRemoved, ContextRequested,
         CardEmitted, CardUpdated, CardRemoved,
         AccessRequested, AccessDecided,
-        ThreadApplied, MessagePosted, ChatCleared,
+        ThreadApplied, ThreadsReplaced, MessagePosted, ChatCleared,
         DraftSaved, DraftRemoved, DraftPosted, SessionEnded,
     ],
     Field(discriminator="type"),

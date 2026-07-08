@@ -95,6 +95,11 @@ class ApplyThread(BaseModel):
     thread: ReviewThread
 
 
+class ReplaceThreads(BaseModel):
+    type: Literal["replace_threads"] = "replace_threads"
+    threads: list[ReviewThread]
+
+
 class PostMessage(BaseModel):
     type: Literal["post_message"] = "post_message"
     body: str
@@ -129,7 +134,7 @@ class EndSession(BaseModel):
 
 Command = Union[
     AddHighlight, RemoveHighlight, RequestContext, EmitCard, UpdateCard, RemoveCard,
-    RequestAccess, DecideAccess, ApplyMRMetadata, SetCheckout, ApplyFiles, ApplyThread,
+    RequestAccess, DecideAccess, ApplyMRMetadata, SetCheckout, ApplyFiles, ApplyThread, ReplaceThreads,
     PostMessage, ClearChat, SaveDraft, RemoveDraft, MarkDraftPosted, EndSession,
 ]
 
@@ -171,6 +176,7 @@ AUTHORITY: dict[str, set[Origin]] = {
     "set_checkout": {Origin.SYSTEM},
     "apply_files": {Origin.SYSTEM},
     "apply_thread": {Origin.SYSTEM},
+    "replace_threads": {Origin.SYSTEM},
 }
 
 
@@ -254,6 +260,9 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
 
     if isinstance(command, ApplyThread):
         return emit(ev.ThreadApplied, thread=command.thread)
+
+    if isinstance(command, ReplaceThreads):
+        return emit(ev.ThreadsReplaced, threads=command.threads)
 
     if isinstance(command, PostMessage):
         role = "user" if origin is Origin.BROWSER else "agent"

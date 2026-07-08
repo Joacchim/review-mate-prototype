@@ -153,6 +153,24 @@ async def test_refresh_pulls_threads_into_state(tmp_path):
     await manager.shutdown()
 
 
+async def test_refresh_reconciles_and_drops_removed_threads(tmp_path):
+    """Refresh replaces threads wholesale (host = source of truth): a thread the host no longer
+    reports is dropped, not left behind by a merge."""
+    from review_mate.session.commands import ApplyThread
+    seeded = [ReviewThread(id="d1", comments=[ThreadComment(id="1", author="a", body="one")]),
+              ReviewThread(id="d2", comments=[ThreadComment(id="2", author="a", body="two")])]
+    # the host now reports only d1 (d2 was resolved-and-deleted / was a system note, etc.)
+    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider(threads=[seeded[0]]))
+    async with client:
+        actor = manager.get(sid)
+        for t in seeded:
+            await actor.submit(ApplyThread(thread=t), Origin.SYSTEM)
+        assert {t.id for t in actor.snapshot().threads} == {"d1", "d2"}
+        await client.post(f"/api/sessions/{sid}/refresh-threads", json={})
+    assert [t.id for t in manager.get(sid).snapshot().threads] == ["d1"]   # d2 purged
+    await manager.shutdown()
+
+
 async def test_context_returns_cheap_tier(tmp_path):
     blame = [{"lines": [5, 5], "commit": "abc123", "author": "dev", "date": "d", "summary": "guard"}]
     issues = [{"iid": 7, "title": "Fix leak", "url": "u"}]

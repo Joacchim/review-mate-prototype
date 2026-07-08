@@ -34,6 +34,7 @@ def _sample(cmd_type: str):
         "set_checkout": cmd.SetCheckout(path="/tmp/checkout"),
         "apply_files": cmd.ApplyFiles(files=[]),
         "apply_thread": cmd.ApplyThread(thread=ReviewThread(id="t")),
+        "replace_threads": cmd.ReplaceThreads(threads=[]),
         "post_message": cmd.PostMessage(body="hi"),
         "clear_chat": cmd.ClearChat(),
         "save_draft": cmd.SaveDraft(highlight_id="x", body="b"),

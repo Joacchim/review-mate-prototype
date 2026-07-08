@@ -14,7 +14,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from review_mate.seams import MRRef, RepoRef
 from review_mate.session.commands import (
-    ApplyFiles, ApplyMRMetadata, ApplyThread, MarkDraftPosted, parse_command,
+    ApplyFiles, ApplyMRMetadata, MarkDraftPosted, ReplaceThreads, parse_command,
 )
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import DraftStatus, Origin
@@ -297,8 +297,9 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         if provider is None or not hasattr(provider, "fetch_threads"):
             return []
         threads = await provider.fetch_threads(ref)
-        for t in threads:
-            await actor.submit(ApplyThread(thread=t), Origin.SYSTEM)
+        # reconcile wholesale (host is the single source of truth): drops threads it no longer
+        # reports — system notes, or a discussion resolved-and-deleted host-side
+        await actor.submit(ReplaceThreads(threads=threads), Origin.SYSTEM)
         return threads
 
     def _thread_ref(actor):
@@ -423,8 +424,7 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             payload = await provider.load(ref)
             await actor.submit(ApplyMRMetadata(mr=payload.mr), Origin.SYSTEM)
             await actor.submit(ApplyFiles(files=payload.files), Origin.SYSTEM)
-            for t in payload.threads:
-                await actor.submit(ApplyThread(thread=t), Origin.SYSTEM)
+            await actor.submit(ReplaceThreads(threads=payload.threads), Origin.SYSTEM)  # reconcile wholesale
             return JSONResponse({"threads": len(payload.threads), "head": payload.mr.sha})
         threads = await _remirror_threads(actor, ref)
         return JSONResponse({"threads": len(threads)})
