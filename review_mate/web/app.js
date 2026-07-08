@@ -691,6 +691,11 @@ function renderCommitView(el) {
   if (!commitList.length) { el.appendChild(empty("no commits on this MR")); return; }
   const i = Math.max(0, commitList.findIndex((c) => c.sha === currentCommit));
   const c = commitList[i];
+  // pair with the reviewed watermark: commits at/before it (in oldest→newest order) are reviewed,
+  // the rest are new since your last review. -1 when there's no watermark or it isn't in this list.
+  const wm = reviewStatus && reviewStatus.watermark;
+  const wmIndex = wm ? commitList.findIndex((x) => x.sha === wm) : -1;
+  const reviewed = (k) => wmIndex >= 0 && k <= wmIndex;
 
   const bar = document.createElement("div");
   bar.className = "commitbar";
@@ -700,12 +705,19 @@ function renderCommitView(el) {
   const sel = document.createElement("select"); sel.className = "csel";
   commitList.forEach((x, k) => {
     const o = document.createElement("option");
-    o.value = x.sha; o.textContent = `${k + 1}. ${(x.short_id || x.sha.slice(0, 8))} — ${x.title}`;
+    const mark = wmIndex < 0 ? "" : (reviewed(k) ? "✓ " : "○ ");
+    o.value = x.sha; o.textContent = `${mark}${k + 1}. ${(x.short_id || x.sha.slice(0, 8))} — ${x.title}`;
     if (x.sha === c.sha) o.selected = true;
     sel.appendChild(o);
   });
   sel.onchange = () => selectCommit(sel.value);
   bar.appendChild(prev); bar.appendChild(pos); bar.appendChild(next); bar.appendChild(sel);
+  if (wmIndex >= 0) {
+    const chip = document.createElement("span");
+    chip.className = "chip " + (reviewed(i) ? "posted" : "comment");
+    chip.textContent = reviewed(i) ? "✓ reviewed" : "new since review";
+    bar.appendChild(chip);
+  }
   el.appendChild(bar);
 
   const msg = document.createElement("div");
@@ -818,7 +830,23 @@ function renderUnifiedUnfoldable(table, fileDiff, path, hl) {
     });
     cursor = h.newStart + h.newCount;
   });
-  if (lines) renderGap(table, path, cursor, lines.length, lines, exp, hl, lang);   // trailing gap (length known)
+  if (lines) {
+    renderGap(table, path, cursor, lines.length, lines, exp, hl, lang);   // trailing gap — exact, length known
+  } else {
+    // file length isn't known until the blob is fetched, so a single-hunk file that stops before EOF
+    // couldn't reveal its tail. Offer a band that fetches on click; the re-render then shows the exact tail.
+    const tr = document.createElement("tr");
+    tr.className = "expand";
+    const cell = document.createElement("td");
+    cell.className = "code exp";
+    const s = document.createElement("span");
+    s.className = "exlink"; s.textContent = "⋯ show rest of file";
+    s.onclick = () => expandGap(path, cursor, "all");
+    cell.appendChild(s);
+    tr.innerHTML = `<td class="ln">⋯</td>`;
+    tr.appendChild(cell);
+    table.appendChild(tr);
+  }
 }
 
 const UNFOLD_CHUNK = 20;   // lines revealed per incremental unfold step
