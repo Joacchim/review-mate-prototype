@@ -242,6 +242,18 @@ class GitLabProvider:
                  "author": c.get("author_name", ""), "created_at": c.get("created_at", "")}
                 for c in reversed(rows)]
 
+    async def approvals(self, ref: MRRef) -> dict:
+        """The MR's approval state: the usernames who approved, and whether the reviewer themself
+        has. Best-effort — {} on error / when unsupported."""
+        try:
+            data = await self._get(
+                f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}/approvals")
+        except httpx.HTTPError:
+            return {"approved_by": [], "you_approved": False}
+        by = [(a.get("user") or {}).get("username", "") for a in (data.get("approved_by") or [])]
+        by = [u for u in by if u]
+        return {"approved_by": by, "you_approved": self.username in by}
+
     async def commit_diff(self, project: str, sha: str) -> list[FileEntry]:
         """The per-file diff of one commit (against its parent) — the file set + hunks for reviewing
         a single commit, shaped like the MR diff's files."""

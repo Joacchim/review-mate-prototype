@@ -34,6 +34,7 @@ const suggBuf = {};                  // draft key -> in-progress suggested-chang
 const suggOpen = {};                 // draft key -> whether the suggestion editor is open
 const noteEdit = {};                 // note_id -> in-progress edit text (null/absent = not editing)
 let reviewStatus = null;             // {behind, watermark, head} — diff-versions awareness
+let approvalStatus = null;           // {available, you_approved, approved_by} — your approval state
 let commitsMode = false;             // per-commit review: the diff pane shows one commit at a time
 let commitList = null;               // [{sha, short_id, title, message, …}] oldest→newest, or null
 let currentCommit = null;            // sha of the commit being reviewed
@@ -284,6 +285,8 @@ async function load() {
   if (!currentFile && state.files.length) currentFile = state.files[0].path;
   try { reviewStatus = await fetch(`/api/sessions/${SID}/review-status`).then((r) => r.json()); }
   catch (e) { reviewStatus = null; }
+  try { approvalStatus = await fetch(`/api/sessions/${SID}/approval-status`).then((r) => r.json()); }
+  catch (e) { approvalStatus = null; }
   sinceLastData = null;   // refetch the interdiff lazily (the head may have moved)
   render();
 }
@@ -1402,7 +1405,7 @@ function threadRow(t) {
   const chip = t.resolved ? `<span class="chip posted">✓ resolved</span>`
              : `<span class="chip comment">open</span>`;
   const row = document.createElement("div");
-  row.className = "hrow" + (active ? " active" : "");
+  row.className = "hrow" + (active ? " active" : "") + (t.resolved ? " resolved" : "");
   row.innerHTML =
     `<div class="top">${chip}<span class="loc">${esc(loc)}</span>` +
     (t.comments && t.comments.length > 1 ? `<span class="num">${t.comments.length}</span>` : "") +
@@ -1577,6 +1580,11 @@ function renderReviewBar(el) {
   const lbl = document.createElement("span");
   lbl.textContent = `Your review · ${pending.length} pending${posted.length ? ` · ${posted.length} posted` : ""}`;
   bar.appendChild(lbl);
+  if (approvalStatus && approvalStatus.you_approved) {   // your prior review approved this MR
+    const ap = document.createElement("span");
+    ap.className = "chip posted"; ap.textContent = "✓ you approved";
+    bar.appendChild(ap);
+  }
 
   if (canApprove) {
     const tog = document.createElement("label");

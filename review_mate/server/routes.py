@@ -267,6 +267,18 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         return JSONResponse({"available": True, "mode": "rangediff",
                              "empty": _interdiff_empty(text), "interdiff": text})
 
+    async def approval_status(request: Request) -> JSONResponse:
+        """Whether the reviewer (and who else) has approved this MR. Greyed where unsupported."""
+        actor = manager.get(request.path_params["id"])
+        if actor is None:
+            return JSONResponse({"error": "unknown session"}, status_code=404)
+        snap = actor.snapshot()
+        cap = snap.mr and (snap.mr.capabilities or {}).get("approvals", False)
+        if snap.mr is None or provider is None or not hasattr(provider, "approvals") or not cap:
+            return JSONResponse({"available": False})
+        ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
+        return JSONResponse({"available": True, **(await provider.approvals(ref))})
+
     async def commits(request: Request) -> JSONResponse:
         """The MR's commits, for per-commit review. Greyed (available:False) where unsupported."""
         actor = manager.get(request.path_params["id"])
@@ -480,6 +492,7 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/sessions/{id}/mark-reviewed", mark_reviewed, methods=["POST"]),
         Route("/api/sessions/{id}/review-status", review_status, methods=["GET"]),
         Route("/api/sessions/{id}/since-last", since_last, methods=["GET"]),
+        Route("/api/sessions/{id}/approval-status", approval_status, methods=["GET"]),
         Route("/api/sessions/{id}/commits", commits, methods=["GET"]),
         Route("/api/sessions/{id}/commit/{sha}", commit_diff, methods=["GET"]),
         Route("/api/me", whoami, methods=["GET"]),

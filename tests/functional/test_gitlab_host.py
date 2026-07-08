@@ -55,10 +55,16 @@ COMMIT_DIFF = [{"old_path": "a.py", "new_path": "a.py", "new_file": False, "dele
                 "renamed_file": False, "diff": "@@ -1 +1 @@\n-x\n+y\n"}]
 
 
+APPROVALS = {"approved": True, "approved_by": [{"user": {"username": "me"}},
+                                               {"user": {"username": "other"}}]}
+
+
 def _handler(request: httpx.Request) -> httpx.Response:
     p = request.url.path
     params = dict(request.url.params)
     # sub-resources of a specific MR
+    if p.endswith("/approvals"):
+        return httpx.Response(200, json=APPROVALS)
     if p.endswith("/commits"):
         return httpx.Response(200, json=COMMITS)
     if "/repository/commits/" in p and p.endswith("/diff"):
@@ -138,6 +144,11 @@ async def test_load_uses_ssh_clone_url_when_protocol_is_ssh():
     assert payload.files[1].change_type.value == "added"
     assert len(payload.threads) == 1 and payload.threads[0].comments[0].body == "nit"
     assert payload.mr.capabilities == GITLAB_CAPABILITIES
+
+
+async def test_approvals_maps_state_and_detects_self(provider):   # provider username is "me"
+    a = await provider.approvals(MRRef(host="gitlab", project="group/proj", iid=42))
+    assert a["approved_by"] == ["me", "other"] and a["you_approved"] is True
 
 
 async def test_commits_mapped_oldest_first(provider):
