@@ -38,4 +38,5 @@ def test_session_state_is_exactly_the_contract_set():  # AC-13
     doc_fields = {"mr", "files", "highlights", "cards", "access_requests", "threads",
                   "messages", "drafts"}
     envelope = {"id", "status", "created_at", "seq"}
-    assert set(SessionState.model_fields) == doc_fields | envelope
+    workspace = {"checkout_path"}   # the on-disk MR checkout (code-graph / LSP / grep)
+    assert set(SessionState.model_fields) == doc_fields | envelope | workspace

@@ -11,17 +11,18 @@ import json
 import logging
 import shutil
 import uuid
+from collections.abc import Awaitable
 from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 from review_mate.config import sessions_dir
-from review_mate.seams import MRRef
+from review_mate.seams import MRRef, RepoRef
 from review_mate.session import events as ev
 from review_mate.session.actor import SessionActor
 from review_mate.session.commands import (
-    ApplyFiles, ApplyMRMetadata, ApplyThread, EndSession,
+    ApplyFiles, ApplyMRMetadata, ApplyThread, EndSession, SetCheckout,
 )
 from review_mate.session.eventlog import EventLog
 from review_mate.session.reducer import fold
@@ -44,6 +45,7 @@ class SessionManager:
         self._workspace = workspace   # Workspace seam (optional, injected) — workspace-manager impl
         self._activity_broker = activity_broker  # ActivityBroker (optional) — review-fleet notify spine
         self._republishers: list[asyncio.Task] = []  # per-actor taps feeding the activity channel
+        self._checkouts: dict[str, object] = {}   # session_id → CheckoutHandle, released on session end
 
     # --- lifecycle ----------------------------------------------------------
 
@@ -111,6 +113,7 @@ class SessionManager:
             logger.warning("activity republisher task failed", exc_info=exc)
 
     async def _discard(self, session_id: str) -> None:
+        await self._release_checkout(session_id)
         actor = self._actors.pop(session_id, None)
         if actor is not None:
             await actor.stop()
@@ -128,6 +131,34 @@ class SessionManager:
         await actor.submit(ApplyFiles(files=payload.files), Origin.SYSTEM)
         for thread in payload.threads:
             await actor.submit(ApplyThread(thread=thread), Origin.SYSTEM)
+        await self._materialize_checkout(session_id, actor, payload)
+
+    async def _materialize_checkout(self, session_id, actor, payload) -> None:
+        """Eagerly check out the MR on disk (a worktree off the bare mirror) so the agent can run
+        code-graph / LSP / grep against real files, not just the API. Best-effort: a clone/auth
+        failure leaves checkout_path unset and the review still works over the host API."""
+        clone_url = payload.clone_url or payload.mr.clone_url
+        if self._workspace is None or not clone_url or not payload.mr.sha:
+            return
+        try:
+            repo = RepoRef(host=payload.mr.host, project=payload.mr.project, clone_url=clone_url)
+            result = self._workspace.materialize(repo, payload.mr.sha)
+            handle = await result if isinstance(result, Awaitable) else result
+            self._checkouts[session_id] = handle
+            await actor.submit(SetCheckout(path=handle.path), Origin.SYSTEM)
+        except Exception:
+            logger.warning("could not materialize a checkout for %s", session_id, exc_info=True)
+
+    async def _release_checkout(self, session_id: str) -> None:
+        handle = self._checkouts.pop(session_id, None)
+        if handle is None or self._workspace is None:
+            return
+        try:
+            result = self._workspace.release(handle)
+            if isinstance(result, Awaitable):
+                await result
+        except Exception:
+            pass
 
     async def restore_all(self) -> None:
         for sdir in sorted(p for p in self.root.iterdir() if p.is_dir()):
@@ -152,6 +183,7 @@ class SessionManager:
         if actor is None:
             raise KeyError(session_id)
         await actor.submit(EndSession(), Origin.BROWSER)
+        await self._release_checkout(session_id)
         self._write_meta(self.root / session_id, session_id,
                          actor.snapshot().created_at, SessionStatus.ENDED)
 

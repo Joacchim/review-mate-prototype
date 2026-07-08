@@ -16,6 +16,8 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
         pass
     elif isinstance(event, ev.MRMetadataApplied):
         s.mr = event.mr
+    elif isinstance(event, ev.CheckoutSet):
+        s.checkout_path = event.path
     elif isinstance(event, ev.FilesApplied):
         s.files = list(event.files)
     elif isinstance(event, ev.HighlightAdded):

@@ -162,6 +162,7 @@ class SessionState(BaseModel):
     created_at: str = ""
     seq: int = 0                       # last applied event sequence
     mr: MRMetadata | None = None
+    checkout_path: str | None = None   # on-disk worktree of the MR (for code-graph / LSP / grep)
     files: list[FileEntry] = Field(default_factory=list)
     highlights: list[Highlight] = Field(default_factory=list)
     cards: list[Card] = Field(default_factory=list)

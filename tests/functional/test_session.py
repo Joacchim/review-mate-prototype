@@ -17,6 +17,39 @@ async def manager(tmp_path):
     await m.shutdown()
 
 
+async def test_load_materializes_checkout_and_end_releases(tmp_path):
+    """Eager checkout: create(ref) materializes an on-disk worktree of the MR and exposes its path
+    as checkout_path; ending the session releases it. Best-effort — a workspace failure won't sink
+    the load (covered by the guard in _materialize_checkout)."""
+    from review_mate.seams import MRRef, MRPayload, CheckoutHandle
+    from review_mate.session.state import MRMetadata
+
+    calls = {}
+
+    class FakeSource:
+        async def load(self, ref):
+            mr = MRMetadata(host="gitlab", project="g/p", iid=1, title="t", source_branch="x",
+                            target_branch="m", sha="deadbeef", author="a", url="u",
+                            clone_url="git@h:g/p.git")
+            return MRPayload(mr=mr, files=[], threads=[], clone_url="git@h:g/p.git")
+
+    class FakeWorkspace:
+        async def materialize(self, repo, commit):
+            calls["materialized"] = (repo.project, commit)
+            return CheckoutHandle(repo=repo.project, commit=commit, path="/tmp/co/g_p")
+
+        async def release(self, handle):
+            calls["released"] = handle.path
+
+    m = SessionManager(root=tmp_path / "s", mr_source=FakeSource(), workspace=FakeWorkspace())
+    sid = await m.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
+    assert m.get(sid).snapshot().checkout_path == "/tmp/co/g_p"
+    assert calls["materialized"] == ("g/p", "deadbeef")
+    await m.end(sid)
+    assert calls["released"] == "/tmp/co/g_p"
+    await m.shutdown()
+
+
 def _add(file="a.py", lo=1, hi=2):
     return AddHighlight(file=file, side=Side.NEW, line_range=LineRange(start=lo, end=hi))
 

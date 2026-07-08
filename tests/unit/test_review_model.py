@@ -31,6 +31,7 @@ def _sample(cmd_type: str):
         "request_access": cmd.RequestAccess(repo="r", reason="why"),
         "apply_mr_metadata": cmd.ApplyMRMetadata(mr=MRMetadata(host="h", project="p", iid=1, title="t",
                               source_branch="x", target_branch="m", sha="s", author="a", url="u")),
+        "set_checkout": cmd.SetCheckout(path="/tmp/checkout"),
         "apply_files": cmd.ApplyFiles(files=[]),
         "apply_thread": cmd.ApplyThread(thread=ReviewThread(id="t")),
         "post_message": cmd.PostMessage(body="hi"),

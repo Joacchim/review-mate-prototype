@@ -31,6 +31,11 @@ class MRMetadataApplied(_EventBase):
     mr: MRMetadata
 
 
+class CheckoutSet(_EventBase):
+    type: Literal["checkout_set"] = "checkout_set"
+    path: str
+
+
 class FilesApplied(_EventBase):
     type: Literal["files_applied"] = "files_applied"
     files: list[FileEntry]
@@ -119,7 +124,7 @@ class SessionEnded(_EventBase):
 
 Event = Annotated[
     Union[
-        SessionCreated, MRMetadataApplied, FilesApplied,
+        SessionCreated, MRMetadataApplied, CheckoutSet, FilesApplied,
         HighlightAdded, HighlightRemoved, ContextRequested,
         CardEmitted, CardUpdated, CardRemoved,
         AccessRequested, AccessDecided,

@@ -41,19 +41,33 @@ anything. You do your work and **return** — the coordinator resumes you on the
 
 For the highlighted `file` + `line_range` (and the reviewer's optional `question`):
 
-- **Read the change in place.** `get_diff` for the hunk; open the file in the MR's local checkout
-  (the workspace mirror) for the surrounding code, not just the diff.
+- **Read the change in place.** `get_diff` for the hunk; then open the surrounding code, not just
+  the diff. `get_session` returns **`checkout_path`** — an on-disk worktree of the MR (materialized
+  on load). Use it as the **root** for `Read`/`Grep`/`Glob`, LSP, and the code-graph CLI
+  (`--repo <checkout_path>`). If `checkout_path` is null (checkout unavailable), fall back to
+  `get_file` over the API.
 - **Investigate structure in strict priority order — code-graph → LSP → grep.** Reach for the
   cheaper, structural tool first and only fall back when it can't answer:
   1. **Code-graph utilities** — a code-review-graph MCP (`mcp__code-review-graph__*`) or its CLI, when
-     one is configured for the repo under review. Use it for callers, callees, tests, and impact of
-     the highlighted symbol — the structural context a diff hides.
+     one is configured. Use it for callers, callees, tests, and impact of the highlighted symbol —
+     the structural context a diff hides.
+     - **The graph is per-repo, and you can create it for the checkout you're reviewing.** If the CLI
+       is installed but no graph covers `checkout_path` (`code-review-graph status --repo
+       <checkout_path>` reports none), generate one: `code-review-graph build --repo <checkout_path>`
+       (full), or `update --repo <checkout_path> --base <reviewed sha>` to refresh incrementally;
+       `register <checkout_path> --alias <repo>` so the MCP resolves queries against it. This applies
+       to a consented sibling repo's checkout too — register + build it before querying.
+     - **Never block the reviewer on a build.** A full `build` can take minutes on a large repo, so
+       launch it in the **background** and answer the highlight in front of you with LSP/grep
+       meanwhile; the graph is then ready for the rest of this review (and later wakes). Prefer the
+       cheap `update` once a graph exists. Build only when the CLI is present *and* structural context
+       genuinely helps — don't build speculatively for a trivial one-line change.
   2. **LSP** — when a language server is available for the checkout: go-to-definition,
      find-references, hover/type info on the exact symbol.
   3. **Grep / Glob** — only as the fallback, when neither of the above covers what you need.
   Apply the **same order in every checkout you touch**: the MR's own mirror and, after consent, a
-  sibling repo's mirror (below). Use whichever of code-graph / LSP is configured for *that* repo, and
-  degrade to grep only where they aren't.
+  sibling repo's mirror (below). Use whichever of code-graph / LSP is configured for *that* repo (and
+  build the graph as above when it isn't yet), degrading to grep only where none is available.
 - **Find the spec/doc behind it** — search `docs/`, design docs, and docstrings for the concept the
   code implements; quote the relevant clause.
 - **Trace cross-repo contracts** only via consent (below).

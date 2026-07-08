@@ -80,6 +80,11 @@ class ApplyMRMetadata(BaseModel):
     mr: MRMetadata
 
 
+class SetCheckout(BaseModel):
+    type: Literal["set_checkout"] = "set_checkout"
+    path: str
+
+
 class ApplyFiles(BaseModel):
     type: Literal["apply_files"] = "apply_files"
     files: list[FileEntry]
@@ -124,7 +129,7 @@ class EndSession(BaseModel):
 
 Command = Union[
     AddHighlight, RemoveHighlight, RequestContext, EmitCard, UpdateCard, RemoveCard,
-    RequestAccess, DecideAccess, ApplyMRMetadata, ApplyFiles, ApplyThread,
+    RequestAccess, DecideAccess, ApplyMRMetadata, SetCheckout, ApplyFiles, ApplyThread,
     PostMessage, ClearChat, SaveDraft, RemoveDraft, MarkDraftPosted, EndSession,
 ]
 
@@ -163,6 +168,7 @@ AUTHORITY: dict[str, set[Origin]] = {
     "remove_draft": {Origin.BROWSER},
     "mark_draft_posted": {Origin.BROWSER},
     "apply_mr_metadata": {Origin.SYSTEM},
+    "set_checkout": {Origin.SYSTEM},
     "apply_files": {Origin.SYSTEM},
     "apply_thread": {Origin.SYSTEM},
 }
@@ -239,6 +245,9 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
 
     if isinstance(command, ApplyMRMetadata):
         return emit(ev.MRMetadataApplied, mr=command.mr)
+
+    if isinstance(command, SetCheckout):
+        return emit(ev.CheckoutSet, path=command.path)
 
     if isinstance(command, ApplyFiles):
         return emit(ev.FilesApplied, files=command.files)
