@@ -242,6 +242,15 @@ class GitLabProvider:
                  "author": c.get("author_name", ""), "created_at": c.get("created_at", "")}
                 for c in reversed(rows)]
 
+    async def mr_summary(self, ref: MRRef) -> dict:
+        """A light MR fetch for the hub: current head sha + lifecycle state (opened/closed/merged).
+        One call gives both. Best-effort — {} on error."""
+        try:
+            mr = await self._get(f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}")
+        except httpx.HTTPError:
+            return {}
+        return {"head": mr.get("sha", ""), "state": mr.get("state", "")}
+
     async def approvals(self, ref: MRRef) -> dict:
         """The MR's approval state: the usernames who approved, and whether the reviewer themself
         has. Best-effort — {} on error / when unsupported."""

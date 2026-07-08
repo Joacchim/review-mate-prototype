@@ -400,6 +400,23 @@ async def test_sessions_status_hub_computes_git_update(tmp_path):
     await manager.shutdown()
 
 
+async def test_sessions_status_flags_merged(tmp_path):
+    class MProvider(StubProvider):
+        async def mr_summary(self, ref):
+            return {"head": "H", "state": "merged"}
+
+    mr = MRMetadata(host="gitlab", project="g/p", iid=9, title="T", source_branch="x",
+                    target_branch="m", sha="H", author="a", url="u")
+    manager = SessionManager(root=tmp_path / "s")
+    app = create_app(manager=manager, with_mcp=False, provider=MProvider())
+    sid = await manager.create()
+    await manager.get(sid).submit(ApplyMRMetadata(mr=mr), Origin.SYSTEM)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        r = (await c.get("/api/sessions/status")).json()
+    assert r[sid]["state"] == "merged" and r[sid]["mr_state"] == "merged"
+    await manager.shutdown()
+
+
 async def test_commits_greyed_without_capability(tmp_path):
     # the module MR fixture advertises no "commits" capability → the route greys out
     manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())

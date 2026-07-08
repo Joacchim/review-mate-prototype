@@ -133,14 +133,20 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
                 continue
             ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
             head = snap.mr.sha
+            mr_state = ""
             unresolved = 0
             if provider is not None:
-                try:
-                    versions = await provider.mr_versions(ref) if hasattr(provider, "mr_versions") else []
-                    if versions and versions[0].get("head_sha"):
-                        head = versions[0]["head_sha"]
-                except Exception:
-                    pass
+                if hasattr(provider, "mr_summary"):
+                    summary = await provider.mr_summary(ref)   # {head, state} — one call, best-effort
+                    head = summary.get("head") or head
+                    mr_state = summary.get("state", "")
+                elif hasattr(provider, "mr_versions"):
+                    try:
+                        versions = await provider.mr_versions(ref)
+                        if versions and versions[0].get("head_sha"):
+                            head = versions[0]["head_sha"]
+                    except Exception:
+                        pass
                 try:
                     if hasattr(provider, "fetch_threads"):
                         unresolved = sum(1 for t in await provider.fetch_threads(ref) if not t.resolved)
@@ -150,13 +156,15 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             pending = sum(1 for d in snap.drafts if d.status is DraftStatus.DRAFT)
             posted = sum(1 for d in snap.drafts if d.status is DraftStatus.POSTED)
             behind = bool(wm and head and wm != head)
-            state = ("in_progress" if pending else       # you have unsubmitted comments
-                     "git_update" if behind else          # branch advanced past your review
-                     "discussions" if unresolved else      # open discussions, no git change
+            state = ("merged" if mr_state == "merged" else   # the MR landed — done (reviewer removes it)
+                     "closed" if mr_state == "closed" else    # closed without merging
+                     "in_progress" if pending else            # you have unsubmitted comments
+                     "git_update" if behind else               # branch advanced past your review
+                     "discussions" if unresolved else           # open discussions, no git change
                      "reviewed" if (wm and head and wm == head) or posted else  # up to date
-                     "new")                                # nothing established yet
-            out[summ.id] = {"state": state, "behind": behind, "unresolved": unresolved,
-                            "pending": pending, "posted": posted}
+                     "new")                                     # nothing established yet
+            out[summ.id] = {"state": state, "mr_state": mr_state, "behind": behind,
+                            "unresolved": unresolved, "pending": pending, "posted": posted}
         return JSONResponse(out)
 
     async def get_session(request: Request) -> JSONResponse:

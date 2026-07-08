@@ -13,8 +13,13 @@ const draftBuffers = {};   // highlight_id -> in-progress review-comment text (s
 let focusedDraft = null;   // highlight_id of the focused draft textarea, to restore after render
 let repoTree = null;                 // all repo paths (lazy-loaded when "show all" is on)
 let showAll = localStorage.getItem("rm-showall") === "1";
-let sessionStates = null;            // sid -> {state, behind, unresolved, pending, posted} from the hub check
+let sessionStates = null;            // sid -> {state, mr_state, behind, unresolved, …} from the hub check
+let sessionStatesAt = 0;             // when the states were last computed (ms), for the "checked … ago" note
 let checkingStates = false;          // a hub "check for updates" fan-out is in flight
+try {   // hydrate the last hub check so it survives a reload of the queue page
+  const _st = JSON.parse(localStorage.getItem("rm-review-states") || "null");
+  if (_st && _st.states) { sessionStates = _st.states; sessionStatesAt = _st.at || 0; }
+} catch (e) { /* ignore a corrupt cache */ }
 const fileContents = {};             // path -> content (cache for non-diff file views + unfold)
 const expandedGaps = {};             // path -> Map of gap-start -> {top, bot, all} lines unfolded
 const mdRendered = new Set();        // .md paths currently shown rendered (vs raw diff)
@@ -156,6 +161,8 @@ function setStatus(msg) { $("status").textContent = msg || ""; }
 // the queue page doubles as the session hub: resume or close an in-flight review
 // the per-review state (from a hub "check for updates") → a chip label + a row class for colour
 const REVIEW_STATE = {
+  merged:      { label: "✓ merged",           cls: "st-merged" },
+  closed:      { label: "closed",             cls: "st-closed" },
   git_update:  { label: "↑ git update",       cls: "st-git" },
   discussions: { label: "open discussions",   cls: "st-disc" },
   in_progress: { label: "in progress",        cls: "st-prog" },
@@ -167,9 +174,17 @@ async function checkReviewStates() {
   if (checkingStates) return;
   checkingStates = true;
   setStatus("checking your open reviews…");
-  try { sessionStates = await fetch("/api/sessions/status").then((r) => r.json()); }
-  catch (e) { setStatus("✕ " + e); }
+  try {
+    sessionStates = await fetch("/api/sessions/status").then((r) => r.json());
+    sessionStatesAt = Date.now();
+    localStorage.setItem("rm-review-states", JSON.stringify({ at: sessionStatesAt, states: sessionStates }));
+  } catch (e) { setStatus("✕ " + e); }
   finally { checkingStates = false; setStatus(""); showLanding(); }   // re-render with the states
+}
+
+function agoText(ms) {
+  const m = Math.round((Date.now() - ms) / 60000);
+  return m < 1 ? "just now" : m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`;
 }
 
 function renderOpenSessions(land, sessions) {
@@ -178,6 +193,11 @@ function renderOpenSessions(land, sessions) {
   hd.className = "hubhdr";
   hd.appendChild(h2("Open reviews"));
   hd.appendChild(btn(checkingStates ? "checking…" : "↻ check for updates", "btn ghost", checkReviewStates));
+  if (sessionStatesAt) {
+    const note = document.createElement("span"); note.className = "hubago";
+    note.textContent = `checked ${agoText(sessionStatesAt)}`;
+    hd.appendChild(note);
+  }
   land.appendChild(hd);
   const list = document.createElement("div");
   list.style.margin = "0 0 26px";
