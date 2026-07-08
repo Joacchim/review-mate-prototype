@@ -134,8 +134,22 @@ async function boot() {
   if (!SID) return showLanding();
   $("sid").textContent = SID.slice(0, 8);
   try { me = (await fetch("/api/me").then((r) => r.json())).username; } catch (e) { me = null; }
-  await load();
+  await load();          // paint fast from stored state
   connectWS();
+  syncFromHost();        // then bring the session up to the live head, so an update the hub flagged
+                         // actually surfaces here (banner + "Since last review"), not just on the hub
+}
+
+// one-time re-sync when opening a review: pulls the current head + diff + discussions from the host,
+// so a branch that advanced since you last looked (the hub's "git update") engages the since-last
+// feature in-session instead of the stored, stale head hiding it. Background — the page already painted.
+async function syncFromHost() {
+  try {
+    const r = await fetch(`/api/sessions/${SID}/refresh-threads`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    });
+    if (r.ok) await load();
+  } catch (e) { /* keep the stored view; the ↻ button re-syncs on demand */ }
 }
 
 // the new-side content of a highlighted line range, pulled from the diff hunks (for suggestion pre-fill)
