@@ -1970,18 +1970,17 @@ function renderReviewBar(el) {
   // the bar is worth showing when there is something to submit or an approval to give
   if (!pending.length && !posted.length && !canApprove) return;
 
+  const alreadyApproved = !!(approvalStatus && approvalStatus.you_approved);
   const bar = document.createElement("div");
   bar.className = "reviewbar sticky";
   const lbl = document.createElement("span");
   lbl.textContent = `Your review · ${pending.length} pending${posted.length ? ` · ${posted.length} posted` : ""}`;
   bar.appendChild(lbl);
-  if (approvalStatus && approvalStatus.you_approved) {   // your prior review approved this MR
+  if (alreadyApproved) {   // your prior review approved this MR — a right-aligned status marker
     const ap = document.createElement("span");
-    ap.className = "chip posted"; ap.textContent = "✓ you approved";
+    ap.className = "chip posted you-approved"; ap.textContent = "✓ you approved";
     bar.appendChild(ap);
-  }
-
-  if (canApprove) {
+  } else if (canApprove) {   // offer to approve only while you haven't (re-approving is a no-op)
     const tog = document.createElement("label");
     tog.className = "approve-tog";
     const cb = document.createElement("input");
@@ -1991,11 +1990,14 @@ function renderReviewBar(el) {
     tog.appendChild(document.createTextNode(" Approve MR"));
     bar.appendChild(tog);
   }
-  // submittable when there are drafts to post, or an approve is toggled on (approve-only)
-  const label = pending.length ? "Submit review" : (approveToggle ? "Approve MR" : "Submit review");
-  const b = btn(label, "btn primary", submitReview);
-  if (!pending.length && !approveToggle) b.disabled = true;
-  bar.appendChild(b);
+  // a submit button only when there's an action to take: drafts to post, an approve toggled on, or an
+  // approval still available. Once approved with nothing pending, the bar is pure status (no dead button).
+  if (pending.length || approveToggle || (canApprove && !alreadyApproved)) {
+    const label = pending.length ? "Submit review" : (approveToggle ? "Approve MR" : "Submit review");
+    const b = btn(label, "btn primary", submitReview);
+    if (!pending.length && !approveToggle) b.disabled = true;
+    bar.appendChild(b);
+  }
   el.appendChild(bar);
 }
 
