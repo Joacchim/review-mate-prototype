@@ -106,7 +106,9 @@
   .hrow .top{display:flex;align-items:center;gap:6px;margin-bottom:3px;min-width:0}
   .hrow .num{font-family:var(--mono);font-size:10.5px;color:var(--fg2)}
   .hrow .loc{font-family:var(--mono);font-size:10.5px;color:var(--accent);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-  .hrow .loc.jumpcode{cursor:pointer;text-decoration:underline dotted} .hrow .loc.jumpcode:hover{color:var(--fg)}
+  /* a location that jumps the diff to its line — on an index row or in the detail header alike */
+  .jumpcode{cursor:pointer;text-decoration:underline dotted} .jumpcode:hover{color:var(--fg)}
+  .detail .dlabel.jumpcode{font-family:var(--mono);color:var(--accent)}
   .hrow .prev{color:var(--fg2);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .hrow .x{position:absolute;right:6px;top:6px;color:var(--fg2);cursor:pointer;border:none;background:none;font-size:15px;line-height:1;padding:2px}
   .hrow .x:hover{color:var(--delfg)}

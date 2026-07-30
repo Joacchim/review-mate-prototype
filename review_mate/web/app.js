@@ -1626,6 +1626,13 @@ function renderDetail() {
     head.className = "dhead";
     head.innerHTML = (t.resolved ? `<span class="chip posted">✓ resolved</span>` : `<span class="chip comment">open</span>`) +
       `<span class="dlabel">${esc(loc)}</span>`;
+    // the location jumps to the code here as it does on the row this was opened from — the panel is
+    // where the reviewer reads the thread, so it's where they reach for the link
+    if (t.anchor && t.anchor.file) {
+      const locEl = head.querySelector(".dlabel");
+      locEl.classList.add("jumpcode"); locEl.title = "jump to this line in the diff";
+      locEl.onclick = () => jumpToCode(t.anchor.file, t.anchor.line);
+    }
     head.appendChild(btn("×", "dclose", close));
     el.appendChild(head);
     el.appendChild(threadConversationBlock(t));
