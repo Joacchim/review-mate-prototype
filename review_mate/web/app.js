@@ -853,13 +853,45 @@ function jumpToCode(file, line) {
   sinceLast = false; viewingPath = null;   // the anchor is in head coords — show the full diff
   currentFile = file;
   render();
-  setTimeout(() => {
+  setTimeout(() => revealLine(file, line), 0);
+}
+
+// Land on a new-side line of the file now shown, unfolding to reach it if need be. A discussion can
+// be anchored to unchanged context that sits between hunks — GitLab lets you comment on expanded
+// lines — and that line has no row until its gap is opened. Failing silently there reads as a broken
+// link, so unfold the gap that contains it and retry; if it still can't be reached, say so.
+async function revealLine(path, line) {
+  const land = () => {
     const cell = line != null && $("diff").querySelector(`td.code[data-line="${line}"]`);
-    if (!cell) return;
+    if (!cell) return false;
     cell.scrollIntoView({ block: "center", behavior: "smooth" });
     const row = cell.closest("tr");
     if (row) { row.classList.add("flash"); setTimeout(() => row.classList.remove("flash"), 1600); }
-  }, 0);
+    return true;
+  };
+  if (land()) return;
+  const file = activeFiles().find((f) => f.path === path);
+  const gap = file ? gapContaining(file, line) : null;
+  if (gap !== null) {
+    await expandGap(path, gap, "all");   // fetches the blob if needed, then re-renders
+    if (land()) return;
+  }
+  setStatus(`could not reach ${path}:${line} in the diff` + (splitMode ? " — try unified view" : ""));
+}
+
+// Which folded gap holds a new-side line, keyed the way renderUnifiedUnfoldable lays them out: the
+// span before each hunk, then the tail after the last. null when the line is inside a hunk (already
+// rendered, or a deletion with no new-side row) — nothing to unfold.
+function gapContaining(file, line) {
+  if (line == null) return null;
+  const hunks = parseHunks((file.hunks || []).map((h) => h.diff || "").join("\n"));
+  let cursor = 1;
+  for (const h of hunks) {
+    if (line < h.newStart) return line >= cursor ? cursor : null;
+    if (line < h.newStart + h.newCount) return null;      // inside this hunk
+    cursor = h.newStart + h.newCount;
+  }
+  return line >= cursor ? cursor : null;                   // past the last hunk — the trailing gap
 }
 
 function highlightExact(path, lo, hi) {
