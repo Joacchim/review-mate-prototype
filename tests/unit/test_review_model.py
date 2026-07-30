@@ -149,6 +149,8 @@ def test_request_context_sets_the_escalation_flag():
     assert s.highlights[0].context_requested is False           # bare highlight: cheap tier only
     s = fold(s, handle(s, cmd.RequestContext(highlight_id=hid, question="why?"), Origin.BROWSER))
     assert s.highlights[0].context_requested is True and s.highlights[0].question == "why?"
+    # stamped with the escalation time, so the UI can say how long Claude has been on it
+    assert s.highlights[0].context_requested_at
 
 
 def test_request_context_for_unknown_highlight_rejected():

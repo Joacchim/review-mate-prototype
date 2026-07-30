@@ -60,6 +60,11 @@ session, not one shared with the reviewer's chat.
 3. **Reap** any worker with `now − last_active > 10 min` (`TaskStop` it, drop its entry).
 4. **Relaunch** the watch (step 1) with the updated `since`.
 
+Relaunch the watch **promptly** — the poll doubles as your presence heartbeat. The reviewer's UI reads
+`/api/agent-status`, which reports an agent as attached while a poll is parked and for 90s after the
+last one; go quiet for longer and their screen correctly says nothing is listening. Do the reaping and
+dispatching around the watch, never instead of it.
+
 ```mermaid
 flowchart TD
   L["background curl /api/activity?since=since"] --> R{"returned: body?"}

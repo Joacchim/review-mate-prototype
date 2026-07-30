@@ -34,11 +34,18 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# How long after a watcher's last poll it still counts as attached. The coordinator re-polls as soon
+# as its long-poll returns (server ceiling ACTIVITY_TIMEOUT = 50s), so a live watcher touches the
+# stream well inside this; anything longer means it stopped, crashed, or was never started.
+WATCHER_TTL = 90.0
+
+
 class ActivityBroker:
     def __init__(self) -> None:
         self._events: list[ActivityEvent] = []
         self._seq = 0
         self._waiters: list[asyncio.Future] = []
+        self._last_wait_at: datetime | None = None   # when a watcher last asked — see watcher()
 
     def publish(self, kind: str, *, session_id: str | None = None,
                 lookup_id: str | None = None, query: str | None = None) -> ActivityEvent:
@@ -52,7 +59,19 @@ class ActivityBroker:
         self._waiters = []
         return event
 
+    def watcher(self) -> dict:
+        """Is anyone consuming this stream right now? The reviewer's UI asks, to tell "Claude is
+        working on it" apart from "nothing is listening, your request is just sitting there".
+        `attached` is exact while a watcher is parked in `wait`, and rides out the brief gap between
+        one long-poll returning and the next starting via WATCHER_TTL."""
+        last = self._last_wait_at
+        fresh = last is not None and (datetime.now(timezone.utc) - last).total_seconds() < WATCHER_TTL
+        return {"attached": bool(self._waiters) or fresh,
+                "parked": bool(self._waiters),
+                "last_seen": last.isoformat() if last else None}
+
     async def wait(self, since: int = 0, timeout: float | None = None) -> ActivityEvent | None:
+        self._last_wait_at = datetime.now(timezone.utc)
         for event in self._events:
             if event.seq > since:
                 return event

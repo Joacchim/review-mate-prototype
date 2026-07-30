@@ -92,6 +92,7 @@ class Highlight(BaseModel):
     created_sha: str | None = None     # MR head SHA when made — flags "older version" after a push
     status: HighlightStatus = HighlightStatus.OPEN
     context_requested: bool = False    # the reviewer escalated this to the agent tier (D21)
+    context_requested_at: str = ""     # when they escalated — the UI ages the "Claude is working" cue
 
 
 class Card(BaseModel):

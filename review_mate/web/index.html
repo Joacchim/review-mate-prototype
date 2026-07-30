@@ -15,7 +15,26 @@
   header{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
   header .brand{font-weight:600;white-space:nowrap;color:inherit;text-decoration:none} header .mr{color:var(--fg2);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   header .mr .mrlink{color:var(--accent);text-decoration:none} header .mr .mrlink:hover{text-decoration:underline}
-  header .dot{width:8px;height:8px;border-radius:50%;background:#3ddc84;display:inline-block}
+  /* the agent light: is Claude watching, and is it working on something of yours right now? */
+  header .agent{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;cursor:default}
+  header .dot{width:8px;height:8px;border-radius:50%;background:var(--line2);display:inline-block;flex:none}
+  header .agent .alab{font-size:11px;color:var(--fg2);font-family:var(--mono)}
+  header .agent .alab:empty{display:none}
+  header .agent.watching .dot{background:#3ddc84}
+  header .agent.working .dot{background:#d0a24a;animation:apulse 1.1s ease-in-out infinite}
+  header .agent.working .alab{color:#f0c88a}
+  header .agent.stalled .dot{background:var(--delln);animation:apulse 1.1s ease-in-out infinite}
+  header .agent.stalled .alab{color:var(--delfg)}
+  /* the inline "still waiting" line, in the chat thread and under an escalated highlight */
+  .agentwait{display:flex;align-items:center;gap:7px;padding:6px 0;font-size:11.5px;color:var(--fg2)}
+  .agentwait .spin{width:9px;height:9px;flex:none;border-radius:50%;border:1.5px solid var(--line2);
+                   border-top-color:var(--accent);animation:aspin .8s linear infinite}
+  .agentwait.stalled{color:var(--delfg)}
+  .agentwait.stalled .spin{border-color:var(--delln);border-top-color:var(--delln);animation:none}
+  .agentwait.mini{padding:0;gap:5px;font-size:11px}
+  .agentwait.mini .spin{width:7px;height:7px;border-width:1.5px}
+  @keyframes aspin{to{transform:rotate(360deg)}}
+  @keyframes apulse{0%,100%{opacity:1}50%{opacity:.2}}
   header .sid{color:var(--fg2);font-family:var(--mono);font-size:11px}
   .tb{display:flex;align-items:center;gap:6px}
   .tb input{background:var(--bg);border:1px solid var(--line2);color:var(--fg);border-radius:6px;padding:5px 9px;font:inherit;width:260px}
@@ -111,7 +130,7 @@
   .detail .dclose{margin-left:auto;flex:none;color:var(--fg2);border:none;background:none;font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
   .detail .dclose:hover{color:var(--fg)}
   .detail .q{color:var(--fg2);font-size:12.5px;margin-bottom:8px}
-  .detail .card{white-space:pre-wrap} .detail .pending{color:var(--fg2);font-style:italic;font-size:12px}
+  .detail .card{white-space:pre-wrap}
   .cheapctx{margin:0 0 10px;font-size:12px;color:var(--fg2)}
   .cheapctx .ctxrow{padding:5px 0;border-bottom:1px solid var(--line)} .cheapctx .ctxrow:last-child{border-bottom:0}
   .cheapctx .k{display:inline-block;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent);margin-right:6px}
@@ -213,7 +232,8 @@
 </head>
 <body>
 <header>
-  <span class="dot"></span><a class="brand" href="/" title="back to the queue">review-mate</a>
+  <span class="agent off" id="agent"><span class="dot"></span><span class="alab"></span></span>
+  <a class="brand" href="/" title="back to the queue">review-mate</a>
   <button class="btn" id="t-left" title="toggle file tree">◧</button>
   <button class="btn" id="t-split" title="unified / side-by-side">⇄ split</button>
   <button class="btn" id="t-right" title="toggle context panel">◨</button>

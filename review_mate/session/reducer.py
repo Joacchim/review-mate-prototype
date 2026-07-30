@@ -29,6 +29,7 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
         for h in s.highlights:
             if h.id == event.highlight_id:
                 h.context_requested = True
+                h.context_requested_at = event.ts
                 if event.question:
                     h.question = event.question
     elif isinstance(event, ev.CardEmitted):

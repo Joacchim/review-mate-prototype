@@ -50,6 +50,7 @@ let sinceLast = false;               // showing the rebase-aware "since last rev
 let sinceLastData = null;            // fetched {available, empty, mode, files|interdiff, error}
 let sinceLastHead = null;            // the head sinceLastData was computed for (invalidate when it moves)
 let sinceLastPrefetching = false;    // a background warm of the interdiff is in flight
+let agentWatch = null;               // {attached, parked, last_seen} — is an agent on the activity stream?
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -129,6 +130,7 @@ function hlLine(raw, lang) { return esc(raw[0] || "") + highlightCode(raw.slice(
 
 async function boot() {
   wireToolbar();
+  startAgentWatch();   // the header light runs everywhere, queue page included
   const params = new URLSearchParams(location.search);
   SID = params.get("s");
   // ?ref=<project!iid> — what a queue entry links to, so it can be middle-clicked into its own tab.
@@ -174,6 +176,104 @@ function newSideLines(path, lo, hi) {
 }
 
 function setStatus(msg) { $("status").textContent = msg || ""; }
+
+// --- is Claude working, or is nothing listening? -----------------------------
+// A request to the agent (a chat message, a context escalation) can take a while, and the reviewer
+// has no way to tell a slow answer from a lost one. Two facts settle it, and the UI shows both
+// continuously: what they're waiting on (derived here from the session snapshot — the server never
+// tracks who owes what) and whether an agent is watching at all (/api/agent-status).
+
+// everything the reviewer is currently waiting on Claude for, oldest first
+function outstandingAsks() {
+  if (!state) return [];
+  const out = [];
+  const last = state.messages && state.messages[state.messages.length - 1];
+  if (last && last.role === "user") out.push({ kind: "message", since: last.created_at });
+  (state.highlights || []).forEach((h) => {
+    if (!h.context_requested) return;
+    if ((state.cards || []).some((c) => c.highlight_id === h.id)) return;   // already answered
+    out.push({ kind: "context", id: h.id, since: h.context_requested_at || h.created_at });
+  });
+  return out.sort((a, b) => (a.since || "").localeCompare(b.since || ""));
+}
+
+// working: something outstanding and an agent is watching. stalled: outstanding and nothing is —
+// the case that used to be indistinguishable from "slow". watching/off: nothing outstanding.
+function agentState() {
+  const asks = outstandingAsks();
+  const attached = !!(agentWatch && agentWatch.attached);
+  if (asks.length) return { cls: attached ? "working" : "stalled", since: asks[0].since, asks };
+  return { cls: attached ? "watching" : "off", since: null, asks };
+}
+
+function elapsed(iso) {
+  const t = Date.parse(iso || "");
+  if (!t) return "";
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+const AGENT_TITLE = {
+  working: "Claude is watching and has work outstanding",
+  stalled: "you asked Claude something, but no agent is watching — start one with the review-mate skill",
+  watching: "Claude is watching this review",
+  off: "no agent is watching — start one with the review-mate skill",
+};
+
+// the header light: colour + pulse for the state, and a word only when it needs the reviewer's eye
+function renderAgentLight() {
+  const el = $("agent");
+  if (!el) return;
+  const st = agentState();
+  el.className = "agent " + st.cls;
+  el.title = AGENT_TITLE[st.cls];
+  el.querySelector(".alab").textContent =
+    st.cls === "working" ? `Claude · ${elapsed(st.since)}` :
+    st.cls === "stalled" ? "no agent watching" : "";
+}
+
+// the inline "still waiting" line, next to whatever the reviewer asked (a chat turn, a highlight).
+// data-since lets the ticker age it in place, without re-rendering the panel under their cursor.
+// `mini` is the terse form for the highlight index, where there's room for a few words.
+function agentWaitLine(since, mini) {
+  const el = document.createElement("div");
+  el.dataset.since = since || "";
+  el.innerHTML = `<span class="spin"></span><span class="awtext"></span>`;
+  if (mini) el.dataset.mini = "1";
+  paintWaitLine(el);
+  return el;
+}
+
+function paintWaitLine(el) {
+  const stalled = agentState().cls === "stalled";
+  el.className = "agentwait " + (stalled ? "stalled" : "working") + (el.dataset.mini ? " mini" : "");
+  const age = elapsed(el.dataset.since);
+  el.querySelector(".awtext").textContent = el.dataset.mini
+    ? (stalled ? `not picked up · ${age}` : `Claude working · ${age}`)
+    : (stalled ? `no agent is watching — waiting ${age}, nothing has picked this up`
+               : `Claude is working on it… ${age}`);
+}
+
+async function pollAgentStatus() {
+  try { agentWatch = await fetch("/api/agent-status").then((r) => r.json()); }
+  catch (e) { agentWatch = null; }
+}
+
+// One ticker drives both: the elapsed times refresh every second, the watcher fetch rides along —
+// often while an answer is outstanding, rarely when none is (it's a cheap in-process read, but
+// there's nothing to learn while the reviewer isn't waiting on anything).
+function startAgentWatch() {
+  let ticks = 0;
+  const tick = async () => {
+    const period = outstandingAsks().length ? 2 : 15;
+    if (ticks % period === 0) await pollAgentStatus();
+    ticks += 1;
+    renderAgentLight();
+    document.querySelectorAll(".agentwait").forEach(paintWaitLine);
+  };
+  tick();
+  setInterval(tick, 1000);
+}
 
 // the queue page doubles as the session hub: resume or close an in-flight review
 // the per-review state (from a hub "check for updates") → a chip label + a row class for colour
@@ -553,7 +653,10 @@ async function renderSuggestions(query) {
 // route a fuzzy query to Claude's lookup channel; render its answer + loadable candidates
 async function askClaude(query, panel) {
   panel.innerHTML = "";
-  panel.appendChild(empty("asking Claude…"));
+  // the lookup channel has no session to hang a wait line on — say it plainly instead
+  panel.appendChild(empty(agentWatch && !agentWatch.attached
+    ? "asking Claude… — but no agent is watching, so this will go unanswered"
+    : "asking Claude…"));
   let id = null;
   try {
     const r = await fetch("/api/lookup", {
@@ -1361,6 +1464,13 @@ function hlRow(hl, n) {
     (isStale(hl) ? `<span class="chip stale" title="made on an earlier version — its lines may have moved">older ver</span>` : "") +
     `<span class="loc">${esc(loc)}</span></div>` +
     `<div class="prev">${esc(prev)}</div>`;
+  // the index is the always-visible surface, so an escalation still waiting shows a live cue here
+  // too — otherwise the reviewer has to open the panel to learn whether anything is happening
+  if (!buf && st === "context" && !card && hl.context_requested) {
+    const p = row.querySelector(".prev");
+    p.textContent = "";
+    p.appendChild(agentWaitLine(hl.context_requested_at || hl.created_at, true));
+  }
   row.onclick = () => { selected = { kind: "hl", id: hl.id }; renderRail(); };
   row.querySelector(".x").onclick = (e) => { e.stopPropagation(); post({ type: "remove_highlight", highlight_id: hl.id }); };
   return row;
@@ -1488,9 +1598,7 @@ function renderDetail() {
       c.className = "card md"; c.innerHTML = md(card.body);
       el.appendChild(c);
     } else if (hl.context_requested) {
-      const p = document.createElement("div");
-      p.className = "pending"; p.textContent = "waiting for Claude's context…";
-      el.appendChild(p);
+      el.appendChild(agentWaitLine(hl.context_requested_at || hl.created_at));
     } else {
       el.appendChild(askContextControl(hl));
     }
@@ -1860,6 +1968,9 @@ function renderChat(el) {
     d.innerHTML = `<div class="who">${m.role}</div><div class="md">${md(m.body)}</div>`;
     msgs.appendChild(d);
   });
+  // your turn is still unanswered — say whether it's being worked on or nothing picked it up
+  const lastMsg = state.messages[state.messages.length - 1];
+  if (lastMsg && lastMsg.role === "user") msgs.appendChild(agentWaitLine(lastMsg.created_at));
   wrap.appendChild(msgs);
 
   const box = document.createElement("div");

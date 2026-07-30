@@ -81,6 +81,15 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             return Response(status_code=204)  # timed out — the caller re-polls
         return JSONResponse(event.model_dump(mode="json"))
 
+    async def agent_status(request: Request) -> JSONResponse:
+        """Is an agent watching? The browser pairs this with what it already knows is outstanding
+        (an unanswered chat message, an escalated highlight with no card yet) to show either "Claude
+        is working on it" or "nothing is listening" — so a slow answer never looks like a lost one.
+        Watcher presence is a property of the activity stream, hence global, not per session."""
+        if activity_broker is None:
+            return JSONResponse({"attached": False, "parked": False, "last_seen": None})
+        return JSONResponse(activity_broker.watcher())
+
     async def poll_lookup(request: Request) -> JSONResponse:
         if broker is None:
             return JSONResponse({"error": "lookup unavailable"}, status_code=400)
@@ -532,6 +541,7 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/lookup", open_lookup, methods=["POST"]),
         Route("/api/lookup/{id}", poll_lookup, methods=["GET"]),
         Route("/api/activity", activity, methods=["GET"]),
+        Route("/api/agent-status", agent_status, methods=["GET"]),
         Route("/api/sessions/{id}/repo-tree", repo_tree, methods=["GET"]),
         Route("/api/sessions/{id}/file", get_file, methods=["GET"]),
         Route("/api/sessions", create_session, methods=["POST"]),

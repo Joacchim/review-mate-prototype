@@ -51,3 +51,40 @@ async def test_wait_times_out_to_none():
     b = ActivityBroker()
     ev = await b.wait(since=0, timeout=0.02)
     assert ev is None
+
+
+# --- watcher presence: what the reviewer's UI reads to tell "working" from "nobody home" ---
+
+def test_watcher_reports_nothing_attached_before_anyone_polls():
+    b = ActivityBroker()
+    assert b.watcher() == {"attached": False, "parked": False, "last_seen": None}
+
+
+async def test_watcher_is_parked_while_a_wait_is_in_flight():
+    b = ActivityBroker()
+    task = asyncio.create_task(b.wait(since=0, timeout=1))
+    await asyncio.sleep(0.01)                      # let the wait park
+    assert b.watcher()["parked"] is True and b.watcher()["attached"] is True
+    b.publish("message_posted", session_id="s1")
+    await task
+
+
+async def test_watcher_stays_attached_between_two_polls():
+    """A watcher that just took an event isn't parked for the moment it takes to re-poll — it is
+    still there, and the UI must not flip to "nobody is listening" in that gap."""
+    b = ActivityBroker()
+    b.publish("message_posted", session_id="s1")
+    assert await b.wait(since=0, timeout=1) is not None    # returns at once, parks no future
+    status = b.watcher()
+    assert status["parked"] is False and status["attached"] is True and status["last_seen"]
+
+
+async def test_watcher_goes_unattached_once_the_last_poll_ages_out():
+    from datetime import datetime, timedelta, timezone
+
+    from review_mate.activity.broker import WATCHER_TTL
+
+    b = ActivityBroker()
+    assert await b.wait(since=0, timeout=0.02) is None
+    b._last_wait_at = datetime.now(timezone.utc) - timedelta(seconds=WATCHER_TTL + 1)
+    assert b.watcher()["attached"] is False

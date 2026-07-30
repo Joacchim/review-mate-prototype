@@ -110,3 +110,16 @@ def test_route_returns_a_lookup_event_with_query(tmp_path):
 def test_route_exposes_shared_broker_on_app_state(tmp_path):
     app = create_app(manager=SessionManager(root=tmp_path / "s"), with_mcp=False)
     assert isinstance(app.state.activity_broker, ActivityBroker)
+
+# --- GET /api/agent-status — the reviewer's "is anyone listening?" read ---
+
+def test_agent_status_flips_once_a_watcher_polls_the_activity_stream(tmp_path):
+    """The UI asks this to tell a slow answer from a lost one: nothing attached means the reviewer's
+    request is sitting unread, whatever the elapsed time says."""
+    app = create_app(manager=SessionManager(root=tmp_path / "s"), with_mcp=False)
+    with TestClient(app) as client:
+        assert client.get("/api/agent-status").json()["attached"] is False
+        client.post("/api/lookup", json={"query": "x"})   # something for the watcher to collect
+        client.get("/api/activity?since=0")               # a watcher polls (returns immediately)
+        status = client.get("/api/agent-status").json()
+        assert status["attached"] is True and status["last_seen"]
