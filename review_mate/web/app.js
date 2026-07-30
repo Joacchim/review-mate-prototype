@@ -756,7 +756,8 @@ function renderTree() {
 
   const files = activeFiles();
   const diffPaths = new Set(files.map((f) => f.path));
-  const entries = files.map((f) => ({ path: f.path, change_type: f.change_type, diff: true }));
+  const entries = files.map((f) => ({ path: f.path, old_path: f.old_path,
+                                     change_type: f.change_type, diff: true }));
   if (!inSince && !inCommits && showAll && repoTree) {
     repoTree.forEach((p) => { if (!diffPaths.has(p)) entries.push({ path: p, diff: false }); });
   }
@@ -790,7 +791,13 @@ function renderNode(node, path, depth, out) {
     row.className = "node file" + (entry.path === currentFile ? " on" : "") + (entry.diff ? "" : " nodiff");
     row.style.paddingLeft = `${10 + depth * 14 + 14}px`;
     const c = entry.diff ? ((entry.change_type || "")[0] || "~") : "·";
-    row.innerHTML = `<span class="ct ${entry.change_type || ""}">${c}</span>${esc(name)}`;
+    // the tree nests by directory, so a rename can only diverge in the leaf here; a move between
+    // directories shows under its new parent and is spelled out in the tooltip
+    const moved = entry.old_path && entry.old_path !== entry.path;
+    const oldName = moved ? entry.old_path.split("/").pop() : null;
+    const shown = oldName && oldName !== name ? `{${oldName},${name}}` : name;
+    row.innerHTML = `<span class="ct ${entry.change_type || ""}">${c}</span>${esc(shown)}`;
+    if (moved) row.title = `renamed: ${entry.old_path} → ${entry.path}`;
     row.onclick = () => selectFile(entry);
     out.appendChild(row);
   });
@@ -974,6 +981,28 @@ function renderCommitView(el) {
     isTip);
 }
 
+// A renamed file's header, as a brace divergence over the parts of the path that actually moved:
+// test/a/file.py → test/b/file.py reads `test/{a,b}/file.py`, old side first. Segments shared at
+// either end stay outside the braces, so the eye lands on what changed rather than re-reading the
+// whole path twice. A move that shares nothing collapses to `{old,new}`; one that only deepens or
+// flattens leaves a side empty (`a/{b/c,}/f.py`).
+function divergedPath(oldPath, newPath) {
+  const a = oldPath.split("/"), b = newPath.split("/");
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p += 1;
+  let s = 0;
+  while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s += 1;
+  const head = p ? a.slice(0, p).join("/") + "/" : "";
+  const tail = s ? "/" + a.slice(a.length - s).join("/") : "";
+  return `${head}{${a.slice(p, a.length - s).join("/")},${b.slice(p, b.length - s).join("/")}}${tail}`;
+}
+
+// what the diff header calls this file: the brace form for a rename, the plain path otherwise
+function fileLabel(file) {
+  return file.old_path && file.old_path !== file.path
+    ? divergedPath(file.old_path, file.path) : file.path;
+}
+
 // render one file's diff (the current selection) from a file set — shared by the full diff and the
 // per-file since-last view. interactive=false → read-only (no highlight overlay, no line selection,
 // no unfold), used for a since-last diff whose new side sits on coordinates that don't match the head
@@ -985,7 +1014,12 @@ function renderFileDiff(el, files, suffix, interactive) {
   const isMd = interactive && /\.(md|markdown)$/i.test(file.path);   // full diff only (rendered = head)
   const name = document.createElement("div");
   name.className = "fname";
-  const label = document.createElement("span"); label.textContent = file.path + suffix;
+  const label = document.createElement("span"); label.textContent = fileLabel(file) + suffix;
+  // the braces are compact but don't say which side is which — the tooltip spells the move out
+  if (file.old_path && file.old_path !== file.path) {
+    label.className = "renamed";
+    label.title = `renamed: ${file.old_path} → ${file.path}`;
+  }
   name.appendChild(label);
   if (isMd) name.appendChild(btn(mdRendered.has(file.path) ? "◱ show diff" : "◱ rendered",
                                  "btn ghost fnbtn", () => toggleMd(file.path)));

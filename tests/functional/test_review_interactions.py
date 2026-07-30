@@ -473,6 +473,19 @@ def test_split_unified_diff_into_files():
     assert hunk.startswith("@@") and "+c" in hunk and "index 111" not in hunk   # header stripped
 
 
+def test_split_unified_diff_keeps_the_old_path_of_a_rename():
+    """The browser needs both ends of a move to show it as a path divergence (test/{a,b}/file.py),
+    so the old path has to survive the split — in the since-last and per-commit views too."""
+    from review_mate.server.routes import _split_unified_diff
+    text = ("diff --git a/test/a/file.py b/test/b/file.py\nsimilarity index 96%\n"
+            "rename from test/a/file.py\nrename to test/b/file.py\n"
+            "--- a/test/a/file.py\n+++ b/test/b/file.py\n@@ -1,2 +1,2 @@\n a\n-b\n+c\n")
+    files = _split_unified_diff(text)
+    assert len(files) == 1
+    assert files[0]["path"] == "test/b/file.py" and files[0]["old_path"] == "test/a/file.py"
+    assert files[0]["change_type"] == "renamed"
+
+
 async def test_since_last_falls_back_to_range_diff(tmp_path):
     from review_mate.kb.store import ReviewKB
 

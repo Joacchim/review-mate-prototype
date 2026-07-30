@@ -18,6 +18,8 @@ CHANGES = {"changes": [
      "renamed_file": False, "diff": "@@ -1 +1 @@\n-old\n+new\n"},
     {"old_path": "b.py", "new_path": "b.py", "new_file": True, "deleted_file": False,
      "renamed_file": False, "diff": "@@ -0,0 +1 @@\n+hi\n"},
+    {"old_path": "test/a/file.py", "new_path": "test/b/file.py", "new_file": False,
+     "deleted_file": False, "renamed_file": True, "diff": "@@ -1 +1 @@\n-x\n+y\n"},
 ]}
 DISCUSSIONS = [
     {"id": "disc1", "notes": [
@@ -130,7 +132,17 @@ async def test_load_maps_payload(provider):  # AC-1, 7
     assert payload.mr.iid == 42 and payload.mr.title == "Add thing"
     assert payload.mr.author == "dev"
     assert payload.clone_url == "https://gitlab/group/proj.git"   # default: HTTPS clone URL
-    assert [f.path for f in payload.files] == ["a.py", "b.py"]
+    assert [f.path for f in payload.files] == ["a.py", "b.py", "test/b/file.py"]
+
+
+async def test_load_keeps_both_ends_of_a_rename(provider):
+    """A moved file carries its old path through, so the UI can show the divergence
+    (test/{a,b}/file.py) instead of only where the file ended up. An unmoved file carries none."""
+    payload = await provider.load(MRRef(host="gitlab", project="group/proj", iid=42))
+    moved = payload.files[2]
+    assert moved.change_type.value == "renamed"
+    assert moved.old_path == "test/a/file.py" and moved.path == "test/b/file.py"
+    assert payload.files[0].old_path is None       # same path both sides → nothing to diverge
 
 
 async def test_load_uses_ssh_clone_url_when_protocol_is_ssh():
