@@ -59,7 +59,7 @@ class GitLabProvider:
         pid = quote(ref.project, safe="")
         proj = await self._get(f"/projects/{pid}")
         mr = await self._get(f"/projects/{pid}/merge_requests/{ref.iid}")
-        changes = await self._get(f"/projects/{pid}/merge_requests/{ref.iid}/changes")
+        changes = await self._mr_changes(pid, ref.iid)
         threads = await self.fetch_threads(ref)
 
         metadata = MRMetadata(
@@ -74,10 +74,33 @@ class GitLabProvider:
         )
         return MRPayload(
             mr=metadata,
-            files=[_to_file(c) for c in changes.get("changes", [])],
+            files=[_to_file(c) for c in changes],
             threads=threads,
             clone_url=_clone_url(proj, self.git_protocol),
         )
+
+    async def _mr_changes(self, pid: str, iid: int) -> list[dict]:
+        """The MR's per-file changes, with every diff actually present.
+
+        GitLab withholds a large file's diff from this endpoint: the entry still lists the file but
+        carries `collapsed` (or `too_large`) and an empty `diff`, which its web UI fills in lazily
+        when the reviewer expands the file. Taken at face value that reads as "this file changed
+        nothing" — the reviewer sees the path and an empty diff pane. So when anything came back
+        withheld, re-read from the raw source, where nothing is elided.
+
+        Conditional on purpose: the raw read bypasses GitLab's diff cache and is roughly an order of
+        magnitude slower (~11s vs ~0.5s on a 10-file MR), so only an MR that actually hit a limit
+        pays for it, and it gets a timeout of its own to match. A pure rename or a mode-only change
+        has an empty diff legitimately and must not trigger the re-read.
+        """
+        path = f"/projects/{pid}/merge_requests/{iid}/changes"
+        changes = await self._get(path)
+        rows = changes.get("changes", [])
+        if not (changes.get("overflow") or any(_diff_withheld(c) for c in rows)):
+            return rows
+        raw = await self._get(path, params={"access_raw_diffs": "true"},
+                              timeout=httpx.Timeout(90.0, connect=5.0))
+        return raw.get("changes") or rows      # keep the collapsed rows if the raw read came back empty
 
     async def review_queue(self) -> list[MRRef]:
         refs: list[MRRef] = []
@@ -313,8 +336,11 @@ class GitLabProvider:
         )
         return [r for it in items if (r := parse_reference(it.get("web_url", ""), self.host))]
 
-    async def _get(self, path: str, params: dict | None = None):
-        resp = await _authed(self._client, self, "GET", path, params=params)
+    async def _get(self, path: str, params: dict | None = None, timeout=None):
+        kw = {"params": params}
+        if timeout is not None:   # a call known to be slow overrides the client-wide timeout
+            kw["timeout"] = timeout
+        resp = await _authed(self._client, self, "GET", path, **kw)
         return resp.json()
 
 
@@ -422,6 +448,12 @@ def _position(position: dict) -> dict:
         pos.setdefault("head_sha", sha)
         pos.setdefault("start_sha", sha)
     return pos
+
+
+def _diff_withheld(change: dict) -> bool:
+    """Did GitLab elide this file's diff, as opposed to the file genuinely having none? Only the
+    flags count: a rename with no content change reports an empty diff and is complete as-is."""
+    return not change.get("diff") and bool(change.get("collapsed") or change.get("too_large"))
 
 
 def _to_file(change: dict) -> FileEntry:

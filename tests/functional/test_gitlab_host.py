@@ -282,3 +282,84 @@ async def test_token_reloads_live_on_401_and_retries():
 async def test_capabilities_cover_review_model():  # AC-7
     for cap in ("threads", "suggestions", "approvals", "diff_versions"):
         assert GITLAB_CAPABILITIES.get(cap) is True
+
+
+# --- diffs GitLab withholds from the changes endpoint ---
+# It lists a large file but sends `collapsed` + an empty diff, expecting the client to fetch it
+# lazily. Read literally that looks like "this file changed nothing", so the reviewer sees the path
+# with an empty diff pane — while GitLab's own web UI shows the change.
+
+COLLAPSED_CHANGES = {"overflow": False, "changes": [
+    {"old_path": "docs/arch.md", "new_path": "docs/arch.md", "new_file": False,
+     "deleted_file": False, "renamed_file": False, "collapsed": True, "diff": ""},
+    {"old_path": "a.py", "new_path": "a.py", "new_file": False, "deleted_file": False,
+     "renamed_file": False, "diff": "@@ -1 +1 @@\n-old\n+new\n"},
+]}
+RAW_CHANGES = {"overflow": False, "changes": [
+    {"old_path": "docs/arch.md", "new_path": "docs/arch.md", "new_file": False,
+     "deleted_file": False, "renamed_file": False, "collapsed": False,
+     "diff": "@@ -93,3 +93,3 @@\n ctx\n-was\n+now\n"},
+    {"old_path": "a.py", "new_path": "a.py", "new_file": False, "deleted_file": False,
+     "renamed_file": False, "diff": "@@ -1 +1 @@\n-old\n+new\n"},
+]}
+# a pure rename: an empty diff is the honest answer, and must not provoke the slow raw read
+RENAME_ONLY_CHANGES = {"overflow": False, "changes": [
+    {"old_path": "test/a/file.py", "new_path": "test/b/file.py", "new_file": False,
+     "deleted_file": False, "renamed_file": True, "diff": ""},
+]}
+
+
+def _changes_provider(first_payload, raw_payload=None):
+    """A provider over a fake that serves `first_payload` normally and `raw_payload` when asked for
+    raw diffs. Returns (provider, calls) where calls records each /changes query."""
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        p, params = request.url.path, dict(request.url.params)
+        if p.endswith("/changes"):
+            calls.append(params)
+            if params.get("access_raw_diffs") == "true":
+                return httpx.Response(200, json=raw_payload or {"changes": []})
+            return httpx.Response(200, json=first_payload)
+        if p.endswith("/discussions"):
+            return httpx.Response(200, json=[])
+        if "/merge_requests/42" in p:
+            return httpx.Response(200, json=MR)
+        if "/projects/" in p:
+            return httpx.Response(200, json=PROJECT)
+        return httpx.Response(404, json={})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler),
+                              base_url="https://gitlab/api/v4")
+    return GitLabProvider(base_url="https://gitlab/api/v4", token="t", username="me",
+                          host="gitlab", client=client), calls
+
+
+async def test_load_recovers_a_diff_gitlab_collapsed():
+    provider, calls = _changes_provider(COLLAPSED_CHANGES, RAW_CHANGES)
+    payload = await provider.load(MRRef(host="gitlab", project="group/proj", iid=42))
+    md = next(f for f in payload.files if f.path == "docs/arch.md")
+    assert "+now" in md.hunks[0]["diff"]                       # the withheld diff was recovered
+    assert [c.get("access_raw_diffs") for c in calls] == [None, "true"]   # cheap read first
+
+
+async def test_load_does_not_pay_for_raw_diffs_when_nothing_was_withheld():
+    """The raw read bypasses GitLab's diff cache and is far slower, so a normal MR never triggers it."""
+    provider, calls = _changes_provider(RAW_CHANGES)
+    payload = await provider.load(MRRef(host="gitlab", project="group/proj", iid=42))
+    assert len(payload.files) == 2 and len(calls) == 1
+    assert calls[0].get("access_raw_diffs") is None
+
+
+async def test_load_treats_an_empty_rename_diff_as_complete():
+    provider, calls = _changes_provider(RENAME_ONLY_CHANGES)
+    payload = await provider.load(MRRef(host="gitlab", project="group/proj", iid=42))
+    assert payload.files[0].old_path == "test/a/file.py"
+    assert len(calls) == 1                                     # no flags set → nothing to recover
+
+
+async def test_load_keeps_the_collapsed_rows_if_the_raw_read_returns_nothing():
+    """Degrade to what we had rather than dropping the file list entirely."""
+    provider, _ = _changes_provider(COLLAPSED_CHANGES, {"changes": []})
+    payload = await provider.load(MRRef(host="gitlab", project="group/proj", iid=42))
+    assert [f.path for f in payload.files] == ["docs/arch.md", "a.py"]
