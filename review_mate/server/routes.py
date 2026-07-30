@@ -294,6 +294,12 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         old_base = old["base_sha"] if old else None   # unknown → since_diff does a plain wm..head diff
         repo = RepoRef(host=snap.mr.host, project=snap.mr.project, clone_url=snap.mr.clone_url)
         bases = (old_base, wm, new["base_sha"], new["head_sha"])
+        # since_diff's new side is always new["head_sha"]; the browser's file-blob fetch and comment
+        # anchoring both work in snap.mr.sha coordinates. So the since-last view is head-aligned — safe
+        # to unfold context and anchor highlights — exactly when the latest version head is the
+        # session's head. They diverge only when the MR advanced past a stale session (a refresh
+        # re-syncs snap.mr.sha); until then the view stays read-only.
+        head_aligned = bool(new.get("head_sha") and new["head_sha"] == snap.mr.sha)
         # preferred: a normal per-file diff against the reviewed version (never a diff-of-diffs)
         if hasattr(workspace, "since_diff"):
             res, err = None, "since-last unavailable"
@@ -303,7 +309,7 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
                 err = str(exc)
             if res is not None:
                 payload = {"available": True, "mode": "diff", "empty": not res["diff"].strip(),
-                           "files": _split_unified_diff(res["diff"])}
+                           "files": _split_unified_diff(res["diff"]), "head_aligned": head_aligned}
                 if not res.get("clean", True):
                     payload["note"] = ("the reviewed version was rebased — showing the raw diff, "
                                        "which may include target-branch changes")

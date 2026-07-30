@@ -323,8 +323,8 @@ async def test_since_last_prefers_a_normal_diff(tmp_path):
     from review_mate.kb.store import ReviewKB
 
     class VProvider(StubProvider):
-        async def mr_versions(self, ref):
-            return [{"base_sha": "nb", "head_sha": "nh", "start_sha": "", "created_at": ""},
+        async def mr_versions(self, ref):   # latest version head == the session head → head-aligned
+            return [{"base_sha": "nb", "head_sha": "head-now", "start_sha": "", "created_at": ""},
                     {"base_sha": "ob", "head_sha": "oldwm", "start_sha": "", "created_at": ""}]
 
     class Ws:  # exposes since_diff → the route must prefer it and never fall back
@@ -349,7 +349,39 @@ async def test_since_last_prefers_a_normal_diff(tmp_path):
     assert r["mode"] == "diff" and r["empty"] is False                       # per-file, like the full diff
     assert [f["path"] for f in r["files"]] == ["f.txt"]
     assert "+new line" in r["files"][0]["hunks"][0]["diff"]
-    assert manager._workspace.args == ("ob", "oldwm", "nb", "nh")
+    assert r["head_aligned"] is True         # latest version head == session head → interactive
+    assert manager._workspace.args == ("ob", "oldwm", "nb", "head-now")
+    await manager.shutdown()
+
+
+async def test_since_last_not_head_aligned_when_session_head_stale(tmp_path):
+    """The since-last view is only interactive (highlight/comment/unfold) when its new side matches the
+    head blob the browser fetches — i.e. when the latest version head is the session's head. If the MR
+    advanced past a stale session, the route reports head_aligned=False so the view stays read-only
+    until a refresh re-syncs the session head."""
+    from review_mate.kb.store import ReviewKB
+
+    class VProvider(StubProvider):
+        async def mr_versions(self, ref):   # latest head "fresh" ≠ the session's stale head → not aligned
+            return [{"base_sha": "nb", "head_sha": "fresh", "start_sha": "", "created_at": ""},
+                    {"base_sha": "ob", "head_sha": "oldwm", "start_sha": "", "created_at": ""}]
+
+    class Ws:
+        async def since_diff(self, repo, ob, oh, nb, nh):
+            return {"clean": True,
+                    "diff": "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\n ctx\n+x\n"}
+
+    mr = MRMetadata(host="gitlab", project="g/p", iid=42, title="T", source_branch="x",
+                    target_branch="m", sha="stale-head", author="a", url="u", clone_url="cu",
+                    capabilities={"diff_versions": True})
+    manager = SessionManager(root=tmp_path / "s"); manager._workspace = Ws()
+    kb = ReviewKB(root=tmp_path / "kb"); kb.set_watermark("gitlab", "g/p", 42, "oldwm")
+    app = create_app(manager=manager, with_mcp=False, provider=VProvider(), kb=kb)
+    sid = await manager.create()
+    await manager.get(sid).submit(ApplyMRMetadata(mr=mr), Origin.SYSTEM)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        r = (await c.get(f"/api/sessions/{sid}/since-last")).json()
+    assert r["mode"] == "diff" and r["head_aligned"] is False
     await manager.shutdown()
 
 

@@ -69,12 +69,16 @@ class WorkspaceManager:
     async def since_diff(self, repo: RepoRef, old_base: str, old_head: str,
                          new_base: str, new_head: str) -> dict:
         """A *normal* unified diff of the author's changes since the reviewed version, so the reviewer
-        reads an ordinary per-file diff, never a diff-of-diffs. Returns {"diff": str, "clean": bool}:
+        reads an ordinary per-file diff, never a diff-of-diffs. Returns {"diff": str, "clean": bool}.
         clean=True when target-branch (rebase) noise was excluded — the base hadn't moved (a plain
-        head-to-head diff), or the current commits replayed cleanly onto the reviewed base. clean=False
+        head-to-head diff), or the reviewed commits replayed cleanly onto the current base. clean=False
         when the base moved *and* that replay conflicted (or the old base is unknown): the result is
         then the raw old_head..new_head diff — still a readable normal diff, but may include target-
-        branch changes. Only raises if a required commit can't be fetched."""
+        branch changes.
+        Invariant: the returned diff's *new* side is always new_head (the MR head). Its new-side line
+        numbers therefore match the head file blob, so a caller can map them to head coordinates — to
+        unfold surrounding context, or to anchor a comment. The interactive "since last review" view
+        relies on this. Only raises if a required commit can't be fetched."""
         mirror = await self._ensure_mirror(repo)
         for sha in (old_base, old_head, new_base, new_head):
             if sha:
@@ -82,24 +86,29 @@ class WorkspaceManager:
         plain = lambda: self._git("-C", str(mirror), "diff", old_head, new_head)
         if not old_base or not new_base or old_base == new_base:   # no rebase (or base unknown) → clean
             return {"diff": await plain(), "clean": True}
-        # base moved: replay the current commits onto the reviewed base, then diff against old_head.
+        # The base moved (a rebase). To exclude that target-branch noise *while keeping the diff's new
+        # side at new_head* — so its line numbers match the MR head blob, exactly like the full diff —
+        # replay the *reviewed* commits onto the *current* base, then diff that replay against new_head.
+        # Both sides then share new_base, so only the author's genuinely-new work shows.
         # The worktree path is shared per repo, so serialize (a prefetch may race a user toggle).
         async with self._repo_lock(repo):
             wt = self.root / "checkouts" / ("since-" + _key(repo))
             shutil.rmtree(wt, ignore_errors=True)
-            await self._git("-C", str(mirror), "worktree", "add", "--detach", str(wt), new_head)
+            await self._git("-C", str(mirror), "worktree", "add", "--detach", str(wt), old_head)
             try:
                 try:
-                    await self._git("-C", str(wt), "rebase", "--onto", old_base, new_base)
+                    await self._git("-C", str(wt), "rebase", "--onto", new_base, old_base)
                 except RuntimeError:
                     try:
                         await self._git("-C", str(wt), "rebase", "--abort")
                     except RuntimeError:
                         pass
-                    # replay conflicted — a plain diff is noisier but still a readable normal diff,
-                    # far better for the reviewer than the raw range-diff (diff-of-diffs)
+                    # replay conflicted — a plain old_head..new_head diff is noisier (may include
+                    # target-branch changes) but still a readable normal diff, and still new_head-sided
                     return {"diff": await plain(), "clean": False}
-                return {"diff": await self._git("-C", str(wt), "diff", old_head, "HEAD"), "clean": True}
+                # clean replay: HEAD is (new_base + the reviewed work), so diffing it against new_head
+                # leaves the author's net-new change, with new_head as the diff's new side
+                return {"diff": await self._git("-C", str(wt), "diff", "HEAD", new_head), "clean": True}
             finally:
                 try:
                     await self._git("-C", str(mirror), "worktree", "remove", "--force", str(wt))

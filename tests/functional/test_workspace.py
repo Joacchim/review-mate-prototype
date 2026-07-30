@@ -111,9 +111,10 @@ async def test_since_diff_is_a_plain_diff_when_base_unchanged(wm, tmp_path):
 
 
 async def test_since_diff_excludes_rebase_noise(wm, tmp_path):
-    """The branch was rebased onto a moved target: since_diff replays the current work onto the
-    reviewed base, so only the author's genuinely-new change shows — the target-branch change does not.
-    The target change sits far from the author's edit so the replay applies without conflict."""
+    """The branch was rebased onto a moved target: since_diff replays the reviewed work onto the
+    current base, then diffs against new_head, so only the author's genuinely-new change shows — the
+    target-branch change does not, and the diff's new side stays at new_head (the MR head). The target
+    change sits far from the author's edit so the replay applies without conflict."""
     body = "\n".join(f"l{i}" for i in range(1, 9)) + "\n"   # l1..l8 — room between top and bottom
     src = tmp_path / "src"; src.mkdir()
     _git("init", "-b", "main", cwd=src)
@@ -166,7 +167,7 @@ async def test_since_diff_falls_back_to_plain_on_conflict(wm, tmp_path):
     (src / "f.txt").write_text("L1\nAUTHOR2\nL3\n"); _git("commit", "-am", "author edits L2 again", cwd=src)
     current = _rev(src)
     res = await wm.since_diff(_repo(src), old_base, reviewed, new_base, current)
-    assert res["clean"] is False             # the replay onto the old base conflicted
+    assert res["clean"] is False             # the replay onto the current base conflicted
     assert "AUTHOR2" in res["diff"]          # still a readable normal diff (raw old_head..new_head)
 
 

@@ -808,8 +808,9 @@ function renderCommitView(el) {
 }
 
 // render one file's diff (the current selection) from a file set — shared by the full diff and the
-// per-file since-last view. interactive=false → read-only (no highlight overlay, no line selection),
-// used for since-last where line numbers may sit on a replayed base and shouldn't anchor highlights.
+// per-file since-last view. interactive=false → read-only (no highlight overlay, no line selection,
+// no unfold), used for a since-last diff whose new side sits on coordinates that don't match the head
+// blob (a stale session, before refresh) and so can't anchor highlights or reveal head context.
 function renderFileDiff(el, files, suffix, interactive) {
   let file = files.find((f) => f.path === currentFile);
   if (!file && files.length) { currentFile = files[0].path; file = files[0]; }
@@ -827,7 +828,8 @@ function renderFileDiff(el, files, suffix, interactive) {
   const table = document.createElement("table");
   table.className = "hunk";
   if (!splitMode && interactive) {
-    // the full diff, unified: render with "unfold" bands revealing the context between hunks
+    // unified: render with "unfold" bands revealing the context between hunks (full diff, and any
+    // head-aligned since-last diff — its new side is the head blob the bands reveal from)
     const fileDiff = (file.hunks || []).map((h) => h.diff || "").join("\n");
     renderUnifiedUnfoldable(table, fileDiff, file.path, hl);
   } else {
@@ -989,7 +991,10 @@ function renderSinceLast(el) {
       return;
     }
     if (d.note) { const n = document.createElement("div"); n.className = "sincenote"; n.textContent = "⚠ " + d.note; el.appendChild(n); }
-    renderFileDiff(el, d.files || [], "  ·  since your last review", false);
+    // fully interactive (highlight, comment, unfold) when head-aligned — the diff's new side is then
+    // the head blob, so its line numbers anchor exactly like the full diff. A stale session (head
+    // moved past the session) is read-only until a refresh re-syncs the head.
+    renderFileDiff(el, d.files || [], "  ·  since your last review", d.head_aligned !== false);
     return;
   }
   const box = document.createElement("div");
