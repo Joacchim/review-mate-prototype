@@ -131,6 +131,9 @@ async function boot() {
   wireToolbar();
   const params = new URLSearchParams(location.search);
   SID = params.get("s");
+  // ?ref=<project!iid> — what a queue entry links to, so it can be middle-clicked into its own tab.
+  // Resolving it here (rather than on click) is what makes the entry a real link instead of a button.
+  if (!SID && params.get("ref")) return openRef(params.get("ref"));
   if (!SID) return showLanding();
   $("sid").textContent = SID.slice(0, 8);
   try { me = (await fetch("/api/me").then((r) => r.json())).username; } catch (e) { me = null; }
@@ -229,13 +232,15 @@ function renderOpenSessions(land, sessions) {
       if (meta && st.state === "discussions" && st.unresolved) meta.label = `${st.unresolved} open discussion${st.unresolved > 1 ? "s" : ""}`;
       const row = document.createElement("div");
       row.className = "sitem" + (meta ? " " + meta.cls : "");
+      // the title is a real link to the review (stretched over the card, see .rowlink) and the
+      // project!iid a real link to the MR on the host — both middle-clickable into their own tab
       row.innerHTML =
         `<button class="x" title="close review">×</button>` +
-        `<div class="t">${meta ? `<span class="ststate">${esc(meta.label)}</span> ` : ""}${esc(s.title || "(untitled review)")}</div>` +
-        `<div class="m">${loc}${bits.length ? " · " + bits.join(" · ") : ""}</div>`;
-      row.onclick = () => { location.search = `?s=${s.id}`; };
+        `<div class="t">${meta ? `<span class="ststate">${esc(meta.label)}</span> ` : ""}` +
+        `<a class="rowlink" href="?s=${encodeURIComponent(s.id)}">${esc(s.title || "(untitled review)")}</a></div>` +
+        `<div class="m">${hostLink(s.url, loc)}${bits.length ? " · " + bits.join(" · ") : ""}</div>`;
       row.querySelector(".x").onclick = (e) => {
-        e.stopPropagation();
+        e.preventDefault(); e.stopPropagation();
         closeSession(s.id, s.drafts_pending);
       };
       list.appendChild(row);
@@ -247,6 +252,85 @@ async function closeSession(id, pending) {
   if (pending && !confirm(`This review has ${pending} unsubmitted comment(s). Close it anyway?`)) return;
   try { await fetch(`/api/sessions/${id}`, { method: "DELETE" }); } catch (e) {}
   showLanding();  // refresh the hub
+}
+
+// --- links: every navigable thing on this page is a real link ----------------
+// The queue page is a list of destinations, so each one is an <a> the browser owns: ctrl/middle-click
+// and "open in new tab" work, and a reviewer can fan several reviews out into tabs. Rows keep their
+// whole-card click target via .rowlink's stretched overlay; buttons on the row sit above it.
+
+// project!iid as a link to the MR on the host — the same outward idiom as the header's .mrlink.
+// `label` is already-escaped HTML; falls back to plain text for an entry with no URL.
+function hostLink(url, label) {
+  return url ? `<a class="extlink" href="${esc(url)}" target="_blank" rel="noopener">${label} ↗</a>` : label;
+}
+
+// the session already reviewing this MR, if any — so a ?ref= link (or a stale Track button) resumes
+// that review instead of opening a second one for the same MR
+async function findTracking(ref) {
+  let sessions = [];
+  try { sessions = await fetch("/api/sessions").then((r) => r.json()); } catch (e) {}
+  if (!Array.isArray(sessions)) return null;
+  return sessions.find((s) => s.status === "active" && `${s.project}!${s.iid}` === ref) || null;
+}
+
+// "Track": flag a queue entry for review without leaving the queue. It starts the review session, so
+// the MR moves up into "Open reviews" — where check-for-updates then watches it — and the reviewer
+// carries on triaging the rest of the queue.
+async function trackRef(ref, button) {
+  button.disabled = true; button.textContent = "tracking…";
+  setStatus("tracking " + ref + "…");
+  const fail = (msg) => { setStatus("✕ " + msg); button.disabled = false; button.textContent = "Track"; };
+  try {
+    if (await findTracking(ref)) { setStatus(ref + " is already in your open reviews"); showLanding(); return; }
+    const r = await fetch("/api/sessions", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ref }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return fail(data.error || `track failed (${r.status})`);
+    setStatus("tracking " + ref + " — it's in your open reviews");
+    showLanding();   // the entry now belongs to "Open reviews", not the queue — re-render both
+  } catch (e) { fail(String(e)); }
+}
+
+// the ?ref= landing: open the review a queue link points at, resuming the existing session when the
+// MR is already tracked, so following the link twice never duplicates a review
+async function openRef(ref) {
+  setStatus("opening " + ref + "…");
+  const land = document.createElement("div");   // the tab lands here cold — say what it's doing
+  land.className = "land";
+  land.appendChild(h2("Opening " + ref));
+  land.appendChild(empty("resolving the merge request…"));
+  const d = $("diff"); d.innerHTML = ""; d.appendChild(land);
+  const hit = await findTracking(ref);
+  if (hit) return location.replace(`?s=${encodeURIComponent(hit.id)}`);
+  try {
+    const r = await fetch("/api/sessions", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ref }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { setStatus("✕ " + (data.error || `load failed (${r.status})`)); return showLanding(); }
+    location.replace(`?s=${encodeURIComponent(data.id)}`);   // replace: don't leave ?ref= in history
+  } catch (e) { setStatus("✕ " + e); showLanding(); }
+}
+
+// one MR entry in a picker list — the review queue, search results, Claude's candidates. All three
+// offer Track: wherever you come across an MR, flagging it for later is the cheaper action than
+// opening it. The row links to the review; the project!iid links out to the MR on the host.
+function mrItem(it) {
+  const ref = `${it.project}!${it.iid}`;
+  const row = document.createElement("div");
+  row.className = "qitem";
+  row.innerHTML =
+    `<div class="t"><a class="rowlink" href="?ref=${encodeURIComponent(ref)}">${esc(it.title)}</a></div>` +
+    `<div class="m">${hostLink(it.url, `${esc(it.project)} !${it.iid}`)}</div>`;
+  const b = btn("Track", "btn track", null);
+  b.title = "flag this MR for review — adds it to your open reviews without opening it";
+  b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); trackRef(ref, b); };
+  row.appendChild(b);
+  return row;
 }
 
 async function showLanding() {
@@ -295,13 +379,7 @@ function renderQueue(box, items, openSessions) {
     list.innerHTML = "";
     const shown = items.filter((it) => matches(it, q));
     if (!shown.length) { list.appendChild(empty("no queue entries match")); return; }
-    shown.forEach((it) => {
-      const b = document.createElement("button");
-      b.className = "qitem";
-      b.innerHTML = `<div class="t">${esc(it.title)}</div><div class="m">${esc(it.project)} !${it.iid}</div>`;
-      b.onclick = () => loadRef(`${it.project}!${it.iid}`);
-      list.appendChild(b);
-    });
+    shown.forEach((it) => list.appendChild(mrItem(it)));
   };
   filter.oninput = renderList;
   box.appendChild(filter);
@@ -407,8 +485,6 @@ async function post(command) {
 // --- toolbar ----------------------------------------------------------------
 
 function wireToolbar() {
-  const brand = document.querySelector("header .brand");
-  if (brand) { brand.style.cursor = "pointer"; brand.title = "back to the queue"; brand.onclick = () => { location.href = "/"; }; }
   $("t-left").onclick = () => $("shell").classList.toggle("hl");
   $("t-right").onclick = () => $("shell").classList.toggle("hr");
   $("t-split").classList.toggle("on", splitMode);
@@ -467,13 +543,7 @@ async function renderSuggestions(query) {
     return;
   }
   const items = Array.isArray(data) ? data : [];
-  items.forEach((it) => {
-    const b = document.createElement("button");
-    b.className = "qitem";
-    b.innerHTML = `<div class="t">${esc(it.title)}</div><div class="m">${esc(it.project)} !${it.iid}</div>`;
-    b.onclick = () => loadRef(`${it.project}!${it.iid}`);
-    list.appendChild(b);
-  });
+  items.forEach((it) => list.appendChild(mrItem(it)));
   if (!items.length) list.appendChild(empty("no GitLab matches — try another term, or paste a full MR URL"));
   // the agent is a fallback, not the default: prompt it more strongly when direct search came up empty
   fallback.appendChild(document.createTextNode(items.length ? "Not the one? " : "Looking for it by description? "));
@@ -509,13 +579,7 @@ function renderClaudeAnswer(req, panel) {
   ans.className = "claudeans";
   ans.innerHTML = `<div class="byclaude">Claude suggests <span class="prov">· may draw on non-GitLab sources; provenance noted inline</span></div><div class="md">${md(req.answer || "")}</div>`;
   panel.appendChild(ans);
-  (req.candidates || []).forEach((it) => {
-    const b = document.createElement("button");
-    b.className = "qitem";
-    b.innerHTML = `<div class="t">${esc(it.title)}</div><div class="m">${esc(it.project)} !${it.iid}</div>`;
-    b.onclick = () => loadRef(`${it.project}!${it.iid}`);
-    panel.appendChild(b);
-  });
+  (req.candidates || []).forEach((it) => panel.appendChild(mrItem(it)));
 }
 
 function render() {

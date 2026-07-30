@@ -181,6 +181,7 @@ class SessionSummary(BaseModel):
     title: str | None = None
     project: str | None = None
     iid: int | None = None
+    url: str | None = None
     highlights: int = 0
     cards: int = 0
     drafts_pending: int = 0

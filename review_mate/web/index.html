@@ -13,7 +13,7 @@
   *{box-sizing:border-box} html,body{margin:0;height:100%}
   body{background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}
   header{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
-  header .brand{font-weight:600;white-space:nowrap} header .mr{color:var(--fg2);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  header .brand{font-weight:600;white-space:nowrap;color:inherit;text-decoration:none} header .mr{color:var(--fg2);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   header .mr .mrlink{color:var(--accent);text-decoration:none} header .mr .mrlink:hover{text-decoration:underline}
   header .dot{width:8px;height:8px;border-radius:50%;background:#3ddc84;display:inline-block}
   header .sid{color:var(--fg2);font-family:var(--mono);font-size:11px}
@@ -183,12 +183,20 @@
   .claudeans .prov{border:0;text-transform:none;letter-spacing:0;font-size:9px;color:var(--fg2);opacity:.85}
   .claudeans{background:var(--panel2);border:1px solid #3a4a6b;border-radius:8px;padding:10px 12px;margin-bottom:8px}
   .claudeans .byclaude{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);border:1px solid #3a4a6b;border-radius:5px;padding:0 5px;margin-bottom:6px}
-  .qitem{display:block;text-align:left;width:100%;margin:0 0 8px;padding:11px 13px;border:1px solid var(--line);background:var(--panel);border-radius:8px;cursor:pointer}
+  /* a picker row is a card whose title is a real link stretched over the whole card (.rowlink::after):
+     the click target stays the card, while middle-click / open-in-new-tab work as on any link. The
+     row's own controls (Track, ×) and its outward host link sit above the overlay via z-index. */
+  .rowlink{color:inherit;text-decoration:none}
+  .rowlink::after{content:"";position:absolute;inset:0;border-radius:8px}
+  .extlink{position:relative;z-index:1;color:var(--fg2);text-decoration:none}
+  .extlink:hover{color:var(--accent);text-decoration:underline}
+  .qitem{position:relative;margin:0 0 8px;padding:11px 78px 11px 13px;border:1px solid var(--line);background:var(--panel);border-radius:8px}
   .qitem:hover{border-color:var(--accent)} .qitem .t{color:var(--fg)} .qitem .m{font-family:var(--mono);font-size:11px;color:var(--fg2);margin-top:3px}
-  .sitem{position:relative;margin:0 0 8px;padding:11px 38px 11px 13px;border:1px solid var(--line);background:var(--panel);border-radius:8px;cursor:pointer}
+  .qitem .track{position:absolute;right:9px;top:50%;transform:translateY(-50%);z-index:1}
+  .sitem{position:relative;margin:0 0 8px;padding:11px 38px 11px 13px;border:1px solid var(--line);background:var(--panel);border-radius:8px}
   .sitem:hover{border-color:var(--accent)}
   .sitem .t{color:var(--fg)} .sitem .m{font-family:var(--mono);font-size:11px;color:var(--fg2);margin-top:3px}
-  .sitem .x{position:absolute;right:9px;top:9px;color:var(--fg2);cursor:pointer;border:none;background:none;font-size:17px;line-height:1;padding:2px}
+  .sitem .x{position:absolute;right:9px;top:9px;z-index:1;color:var(--fg2);cursor:pointer;border:none;background:none;font-size:17px;line-height:1;padding:2px}
   .sitem .x:hover{color:var(--delfg)}
   /* review-hub: header row + per-review state chip / left-border colour */
   .hubhdr{display:flex;align-items:center;gap:10px;margin:0 0 8px} .hubhdr h2{margin:0}
@@ -205,7 +213,7 @@
 </head>
 <body>
 <header>
-  <span class="dot"></span><span class="brand">review-mate</span>
+  <span class="dot"></span><a class="brand" href="/" title="back to the queue">review-mate</a>
   <button class="btn" id="t-left" title="toggle file tree">◧</button>
   <button class="btn" id="t-split" title="unified / side-by-side">⇄ split</button>
   <button class="btn" id="t-right" title="toggle context panel">◨</button>

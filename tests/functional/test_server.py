@@ -118,6 +118,7 @@ async def test_session_list_carries_mr_and_progress_counts(tmp_path):
         listed = (await c.get("/api/sessions")).json()
         row = next(s for s in listed if s["id"] == sid)
         assert row["project"] == "g/p" and row["iid"] == 7 and row["title"] == "T"
+        assert row["url"] == "u"          # the hub links each open review back to the MR on the host
         assert row["highlights"] == 1 and row["cards"] == 1
         assert row["drafts_pending"] == 1 and row["drafts_posted"] == 0
 

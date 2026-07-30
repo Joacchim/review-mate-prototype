@@ -209,6 +209,7 @@ class SessionManager:
                 title=s.mr.title if s.mr else None,
                 project=s.mr.project if s.mr else None,
                 iid=s.mr.iid if s.mr else None,
+                url=s.mr.url if s.mr else None,
                 highlights=len(s.highlights), cards=len(s.cards),
                 drafts_pending=sum(1 for d in s.drafts if d.status is DraftStatus.DRAFT),
                 drafts_posted=sum(1 for d in s.drafts if d.status is DraftStatus.POSTED),
