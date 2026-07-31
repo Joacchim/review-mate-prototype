@@ -38,7 +38,7 @@ def _glab_credentials() -> tuple[str | None, str | None, str | None]:
     out = (proc.stdout or "") + (proc.stderr or "")
     host = (re.search(r"Logged in to (\S+)", out) or [None, None])[1]
     user = (re.search(r"\bas (\S+)", out) or [None, None])[1]
-    token = (re.search(r"Token:\s*(\S+)", out) or [None, None])[1]
+    token = (re.search(r"Token(?: found)?:\s*(\S+)", out) or [None, None])[1]
     if not token or set(token) <= {"*"}:  # masked or absent — fall back to the config file
         return _glab_config_credentials()
     return host, token, user
