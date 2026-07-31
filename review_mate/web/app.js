@@ -7,6 +7,16 @@ let state = null;
 let currentFile = null;
 const collapsedDirs = new Set();
 let splitMode = localStorage.getItem("rm-split") === "1";
+
+function applyTheme() {
+  const stored = localStorage.getItem("rm-theme");
+  const light = stored ? stored === "light" : matchMedia("(prefers-color-scheme: light)").matches;
+  document.documentElement.dataset.theme = light ? "light" : "";
+  $("t-theme").textContent = light ? "☀" : "☾";
+}
+matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+  if (!localStorage.getItem("rm-theme")) applyTheme();
+});
 let chatDraft = "";
 let chatFocused = false;
 const draftBuffers = {};   // highlight_id -> in-progress review-comment text (survives re-render)
@@ -587,6 +597,12 @@ async function post(command) {
 function wireToolbar() {
   $("t-left").onclick = () => $("shell").classList.toggle("hl");
   $("t-right").onclick = () => $("shell").classList.toggle("hr");
+  applyTheme();
+  $("t-theme").onclick = () => {
+    const light = document.documentElement.dataset.theme !== "light";
+    localStorage.setItem("rm-theme", light ? "light" : "dark");
+    applyTheme();
+  };
   $("t-split").classList.toggle("on", splitMode);
   $("t-split").onclick = () => {
     splitMode = !splitMode;
