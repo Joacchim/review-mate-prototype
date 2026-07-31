@@ -335,6 +335,7 @@ git commit -m "feat(web): theme highlight-rail, chip, verbanner, and claude-answ
 - Modify: `review_mate/web/index.html:171` — `.searcherr` (search-error box).
 - Modify: `review_mate/web/index.html:180` — `button.ok`/`button.no` (cross-repo access-request buttons).
 - Modify: `review_mate/web/index.html:190` — `.msg.user` (your own chat bubble).
+- Modify: `review_mate/web/index.html:249,252` — `.sitem.st-git .ststate`/`.sitem.st-done .ststate` (review-hub state markers). **Correction, added after Task 4 landed:** the design spec's original color tally undercounted `#3a4a6b` (7 occurrences) and `#2e6b45` (3 occurrences) — it accounted for 6 and 2 respectively, missing that these two `.ststate` rules also carry those literals. Task 4 correctly left them alone since its own scope never named them; this task closes the gap so Step 5's whole-file "zero leftover literals" check actually passes.
 
 **Integration:** `.searcherr` and `button.no` switch to reusing `--del`/`--delln`/`--delfg`/`--delline` — the same "error red" the diff view already uses — rather than keeping their own hardcoded copies; this is the one intentional dedup called out in the design spec.
 
@@ -386,7 +387,29 @@ new_string:
   .msg.user{background:var(--usermsgbg);margin-left:22px} .msg.agent{background:var(--panel2);margin-right:22px}
 ```
 
-- [ ] **Step 5: Verify every hardcoded color literal outside the two `:root` blocks is gone**
+- [ ] **Step 5: Replace `.sitem.st-git .ststate` and `.sitem.st-done .ststate`**
+
+old_string:
+```
+  .sitem.st-git{border-left:3px solid var(--accent)} .sitem.st-git .ststate{color:var(--accent);border-color:#3a4a6b}
+```
+
+new_string:
+```
+  .sitem.st-git{border-left:3px solid var(--accent)} .sitem.st-git .ststate{color:var(--accent);border-color:var(--accentline)}
+```
+
+old_string:
+```
+  .sitem.st-done{border-left:3px solid var(--addln)} .sitem.st-done .ststate{color:var(--addfg);border-color:#2e6b45}
+```
+
+new_string:
+```
+  .sitem.st-done{border-left:3px solid var(--addln)} .sitem.st-done .ststate{color:var(--addfg);border-color:var(--postline)}
+```
+
+- [ ] **Step 6: Verify every hardcoded color literal outside the two `:root` blocks is gone**
 
 Run:
 ```bash
@@ -403,11 +426,11 @@ print('leftover literals:', leftovers)
 
 Expected: `leftover literals: []`
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add review_mate/web/index.html
-git commit -m "feat(web): theme detail-panel shadow, search error, and reject-button colors"
+git commit -m "feat(web): theme detail-panel shadow, search error, reject-button, and review-hub state colors"
 ```
 
 ---
