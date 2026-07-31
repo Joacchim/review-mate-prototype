@@ -119,7 +119,7 @@
   .hrow{position:relative;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 26px 8px 10px;margin-bottom:7px;cursor:pointer}
   .hrow:hover{border-color:var(--line2)}
   .hrow.active{border-color:var(--accent);box-shadow:inset 2px 0 0 var(--accent)}
-  .hrow.agent{border-color:#3a4a6b}
+  .hrow.agent{border-color:var(--accentline)}
   .hrow.resolved{background:var(--add);border-color:var(--addln)}   /* a resolved discussion, at a glance */
   .hrow.resolved.active{border-color:var(--accent)}
   .hrow .top{display:flex;align-items:center;gap:6px;margin-bottom:3px;min-width:0}
@@ -132,8 +132,8 @@
   .hrow .x{position:absolute;right:6px;top:6px;color:var(--fg2);cursor:pointer;border:none;background:none;font-size:15px;line-height:1;padding:2px}
   .hrow .x:hover{color:var(--delfg)}
   .chip{flex:none;font-size:9px;letter-spacing:.04em;text-transform:uppercase;border-radius:5px;padding:1px 5px;border:1px solid var(--line2);color:var(--fg2)}
-  .chip.comment{color:var(--accent);border-color:#3a4a6b} .chip.posted{color:var(--addfg);border-color:#2e6b45}
-  .chip.insight{color:var(--accent);border-color:#3a4a6b}
+  .chip.comment{color:var(--accent);border-color:var(--accentline)} .chip.posted{color:var(--addfg);border-color:var(--postline)}
+  .chip.insight{color:var(--accent);border-color:var(--accentline)}
   .hrow.mr{background:var(--panel);border-style:dashed} .hrow.mr.active{border-style:solid}
   .detail .dlabel{font-size:12px;color:var(--fg2)}
   .reviewbar{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:10px;font-size:12.5px;color:var(--fg2)}
@@ -149,7 +149,7 @@
   .detail .dhead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
   .detail .dhead .num{font-family:var(--mono);font-size:11px;color:var(--fg2);background:var(--bg);border:1px solid var(--line2);border-radius:5px;padding:0 5px}
   .detail .dhead .loc{font-family:var(--mono);font-size:12px;color:var(--accent);cursor:pointer;text-decoration:underline;text-decoration-style:dotted;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .detail .byclaude{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);border:1px solid #3a4a6b;border-radius:5px;padding:0 5px}
+  .detail .byclaude{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);border:1px solid var(--accentline);border-radius:5px;padding:0 5px}
   .detail .dclose{margin-left:auto;flex:none;color:var(--fg2);border:none;background:none;font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
   .detail .dclose:hover{color:var(--fg)}
   .detail .q{color:var(--fg2);font-size:12.5px;margin-bottom:8px}
@@ -164,12 +164,12 @@
   .yourthread{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--fg2);margin:4px 0}
   .msg .noteacts{margin-top:3px;display:flex;gap:6px} .msg .noteacts .btn{font-size:10px;padding:0 4px}
   .hrow .btn.jump{margin-left:auto;font-size:10px;padding:0 5px}
-  .verbanner{display:flex;align-items:center;justify-content:space-between;gap:8px;background:rgba(110,168,254,.13);border:1px solid rgba(110,168,254,.4);border-left:3px solid var(--accent);border-radius:8px;padding:9px 12px;margin-bottom:10px;font-size:12px}
+  .verbanner{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--accentbg);border:1px solid var(--accentborder);border-left:3px solid var(--accent);border-radius:8px;padding:9px 12px;margin-bottom:10px;font-size:12px}
   .verbanner .vblabel{font-weight:600;color:var(--fg);display:flex;align-items:center;gap:7px}
-  .verbanner .vblabel::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px rgba(110,168,254,.22);flex:none}
-  .verbanner.baseline{background:rgba(154,163,178,.08);border-color:var(--line2);border-left-color:var(--line2)}
+  .verbanner .vblabel::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accentglow);flex:none}
+  .verbanner.baseline{background:var(--fg2bg);border-color:var(--line2);border-left-color:var(--line2)}
   .verbanner.baseline .vblabel{color:var(--fg2);font-weight:500} .verbanner.baseline .vblabel::before{background:var(--fg2);box-shadow:none}
-  .chip.stale{background:#5a3a1a;color:#f0c890;border-color:#7a5a2a}
+  .chip.stale{background:var(--stalebg);color:var(--stalefg);border-color:var(--warnline)}
   .verbanner .vbctl{display:flex;gap:6px} .btn.on{background:var(--accent,#4a6bd0);color:#fff}
   /* rebase-aware interdiff (git range-diff), dual-column (old|new) split — conflict fallback only */
   .rdiff{font-family:var(--mono,monospace);font-size:12px;line-height:1.55;overflow-x:auto;padding:6px 0}
@@ -223,8 +223,8 @@
   .qfilter::placeholder{color:var(--fg2)}
   .askrow{margin:10px 0;color:var(--fg2);font-size:12px} .claudepanel:not(:empty){margin:0 0 14px}
   .claudeans .prov{border:0;text-transform:none;letter-spacing:0;font-size:9px;color:var(--fg2);opacity:.85}
-  .claudeans{background:var(--panel2);border:1px solid #3a4a6b;border-radius:8px;padding:10px 12px;margin-bottom:8px}
-  .claudeans .byclaude{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);border:1px solid #3a4a6b;border-radius:5px;padding:0 5px;margin-bottom:6px}
+  .claudeans{background:var(--panel2);border:1px solid var(--accentline);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+  .claudeans .byclaude{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);border:1px solid var(--accentline);border-radius:5px;padding:0 5px;margin-bottom:6px}
   /* a picker row is a card whose title is a real link stretched over the whole card (.rowlink::after):
      the click target stays the card, while middle-click / open-in-new-tab work as on any link. The
      row's own controls (Track, ×) and its outward host link sit above the overlay via z-index. */
