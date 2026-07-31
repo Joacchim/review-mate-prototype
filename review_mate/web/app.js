@@ -7,16 +7,6 @@ let state = null;
 let currentFile = null;
 const collapsedDirs = new Set();
 let splitMode = localStorage.getItem("rm-split") === "1";
-
-function applyTheme() {
-  const stored = localStorage.getItem("rm-theme");
-  const light = stored ? stored === "light" : matchMedia("(prefers-color-scheme: light)").matches;
-  document.documentElement.dataset.theme = light ? "light" : "";
-  $("t-theme").textContent = light ? "☀" : "☾";
-}
-matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
-  if (!localStorage.getItem("rm-theme")) applyTheme();
-});
 let chatDraft = "";
 let chatFocused = false;
 const draftBuffers = {};   // highlight_id -> in-progress review-comment text (survives re-render)
@@ -593,6 +583,19 @@ async function post(command) {
 }
 
 // --- toolbar ----------------------------------------------------------------
+
+// dark is the bare :root, light is an attribute override — same resolution order as the no-flash
+// script in index.html, which sets the attribute before first paint but can't touch the button glyph.
+const lightScheme = matchMedia("(prefers-color-scheme: light)");
+function applyTheme() {
+  const stored = localStorage.getItem("rm-theme");
+  const light = stored ? stored === "light" : lightScheme.matches;
+  document.documentElement.dataset.theme = light ? "light" : "";
+  $("t-theme").textContent = light ? "☀" : "☾";
+}
+lightScheme.addEventListener("change", () => {   // follow the OS until the reviewer pins a theme
+  if (!localStorage.getItem("rm-theme")) applyTheme();
+});
 
 function wireToolbar() {
   $("t-left").onclick = () => $("shell").classList.toggle("hl");
