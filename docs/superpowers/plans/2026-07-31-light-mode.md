@@ -100,7 +100,7 @@ print('dark count:', len(dark_vars), 'light count:', len(light_vars))
 "
 ```
 
-Expected: both "should be empty" lines print `set()`, and both counts print `34`.
+Expected: both "should be empty" lines print `set()`, and both counts print the same number (35).
 
 - [ ] **Step 4: Commit**
 
