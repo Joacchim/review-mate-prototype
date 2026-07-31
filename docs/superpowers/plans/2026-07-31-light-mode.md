@@ -335,7 +335,8 @@ git commit -m "feat(web): theme highlight-rail, chip, verbanner, and claude-answ
 - Modify: `review_mate/web/index.html:171` — `.searcherr` (search-error box).
 - Modify: `review_mate/web/index.html:180` — `button.ok`/`button.no` (cross-repo access-request buttons).
 - Modify: `review_mate/web/index.html:190` — `.msg.user` (your own chat bubble).
-- Modify: `review_mate/web/index.html:249,252` — `.sitem.st-git .ststate`/`.sitem.st-done .ststate` (review-hub state markers). **Correction, added after Task 4 landed:** the design spec's original color tally undercounted `#3a4a6b` (7 occurrences) and `#2e6b45` (3 occurrences) — it accounted for 6 and 2 respectively, missing that these two `.ststate` rules also carry those literals. Task 4 correctly left them alone since its own scope never named them; this task closes the gap so Step 5's whole-file "zero leftover literals" check actually passes.
+- Modify: `review_mate/web/index.html:249,252` — `.sitem.st-git .ststate`/`.sitem.st-done .ststate` (review-hub state markers). **Correction, added after Task 4 landed:** the design spec's original color tally undercounted `#3a4a6b` (7 occurrences) and `#2e6b45` (3 occurrences) — it accounted for 6 and 2 respectively, missing that these two `.ststate` rules also carry those literals. Task 4 correctly left them alone since its own scope never named them; this task closes the gap so Step 6's whole-file "zero leftover literals" check actually passes.
+- Modify: `review_mate/web/index.html` — `.verbanner .vbctl .btn.on` (diff-version-picker active button) and `.sitem.st-disc`/`.sitem.st-prog` (review-hub state markers). **Second correction, found by Task 5's own implementer when Step 6 first came back non-empty:** the design spec's tally missed these entirely. `.btn.on`'s `var(--accent,#4a6bd0)` fallback is dead code (both `:root` blocks always define `--accent`) — simplify to `var(--accent)`; its `color:#fff` is intentionally theme-invariant (white text painted on the accent-colored fill reads fine in both themes since the *fill* is what adapts) and is NOT a leftover to migrate — Step 6's script will be adjusted to allow it. `.sitem.st-disc`/`.sitem.st-prog` reuse the exact same `#d0a24a`/`#f0c88a`/`#7a5a2a` triad as `.rd-cmod` (Task 3) and migrate the same way: `--warn`/`--warnfg`/`--warnline`.
 
 **Integration:** `.searcherr` and `button.no` switch to reusing `--del`/`--delln`/`--delfg`/`--delline` — the same "error red" the diff view already uses — rather than keeping their own hardcoded copies; this is the one intentional dedup called out in the design spec.
 
@@ -409,7 +410,31 @@ new_string:
   .sitem.st-done{border-left:3px solid var(--addln)} .sitem.st-done .ststate{color:var(--addfg);border-color:var(--postline)}
 ```
 
-- [ ] **Step 6: Verify every hardcoded color literal outside the two `:root` blocks is gone**
+- [ ] **Step 5b: Replace `.btn.on` and the `.sitem.st-disc`/`.sitem.st-prog` rules**
+
+old_string:
+```
+  .verbanner .vbctl{display:flex;gap:6px} .btn.on{background:var(--accent,#4a6bd0);color:#fff}
+```
+
+new_string:
+```
+  .verbanner .vbctl{display:flex;gap:6px} .btn.on{background:var(--accent);color:#fff}
+```
+
+old_string:
+```
+  .sitem.st-disc{border-left:3px solid #d0a24a} .sitem.st-disc .ststate{color:#f0c88a;border-color:#7a5a2a}
+  .sitem.st-prog{border-left:3px solid #d0a24a} .sitem.st-prog .ststate{color:#f0c88a;border-color:#7a5a2a}
+```
+
+new_string:
+```
+  .sitem.st-disc{border-left:3px solid var(--warn)} .sitem.st-disc .ststate{color:var(--warnfg);border-color:var(--warnline)}
+  .sitem.st-prog{border-left:3px solid var(--warn)} .sitem.st-prog .ststate{color:var(--warnfg);border-color:var(--warnline)}
+```
+
+- [ ] **Step 6: Verify every hardcoded color literal outside the two `:root` blocks is gone (except the intentionally theme-invariant `#fff` on `.btn.on`)**
 
 Run:
 ```bash
@@ -419,7 +444,7 @@ text = open('review_mate/web/index.html').read()
 style = re.search(r'<style>(.*?)</style>', text, re.S).group(1)
 style = re.sub(r':root\{.*?\}', '', style, flags=re.S)
 style = re.sub(r':root\[data-theme=\"light\"\]\{.*?\}', '', style, flags=re.S)
-leftovers = re.findall(r'#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)', style)
+leftovers = [l for l in re.findall(r'#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)', style) if l != '#fff']
 print('leftover literals:', leftovers)
 "
 ```
