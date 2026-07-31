@@ -100,10 +100,10 @@
   .commitmsg .ct{font-weight:600;font-size:13px} .commitmsg .cb{margin-top:4px;color:var(--fg2);font-family:var(--mono);font-size:12px;white-space:pre-wrap}
   tr.line td.code{cursor:pointer} tr.line:hover td.code{outline:1px solid var(--accent);outline-offset:-1px}
   tr.hl td.code{box-shadow:inset 3px 0 0 var(--accent)}
-  tr.thl td.code{box-shadow:inset -3px 0 0 #c9a2ef}                    /* a host discussion anchors here */
-  tr.hl.thl td.code{box-shadow:inset 3px 0 0 var(--accent), inset -3px 0 0 #c9a2ef}   /* both */
-  tr.flash td.code{background:rgba(201,162,239,.28)}                    /* jumped-to discussion line */
-  .tok-cmt{color:#7f8aa3;font-style:italic} .tok-str{color:#8fdcb0} .tok-num{color:#e0b892} .tok-kw{color:#c9a2ef}
+  tr.thl td.code{box-shadow:inset -3px 0 0 var(--purple)}                    /* a host discussion anchors here */
+  tr.hl.thl td.code{box-shadow:inset 3px 0 0 var(--accent), inset -3px 0 0 var(--purple)}   /* both */
+  tr.flash td.code{background:var(--purplebg)}                    /* jumped-to discussion line */
+  .tok-cmt{color:var(--tokcmt);font-style:italic} .tok-str{color:var(--tokstr)} .tok-num{color:var(--toknum)} .tok-kw{color:var(--purple)}
   td.gap{background:var(--bg)}
   /* split-mode cell colouring (cells carry their own classes) */
   td.code.delc{background:var(--del);color:var(--delfg)} td.ln.delln{background:var(--delln)}
@@ -177,7 +177,7 @@
   .rdiff .rdln{white-space:pre-wrap;padding:0 16px}
   .rdiff .rd-file{color:var(--accent);font-weight:600;padding-top:8px}
   .rdiff .rdcommit{padding:6px 16px;margin-top:8px;border-left:3px solid var(--line2);font-weight:600}
-  .rdiff .rd-cmod{border-left-color:#d0a24a;color:#f0c88a}
+  .rdiff .rd-cmod{border-left-color:var(--warn);color:var(--warnfg)}
   .rdiff .rd-cnew{border-left-color:var(--addln);color:var(--addfg)}
   .rdiff .rd-cdrop{border-left-color:var(--delln);color:var(--delfg)}
   .rdiff .rd-csame{color:var(--fg2)}
@@ -243,7 +243,7 @@
   /* review-hub: header row + per-review state chip / left-border colour */
   .hubhdr{display:flex;align-items:center;gap:10px;margin:0 0 8px} .hubhdr h2{margin:0}
   .hubago{font-size:11px;color:var(--fg2)}
-  .sitem.st-merged{border-left:3px solid #a56ef0} .sitem.st-merged .ststate{color:#c9a2ef;border-color:#5a3a8a}
+  .sitem.st-merged{border-left:3px solid var(--purpleln)} .sitem.st-merged .ststate{color:var(--purple);border-color:var(--purpleln)}
   .sitem.st-closed{border-left:3px solid var(--delln);opacity:.72} .sitem.st-closed .ststate{color:var(--delfg);border-color:var(--delln)}
   .sitem .ststate{font-size:10px;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--line2);border-radius:5px;padding:0 5px;margin-right:6px;color:var(--fg2);white-space:nowrap}
   .sitem.st-git{border-left:3px solid var(--accent)} .sitem.st-git .ststate{color:var(--accent);border-color:#3a4a6b}
