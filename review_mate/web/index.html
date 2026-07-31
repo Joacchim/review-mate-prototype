@@ -252,6 +252,13 @@
   .sitem.st-done{border-left:3px solid var(--addln)} .sitem.st-done .ststate{color:var(--addfg);border-color:var(--postline)}
   .sitem.st-new{border-left:3px solid var(--line2)}
 </style>
+<script>
+  (function () {
+    var stored = localStorage.getItem("rm-theme");
+    var light = stored ? stored === "light" : matchMedia("(prefers-color-scheme: light)").matches;
+    if (light) document.documentElement.dataset.theme = "light";
+  })();
+</script>
 </head>
 <body>
 <header>
@@ -261,6 +268,7 @@
   <button class="btn" id="t-split" title="unified / side-by-side">⇄ split</button>
   <button class="btn" id="t-right" title="toggle context panel">◨</button>
   <button class="btn" id="t-commits" title="review per commit">⑃ commits</button>
+  <button class="btn" id="t-theme" title="toggle light / dark theme">☾</button>
   <span class="mr" id="mr" style="flex:1">—</span>
   <span class="tb"><input id="ref" placeholder="MR url or group/proj!iid"><button class="btn" id="load">Load</button></span>
   <span class="sid" id="status"></span>
