@@ -9,6 +9,25 @@
     --bg:#0f1117; --panel:#171a23; --panel2:#1c2030; --line:#272b3a; --line2:#33384a; --fg:#e6e8ee;
     --fg2:#9aa3b2; --accent:#6ea8fe; --add:#10301f; --addln:#1f5135; --addfg:#9be8bf;
     --del:#34141a; --delln:#5a2230; --delfg:#f3aab4; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    --ok:#3ddc84; --warn:#d0a24a; --warnfg:#f0c88a; --warnbg:rgba(208,162,74,.1); --warnline:#7a5a2a;
+    --stalebg:#5a3a1a; --stalefg:#f0c890;
+    --purple:#c9a2ef; --purpleln:#a56ef0; --purplebg:rgba(201,162,239,.28);
+    --accentline:#3a4a6b; --accentbg:rgba(110,168,254,.13); --accentborder:rgba(110,168,254,.4);
+    --accentglow:rgba(110,168,254,.22); --fg2bg:rgba(154,163,178,.08);
+    --postline:#2e6b45; --delline:#6b2e38; --usermsgbg:#1d2a44;
+    --tokcmt:#7f8aa3; --tokstr:#8fdcb0; --toknum:#e0b892; --shadow:rgba(0,0,0,.55);
+  }
+  :root[data-theme="light"]{
+    --bg:#ffffff; --panel:#f6f8fa; --panel2:#eaeef2; --line:#d0d7de; --line2:#afb8c1; --fg:#1b1f24;
+    --fg2:#59636e; --accent:#0969da; --add:#dafbe1; --addln:#aceebb; --addfg:#116329;
+    --del:#ffebe9; --delln:#ffc1ba; --delfg:#82071e;
+    --ok:#1a7f37; --warn:#9a6700; --warnfg:#7d4e00; --warnbg:rgba(154,103,0,.12); --warnline:#d4a72c;
+    --stalebg:#fff8c5; --stalefg:#7d4e00;
+    --purple:#8250df; --purpleln:#6639ba; --purplebg:rgba(130,80,223,.16);
+    --accentline:#c3d2e8; --accentbg:rgba(9,105,218,.08); --accentborder:rgba(9,105,218,.35);
+    --accentglow:rgba(9,105,218,.18); --fg2bg:rgba(89,99,110,.08);
+    --postline:#1a7f37; --delline:#cf222e; --usermsgbg:#ddf4ff;
+    --tokcmt:#6e7781; --tokstr:#116329; --toknum:#953800; --shadow:rgba(0,0,0,.16);
   }
   *{box-sizing:border-box} html,body{margin:0;height:100%}
   body{background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}
@@ -20,9 +39,9 @@
   header .dot{width:8px;height:8px;border-radius:50%;background:var(--line2);display:inline-block;flex:none}
   header .agent .alab{font-size:11px;color:var(--fg2);font-family:var(--mono)}
   header .agent .alab:empty{display:none}
-  header .agent.watching .dot{background:#3ddc84}
-  header .agent.working .dot{background:#d0a24a;animation:apulse 1.1s ease-in-out infinite}
-  header .agent.working .alab{color:#f0c88a}
+  header .agent.watching .dot{background:var(--ok)}
+  header .agent.working .dot{background:var(--warn);animation:apulse 1.1s ease-in-out infinite}
+  header .agent.working .alab{color:var(--warnfg)}
   header .agent.stalled .dot{background:var(--delln);animation:apulse 1.1s ease-in-out infinite}
   header .agent.stalled .alab{color:var(--delfg)}
   /* the inline "still waiting" line, in the chat thread and under an escalated highlight */
@@ -64,7 +83,7 @@
   .fname .fnbtn{margin-left:auto;font-size:11px;padding:1px 7px;flex:none}
   .fname .renamed{cursor:help}   /* the braces are terse — the title spells the move out */
   .mdview{padding:14px 20px;overflow:auto;line-height:1.55;max-width:900px}
-  .sincenote{margin:10px 14px 0;padding:6px 10px;font-size:11.5px;color:#f0c88a;background:rgba(208,162,74,.1);border:1px solid #7a5a2a;border-radius:6px}
+  .sincenote{margin:10px 14px 0;padding:6px 10px;font-size:11.5px;color:var(--warnfg);background:var(--warnbg);border:1px solid var(--warnline);border-radius:6px}
   table.hunk{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:12.5px}
   table.hunk td{padding:0 8px;white-space:pre-wrap;word-break:break-word;vertical-align:top}
   td.ln{min-width:42px;white-space:nowrap;word-break:normal;text-align:right;color:var(--fg2);user-select:none;border-right:1px solid var(--line);background:var(--panel)}
@@ -81,10 +100,10 @@
   .commitmsg .ct{font-weight:600;font-size:13px} .commitmsg .cb{margin-top:4px;color:var(--fg2);font-family:var(--mono);font-size:12px;white-space:pre-wrap}
   tr.line td.code{cursor:pointer} tr.line:hover td.code{outline:1px solid var(--accent);outline-offset:-1px}
   tr.hl td.code{box-shadow:inset 3px 0 0 var(--accent)}
-  tr.thl td.code{box-shadow:inset -3px 0 0 #c9a2ef}                    /* a host discussion anchors here */
-  tr.hl.thl td.code{box-shadow:inset 3px 0 0 var(--accent), inset -3px 0 0 #c9a2ef}   /* both */
-  tr.flash td.code{background:rgba(201,162,239,.28)}                    /* jumped-to discussion line */
-  .tok-cmt{color:#7f8aa3;font-style:italic} .tok-str{color:#8fdcb0} .tok-num{color:#e0b892} .tok-kw{color:#c9a2ef}
+  tr.thl td.code{box-shadow:inset -3px 0 0 var(--purple)}                    /* a host discussion anchors here */
+  tr.hl.thl td.code{box-shadow:inset 3px 0 0 var(--accent), inset -3px 0 0 var(--purple)}   /* both */
+  tr.flash td.code{background:var(--purplebg)}                    /* jumped-to discussion line */
+  .tok-cmt{color:var(--tokcmt);font-style:italic} .tok-str{color:var(--tokstr)} .tok-num{color:var(--toknum)} .tok-kw{color:var(--purple)}
   td.gap{background:var(--bg)}
   /* split-mode cell colouring (cells carry their own classes) */
   td.code.delc{background:var(--del);color:var(--delfg)} td.ln.delln{background:var(--delln)}
@@ -100,7 +119,7 @@
   .hrow{position:relative;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 26px 8px 10px;margin-bottom:7px;cursor:pointer}
   .hrow:hover{border-color:var(--line2)}
   .hrow.active{border-color:var(--accent);box-shadow:inset 2px 0 0 var(--accent)}
-  .hrow.agent{border-color:#3a4a6b}
+  .hrow.agent{border-color:var(--accentline)}
   .hrow.resolved{background:var(--add);border-color:var(--addln)}   /* a resolved discussion, at a glance */
   .hrow.resolved.active{border-color:var(--accent)}
   .hrow .top{display:flex;align-items:center;gap:6px;margin-bottom:3px;min-width:0}
@@ -113,8 +132,8 @@
   .hrow .x{position:absolute;right:6px;top:6px;color:var(--fg2);cursor:pointer;border:none;background:none;font-size:15px;line-height:1;padding:2px}
   .hrow .x:hover{color:var(--delfg)}
   .chip{flex:none;font-size:9px;letter-spacing:.04em;text-transform:uppercase;border-radius:5px;padding:1px 5px;border:1px solid var(--line2);color:var(--fg2)}
-  .chip.comment{color:var(--accent);border-color:#3a4a6b} .chip.posted{color:var(--addfg);border-color:#2e6b45}
-  .chip.insight{color:var(--accent);border-color:#3a4a6b}
+  .chip.comment{color:var(--accent);border-color:var(--accentline)} .chip.posted{color:var(--addfg);border-color:var(--postline)}
+  .chip.insight{color:var(--accent);border-color:var(--accentline)}
   .hrow.mr{background:var(--panel);border-style:dashed} .hrow.mr.active{border-style:solid}
   .detail .dlabel{font-size:12px;color:var(--fg2)}
   .reviewbar{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:10px;font-size:12.5px;color:var(--fg2)}
@@ -125,12 +144,12 @@
   button.btn.primary{border-color:var(--accent);color:var(--accent)}
   /* detail overlay — non-blocking: floats over the diff, leaves the rail clickable */
   .detail{position:fixed;top:60px;right:384px;width:clamp(380px,46vw,640px);max-height:calc(100vh - 84px);overflow:auto;
-    background:var(--panel);border:1px solid var(--line2);border-radius:10px;box-shadow:0 16px 48px rgba(0,0,0,.55);padding:14px 16px;z-index:40}
+    background:var(--panel);border:1px solid var(--line2);border-radius:10px;box-shadow:0 16px 48px var(--shadow);padding:14px 16px;z-index:40}
   .detail[hidden]{display:none}
   .detail .dhead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
   .detail .dhead .num{font-family:var(--mono);font-size:11px;color:var(--fg2);background:var(--bg);border:1px solid var(--line2);border-radius:5px;padding:0 5px}
   .detail .dhead .loc{font-family:var(--mono);font-size:12px;color:var(--accent);cursor:pointer;text-decoration:underline;text-decoration-style:dotted;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .detail .byclaude{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);border:1px solid #3a4a6b;border-radius:5px;padding:0 5px}
+  .detail .byclaude{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);border:1px solid var(--accentline);border-radius:5px;padding:0 5px}
   .detail .dclose{margin-left:auto;flex:none;color:var(--fg2);border:none;background:none;font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
   .detail .dclose:hover{color:var(--fg)}
   .detail .q{color:var(--fg2);font-size:12.5px;margin-bottom:8px}
@@ -145,20 +164,20 @@
   .yourthread{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--fg2);margin:4px 0}
   .msg .noteacts{margin-top:3px;display:flex;gap:6px} .msg .noteacts .btn{font-size:10px;padding:0 4px}
   .hrow .btn.jump{margin-left:auto;font-size:10px;padding:0 5px}
-  .verbanner{display:flex;align-items:center;justify-content:space-between;gap:8px;background:rgba(110,168,254,.13);border:1px solid rgba(110,168,254,.4);border-left:3px solid var(--accent);border-radius:8px;padding:9px 12px;margin-bottom:10px;font-size:12px}
+  .verbanner{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--accentbg);border:1px solid var(--accentborder);border-left:3px solid var(--accent);border-radius:8px;padding:9px 12px;margin-bottom:10px;font-size:12px}
   .verbanner .vblabel{font-weight:600;color:var(--fg);display:flex;align-items:center;gap:7px}
-  .verbanner .vblabel::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px rgba(110,168,254,.22);flex:none}
-  .verbanner.baseline{background:rgba(154,163,178,.08);border-color:var(--line2);border-left-color:var(--line2)}
+  .verbanner .vblabel::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accentglow);flex:none}
+  .verbanner.baseline{background:var(--fg2bg);border-color:var(--line2);border-left-color:var(--line2)}
   .verbanner.baseline .vblabel{color:var(--fg2);font-weight:500} .verbanner.baseline .vblabel::before{background:var(--fg2);box-shadow:none}
-  .chip.stale{background:#5a3a1a;color:#f0c890;border-color:#7a5a2a}
-  .verbanner .vbctl{display:flex;gap:6px} .btn.on{background:var(--accent,#4a6bd0);color:#fff}
+  .chip.stale{background:var(--stalebg);color:var(--stalefg);border-color:var(--warnline)}
+  .verbanner .vbctl{display:flex;gap:6px} .btn.on{background:var(--accent);color:#fff}
   /* rebase-aware interdiff (git range-diff), dual-column (old|new) split — conflict fallback only */
   .rdiff{font-family:var(--mono,monospace);font-size:12px;line-height:1.55;overflow-x:auto;padding:6px 0}
   .rdiff .rdlegend{font-family:var(--sans,inherit);font-size:10.5px;color:var(--fg2);padding:2px 16px 8px}
   .rdiff .rdln{white-space:pre-wrap;padding:0 16px}
   .rdiff .rd-file{color:var(--accent);font-weight:600;padding-top:8px}
   .rdiff .rdcommit{padding:6px 16px;margin-top:8px;border-left:3px solid var(--line2);font-weight:600}
-  .rdiff .rd-cmod{border-left-color:#d0a24a;color:#f0c88a}
+  .rdiff .rd-cmod{border-left-color:var(--warn);color:var(--warnfg)}
   .rdiff .rd-cnew{border-left-color:var(--addln);color:var(--addfg)}
   .rdiff .rd-cdrop{border-left-color:var(--delln);color:var(--delfg)}
   .rdiff .rd-csame{color:var(--fg2)}
@@ -168,7 +187,7 @@
   table.rdtable td.rg.g-add{color:var(--addfg)} table.rdtable td.rg.g-del{color:var(--delfg)}
   table.rdtable tr.rd-add td{background:var(--add)} table.rdtable tr.rd-del td{background:var(--del)}
   table.rdtable td.rc.i-add{color:var(--addfg)} table.rdtable td.rc.i-del{color:var(--delfg)} table.rdtable td.rc.i-hunk{color:var(--accent)}
-  .searcherr{background:#5a1f1f;border:1px solid #7a3030;color:#f0c0c0;border-radius:6px;padding:9px 11px;font-size:12.5px;line-height:1.5}
+  .searcherr{background:var(--del);border:1px solid var(--delln);color:var(--delfg);border-radius:6px;padding:9px 11px;font-size:12.5px;line-height:1.5}
   /* review drafts (now inside the detail overlay) */
   .draft{border-top:1px dashed var(--line);margin-top:10px;padding-top:10px}
   .draftbox{width:100%;min-height:120px;resize:vertical;background:var(--bg);border:1px solid var(--line2);color:var(--fg);border-radius:6px;padding:6px 8px;font:inherit;font-size:12.5px}
@@ -177,7 +196,7 @@
   .draft .posted{font-size:12px;color:var(--addfg)} .draft .posted a{color:var(--accent)}
   .req{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px}
   .req .repo{font-family:var(--mono);font-size:12px} .req .why{color:var(--fg2);font-size:12px;margin:4px 0 8px}
-  .req button{margin-right:6px} button.ok{border-color:#2e6b45;color:var(--addfg)} button.no{border-color:#6b2e38;color:var(--delfg)}
+  .req button{margin-right:6px} button.ok{border-color:var(--postline);color:var(--addfg)} button.no{border-color:var(--delline);color:var(--delfg)}
   .empty{color:var(--fg2);font-size:12px;padding:8px 0}
   /* chat */
   .chat{margin-top:16px}
@@ -187,7 +206,7 @@
   .chat .msgs{max-height:42vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--bg)}
   .msg{margin:0 0 8px;padding:7px 10px;border-radius:8px;font-size:13px;white-space:pre-wrap;line-height:1.45}
   .msg .who{font-size:9.5px;color:var(--fg2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px}
-  .msg.user{background:#1d2a44;margin-left:22px} .msg.agent{background:var(--panel2);margin-right:22px}
+  .msg.user{background:var(--usermsgbg);margin-left:22px} .msg.agent{background:var(--panel2);margin-right:22px}
   .chatbox{display:flex;gap:6px;margin-top:8px}
   .chatbox input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line2);color:var(--fg);border-radius:6px;padding:6px 9px;font:inherit}
   /* rendered markdown inside cards + chat */
@@ -204,8 +223,8 @@
   .qfilter::placeholder{color:var(--fg2)}
   .askrow{margin:10px 0;color:var(--fg2);font-size:12px} .claudepanel:not(:empty){margin:0 0 14px}
   .claudeans .prov{border:0;text-transform:none;letter-spacing:0;font-size:9px;color:var(--fg2);opacity:.85}
-  .claudeans{background:var(--panel2);border:1px solid #3a4a6b;border-radius:8px;padding:10px 12px;margin-bottom:8px}
-  .claudeans .byclaude{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);border:1px solid #3a4a6b;border-radius:5px;padding:0 5px;margin-bottom:6px}
+  .claudeans{background:var(--panel2);border:1px solid var(--accentline);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+  .claudeans .byclaude{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);border:1px solid var(--accentline);border-radius:5px;padding:0 5px;margin-bottom:6px}
   /* a picker row is a card whose title is a real link stretched over the whole card (.rowlink::after):
      the click target stays the card, while middle-click / open-in-new-tab work as on any link. The
      row's own controls (Track, ×) and its outward host link sit above the overlay via z-index. */
@@ -224,15 +243,22 @@
   /* review-hub: header row + per-review state chip / left-border colour */
   .hubhdr{display:flex;align-items:center;gap:10px;margin:0 0 8px} .hubhdr h2{margin:0}
   .hubago{font-size:11px;color:var(--fg2)}
-  .sitem.st-merged{border-left:3px solid #a56ef0} .sitem.st-merged .ststate{color:#c9a2ef;border-color:#5a3a8a}
+  .sitem.st-merged{border-left:3px solid var(--purpleln)} .sitem.st-merged .ststate{color:var(--purple);border-color:var(--purpleln)}
   .sitem.st-closed{border-left:3px solid var(--delln);opacity:.72} .sitem.st-closed .ststate{color:var(--delfg);border-color:var(--delln)}
   .sitem .ststate{font-size:10px;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--line2);border-radius:5px;padding:0 5px;margin-right:6px;color:var(--fg2);white-space:nowrap}
-  .sitem.st-git{border-left:3px solid var(--accent)} .sitem.st-git .ststate{color:var(--accent);border-color:#3a4a6b}
-  .sitem.st-disc{border-left:3px solid #d0a24a} .sitem.st-disc .ststate{color:#f0c88a;border-color:#7a5a2a}
-  .sitem.st-prog{border-left:3px solid #d0a24a} .sitem.st-prog .ststate{color:#f0c88a;border-color:#7a5a2a}
-  .sitem.st-done{border-left:3px solid var(--addln)} .sitem.st-done .ststate{color:var(--addfg);border-color:#2e6b45}
+  .sitem.st-git{border-left:3px solid var(--accent)} .sitem.st-git .ststate{color:var(--accent);border-color:var(--accentline)}
+  .sitem.st-disc{border-left:3px solid var(--warn)} .sitem.st-disc .ststate{color:var(--warnfg);border-color:var(--warnline)}
+  .sitem.st-prog{border-left:3px solid var(--warn)} .sitem.st-prog .ststate{color:var(--warnfg);border-color:var(--warnline)}
+  .sitem.st-done{border-left:3px solid var(--addln)} .sitem.st-done .ststate{color:var(--addfg);border-color:var(--postline)}
   .sitem.st-new{border-left:3px solid var(--line2)}
 </style>
+<script>
+  (function () {
+    var stored = localStorage.getItem("rm-theme");
+    var light = stored ? stored === "light" : matchMedia("(prefers-color-scheme: light)").matches;
+    if (light) document.documentElement.dataset.theme = "light";
+  })();
+</script>
 </head>
 <body>
 <header>
@@ -242,6 +268,7 @@
   <button class="btn" id="t-split" title="unified / side-by-side">⇄ split</button>
   <button class="btn" id="t-right" title="toggle context panel">◨</button>
   <button class="btn" id="t-commits" title="review per commit">⑃ commits</button>
+  <button class="btn" id="t-theme" title="toggle light / dark theme">☾</button>
   <span class="mr" id="mr" style="flex:1">—</span>
   <span class="tb"><input id="ref" placeholder="MR url or group/proj!iid"><button class="btn" id="load">Load</button></span>
   <span class="sid" id="status"></span>
