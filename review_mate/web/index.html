@@ -144,7 +144,7 @@
   button.btn.primary{border-color:var(--accent);color:var(--accent)}
   /* detail overlay — non-blocking: floats over the diff, leaves the rail clickable */
   .detail{position:fixed;top:60px;right:384px;width:clamp(380px,46vw,640px);max-height:calc(100vh - 84px);overflow:auto;
-    background:var(--panel);border:1px solid var(--line2);border-radius:10px;box-shadow:0 16px 48px rgba(0,0,0,.55);padding:14px 16px;z-index:40}
+    background:var(--panel);border:1px solid var(--line2);border-radius:10px;box-shadow:0 16px 48px var(--shadow);padding:14px 16px;z-index:40}
   .detail[hidden]{display:none}
   .detail .dhead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
   .detail .dhead .num{font-family:var(--mono);font-size:11px;color:var(--fg2);background:var(--bg);border:1px solid var(--line2);border-radius:5px;padding:0 5px}
@@ -170,7 +170,7 @@
   .verbanner.baseline{background:var(--fg2bg);border-color:var(--line2);border-left-color:var(--line2)}
   .verbanner.baseline .vblabel{color:var(--fg2);font-weight:500} .verbanner.baseline .vblabel::before{background:var(--fg2);box-shadow:none}
   .chip.stale{background:var(--stalebg);color:var(--stalefg);border-color:var(--warnline)}
-  .verbanner .vbctl{display:flex;gap:6px} .btn.on{background:var(--accent,#4a6bd0);color:#fff}
+  .verbanner .vbctl{display:flex;gap:6px} .btn.on{background:var(--accent);color:#fff}
   /* rebase-aware interdiff (git range-diff), dual-column (old|new) split — conflict fallback only */
   .rdiff{font-family:var(--mono,monospace);font-size:12px;line-height:1.55;overflow-x:auto;padding:6px 0}
   .rdiff .rdlegend{font-family:var(--sans,inherit);font-size:10.5px;color:var(--fg2);padding:2px 16px 8px}
@@ -187,7 +187,7 @@
   table.rdtable td.rg.g-add{color:var(--addfg)} table.rdtable td.rg.g-del{color:var(--delfg)}
   table.rdtable tr.rd-add td{background:var(--add)} table.rdtable tr.rd-del td{background:var(--del)}
   table.rdtable td.rc.i-add{color:var(--addfg)} table.rdtable td.rc.i-del{color:var(--delfg)} table.rdtable td.rc.i-hunk{color:var(--accent)}
-  .searcherr{background:#5a1f1f;border:1px solid #7a3030;color:#f0c0c0;border-radius:6px;padding:9px 11px;font-size:12.5px;line-height:1.5}
+  .searcherr{background:var(--del);border:1px solid var(--delln);color:var(--delfg);border-radius:6px;padding:9px 11px;font-size:12.5px;line-height:1.5}
   /* review drafts (now inside the detail overlay) */
   .draft{border-top:1px dashed var(--line);margin-top:10px;padding-top:10px}
   .draftbox{width:100%;min-height:120px;resize:vertical;background:var(--bg);border:1px solid var(--line2);color:var(--fg);border-radius:6px;padding:6px 8px;font:inherit;font-size:12.5px}
@@ -196,7 +196,7 @@
   .draft .posted{font-size:12px;color:var(--addfg)} .draft .posted a{color:var(--accent)}
   .req{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px}
   .req .repo{font-family:var(--mono);font-size:12px} .req .why{color:var(--fg2);font-size:12px;margin:4px 0 8px}
-  .req button{margin-right:6px} button.ok{border-color:#2e6b45;color:var(--addfg)} button.no{border-color:#6b2e38;color:var(--delfg)}
+  .req button{margin-right:6px} button.ok{border-color:var(--postline);color:var(--addfg)} button.no{border-color:var(--delline);color:var(--delfg)}
   .empty{color:var(--fg2);font-size:12px;padding:8px 0}
   /* chat */
   .chat{margin-top:16px}
@@ -206,7 +206,7 @@
   .chat .msgs{max-height:42vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--bg)}
   .msg{margin:0 0 8px;padding:7px 10px;border-radius:8px;font-size:13px;white-space:pre-wrap;line-height:1.45}
   .msg .who{font-size:9.5px;color:var(--fg2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px}
-  .msg.user{background:#1d2a44;margin-left:22px} .msg.agent{background:var(--panel2);margin-right:22px}
+  .msg.user{background:var(--usermsgbg);margin-left:22px} .msg.agent{background:var(--panel2);margin-right:22px}
   .chatbox{display:flex;gap:6px;margin-top:8px}
   .chatbox input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line2);color:var(--fg);border-radius:6px;padding:6px 9px;font:inherit}
   /* rendered markdown inside cards + chat */
@@ -246,10 +246,10 @@
   .sitem.st-merged{border-left:3px solid var(--purpleln)} .sitem.st-merged .ststate{color:var(--purple);border-color:var(--purpleln)}
   .sitem.st-closed{border-left:3px solid var(--delln);opacity:.72} .sitem.st-closed .ststate{color:var(--delfg);border-color:var(--delln)}
   .sitem .ststate{font-size:10px;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--line2);border-radius:5px;padding:0 5px;margin-right:6px;color:var(--fg2);white-space:nowrap}
-  .sitem.st-git{border-left:3px solid var(--accent)} .sitem.st-git .ststate{color:var(--accent);border-color:#3a4a6b}
-  .sitem.st-disc{border-left:3px solid #d0a24a} .sitem.st-disc .ststate{color:#f0c88a;border-color:#7a5a2a}
-  .sitem.st-prog{border-left:3px solid #d0a24a} .sitem.st-prog .ststate{color:#f0c88a;border-color:#7a5a2a}
-  .sitem.st-done{border-left:3px solid var(--addln)} .sitem.st-done .ststate{color:var(--addfg);border-color:#2e6b45}
+  .sitem.st-git{border-left:3px solid var(--accent)} .sitem.st-git .ststate{color:var(--accent);border-color:var(--accentline)}
+  .sitem.st-disc{border-left:3px solid var(--warn)} .sitem.st-disc .ststate{color:var(--warnfg);border-color:var(--warnline)}
+  .sitem.st-prog{border-left:3px solid var(--warn)} .sitem.st-prog .ststate{color:var(--warnfg);border-color:var(--warnline)}
+  .sitem.st-done{border-left:3px solid var(--addln)} .sitem.st-done .ststate{color:var(--addfg);border-color:var(--postline)}
   .sitem.st-new{border-left:3px solid var(--line2)}
 </style>
 </head>
