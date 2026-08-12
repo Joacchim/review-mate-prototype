@@ -34,8 +34,34 @@ session, not one shared with the reviewer's chat.
 - `since` — the activity cursor, one integer (covers highlights, messages, and lookups).
 - `registry` — an LRU map `{session_id → (worker handle, last_active)}`, **capped at 3**.
 
+## Reconcile before you trust the stream
+
+**First action of the loop, and again after any restart or gap in your watch: sweep durable state.**
+`curl -s "http://127.0.0.1:8765/api/outstanding"` — one local call listing every ask the reviewer is
+still waiting on across all active sessions (a trailing unanswered chat message; an escalated
+highlight with no card). Dispatch a worker for each session it names, exactly as if an event had
+arrived, then start watching.
+
+A **404 means the server predates that route**, not that the list is empty — read it as *unknown* and
+fall back to the per-session form: `GET /api/sessions`, then `GET /api/sessions/{id}` for each active
+one, applying the same predicate. Treating an unavailable sweep as "nothing outstanding" reintroduces
+exactly the bug this step exists to prevent, so the sweep must fail closed.
+
+This is not belt-and-braces, it is the loop's correctness condition. The activity stream is
+**ephemeral**: `ActivityBroker` holds events in memory, so a server restart drops everything
+in-flight and resets `seq`. That design is only safe because the agent re-derives work from durable
+state — an event-driven loop alone has **no path back** to a request whose notification vanished, and
+the request is then lost outright rather than delayed. This has happened: a reviewer's message
+survived in the session log while the coordinator reported idle for 15 minutes across a restart,
+until a human asked why it had gone quiet.
+
+So: never treat an empty stream as "nothing to do" until you have reconciled once. A cheap re-sweep
+on an idle tick is also worth it — the failure is invisible from inside the loop, which is what makes
+it dangerous.
+
 ## The loop
 
+0. **Reconcile** (above) — on startup, and after any restart or gap in your watch.
 1. **Launch the watch as a background shell task** so the harness re-invokes you when it returns —
    never block your turn on it:
    `curl -s -m 55 "http://127.0.0.1:8765/api/activity?since=<since>"` with `run_in_background: true`.
@@ -67,6 +93,10 @@ dispatching around the watch, never instead of it.
 
 ```mermaid
 flowchart TD
+  START(["start / after a restart"]) --> RC["curl /api/outstanding — reconcile from durable state"]
+  RC --> RCD{"asks found?"}
+  RCD -->|yes| DISP["dispatch a worker per named session"] --> L
+  RCD -->|no| L
   L["background curl /api/activity?since=since"] --> R{"returned: body?"}
   R -->|"empty / 204"| R3
   R -->|"lookup_opened {id,query}"| LK["search_mrs(query) → answer_lookup(id)"] --> R3
@@ -76,7 +106,9 @@ flowchart TD
   FULL -->|yes| EV["evict LRU (TaskStop + drop)"] --> SP
   FULL -->|no| SP["cold-spawn review-worker(S)"]
   SP --> R3["reap workers idle > 10 min"]
-  R3 --> L
+  R3 --> RS{"stream was down, or many idle ticks?"}
+  RS -->|yes| RC
+  RS -->|no| L
 ```
 
 ## Cold-spawn

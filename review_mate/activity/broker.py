@@ -10,6 +10,12 @@ lightweight pointers (never the highlight/message payload), and a server restart
 drops in-flight events — safe because correctness rests on the durable session state plus the
 agent's idempotent work predicate (a dropped notification only delays a card, never loses one).
 
+That safety is **conditional on the agent actually re-deriving work from durable state**: an
+event-only loop has no path back to a request whose notification died with the old process, and the
+card is then lost rather than delayed. `GET /api/outstanding` is that derivation, and the
+fleet-coordinator skill requires a sweep of it before trusting an empty stream. Do not weaken one
+without the other.
+
 Single-process, asyncio-only: no locks needed because there is no `await` between reading and
 mutating shared state in any method (atomic under the event loop).
 """

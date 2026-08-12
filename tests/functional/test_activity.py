@@ -1,12 +1,14 @@
 """Functional tests for the activity-channel — the per-actor republisher and GET /api/activity."""
 import asyncio
 
+import httpx
+from httpx import ASGITransport
 from starlette.testclient import TestClient
 
 from review_mate.activity.broker import ActivityBroker
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
-from review_mate.session.commands import AddHighlight, PostMessage, RequestContext
+from review_mate.session.commands import AddHighlight, EmitCard, PostMessage, RequestContext
 from review_mate.session.state import Side, LineRange, Origin
 
 HL = dict(file="a.py", side=Side.NEW, line_range=LineRange(start=1, end=1))
@@ -123,3 +125,66 @@ def test_agent_status_flips_once_a_watcher_polls_the_activity_stream(tmp_path):
         client.get("/api/activity?since=0")               # a watcher polls (returns immediately)
         status = client.get("/api/agent-status").json()
         assert status["attached"] is True and status["last_seen"]
+
+
+# --- GET /api/outstanding — reconcile from durable state, the answer to a dropped notification ---
+
+def test_outstanding_is_a_work_list_not_a_census(tmp_path):
+    """A session with nothing owed must not appear: the agent reconciles by iterating this, so an
+    idle session in the list is work it would re-do."""
+    app = create_app(manager=SessionManager(root=tmp_path / "s"), with_mcp=False)
+    with TestClient(app) as client:
+        client.post("/api/sessions", json={})
+        assert client.get("/api/outstanding").json() == {"sessions": [], "total": 0}
+
+
+def test_outstanding_surfaces_a_trailing_user_message(tmp_path):
+    """The exact case a restart strands: the reviewer asked, the notification died with the old
+    process, and durable state is the only remaining trace."""
+    app = create_app(manager=SessionManager(root=tmp_path / "s"), with_mcp=False)
+    with TestClient(app) as client:
+        sid = client.post("/api/sessions", json={}).json()["id"]
+        client.post(f"/api/sessions/{sid}/commands", json={"type": "post_message", "body": "look?"})
+        data = client.get("/api/outstanding").json()
+        assert data["total"] == 1
+        assert [s["session_id"] for s in data["sessions"]] == [sid]
+        assert data["sessions"][0]["asks"][0]["kind"] == "message"
+        assert data["sessions"][0]["asks"][0]["since"]
+
+
+def test_outstanding_ignores_a_bare_highlight_but_counts_an_escalation(tmp_path):
+    """D21: a bare highlight is served by the cheap tier and owes the agent nothing; only an explicit
+    request_context is an ask. Mirrors the browser's `outstandingAsks()` so both agree."""
+    app = create_app(manager=SessionManager(root=tmp_path / "s"), with_mcp=False)
+    with TestClient(app) as client:
+        sid = client.post("/api/sessions", json={}).json()["id"]
+        client.post(f"/api/sessions/{sid}/commands", json=HL_CMD)
+        assert client.get("/api/outstanding").json()["total"] == 0
+        hid = client.get(f"/api/sessions/{sid}").json()["highlights"][0]["id"]
+        client.post(f"/api/sessions/{sid}/commands",
+                    json={"type": "request_context", "highlight_id": hid})
+        ask = client.get("/api/outstanding").json()["sessions"][0]["asks"][0]
+        assert ask["kind"] == "context" and ask["highlight_id"] == hid and ask["file"] == "a.py"
+
+
+async def test_outstanding_clears_once_the_agent_answers(tmp_path):
+    """Both ask kinds are satisfiable, and the agent's own work is what closes them — otherwise a
+    reconcile sweep would loop on work it has already done."""
+    mgr = SessionManager(root=tmp_path / "s")
+    app = create_app(manager=mgr, with_mcp=False)
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        sid = (await c.post("/api/sessions", json={})).json()["id"]
+        actor = mgr.get(sid)
+        await actor.submit(PostMessage(body="look?"), Origin.BROWSER)
+        await actor.submit(AddHighlight(**HL), Origin.BROWSER)
+        hid = actor.snapshot().highlights[0].id
+        await actor.submit(RequestContext(highlight_id=hid), Origin.BROWSER)
+        assert (await c.get("/api/outstanding")).json()["total"] == 2
+
+        await actor.submit(EmitCard(highlight_id=hid, body="here"), Origin.AGENT)
+        assert [a["kind"] for a in (await c.get("/api/outstanding")).json()["sessions"][0]["asks"]] \
+            == ["message"]
+        await actor.submit(PostMessage(body="had a look"), Origin.AGENT)   # trailing role → agent
+        assert (await c.get("/api/outstanding")).json() == {"sessions": [], "total": 0}
+    await mgr.shutdown()

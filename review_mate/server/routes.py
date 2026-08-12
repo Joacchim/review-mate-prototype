@@ -90,6 +90,45 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             return JSONResponse({"attached": False, "parked": False, "last_seen": None})
         return JSONResponse(activity_broker.watcher())
 
+    async def outstanding(request: Request) -> JSONResponse:
+        """Every ask the reviewer is still waiting on the agent for, across all active sessions.
+
+        The activity stream is deliberately ephemeral (see `ActivityBroker`): a restart drops
+        in-flight notifications, and the safety argument for that rests on the agent re-deriving
+        outstanding work from durable state rather than only reacting to events. This route is that
+        derivation — without it, work whose notification vanished has no path back.
+
+        Snapshot reads only, no host I/O, so it stays cheap enough to poll — unlike
+        `/api/sessions/status`, which fans out host calls per session by design (D19). The predicate
+        matches the browser's `outstandingAsks()`; the server still tracks no ownership of its own,
+        it just reports what durable state already implies.
+        """
+        sessions = []
+        for summ in manager.list():
+            if summ.status is not SessionStatus.ACTIVE:
+                continue
+            actor = manager.get(summ.id)
+            if actor is None:
+                continue
+            snap = actor.snapshot()
+            asks = []
+            last = snap.messages[-1] if snap.messages else None
+            if last is not None and last.role == "user":   # a chat turn the agent never answered
+                asks.append({"kind": "message", "since": last.created_at})
+            carded = {c.highlight_id for c in snap.cards if c.highlight_id}
+            for h in snap.highlights:
+                if h.context_requested and h.id not in carded:   # escalated (D21), still no card
+                    asks.append({"kind": "context", "highlight_id": h.id, "file": h.file,
+                                 "since": h.context_requested_at or h.created_at})
+            if not asks:
+                continue   # only sessions needing attention — this is a work list, not a census
+            asks.sort(key=lambda a: a.get("since") or "")   # oldest first: the longest-ignored ask
+            sessions.append({"session_id": summ.id, "project": summ.project, "iid": summ.iid,
+                             "title": summ.title, "asks": asks})
+        sessions.sort(key=lambda s: s["asks"][0].get("since") or "")
+        return JSONResponse({"sessions": sessions,
+                             "total": sum(len(s["asks"]) for s in sessions)})
+
     async def poll_lookup(request: Request) -> JSONResponse:
         if broker is None:
             return JSONResponse({"error": "lookup unavailable"}, status_code=400)
@@ -542,6 +581,7 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/lookup/{id}", poll_lookup, methods=["GET"]),
         Route("/api/activity", activity, methods=["GET"]),
         Route("/api/agent-status", agent_status, methods=["GET"]),
+        Route("/api/outstanding", outstanding, methods=["GET"]),
         Route("/api/sessions/{id}/repo-tree", repo_tree, methods=["GET"]),
         Route("/api/sessions/{id}/file", get_file, methods=["GET"]),
         Route("/api/sessions", create_session, methods=["POST"]),
