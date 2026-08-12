@@ -243,7 +243,7 @@ class GitLabProvider:
         """The MR's diff versions (newest first): per-push base/head SHAs, for a base-aware
         interdiff (diff-versions). Best-effort: [] on error / when unsupported."""
         try:
-            rows = await self._get(
+            rows = await self._get_paged(
                 f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}/versions")
         except httpx.HTTPError:
             return []
@@ -255,7 +255,7 @@ class GitLabProvider:
         """The MR's commits (oldest→newest, for per-commit review): sha, short id, title, message,
         author. Best-effort: [] on error."""
         try:
-            rows = await self._get(
+            rows = await self._get_paged(
                 f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}/commits")
         except httpx.HTTPError:
             return []
@@ -296,7 +296,7 @@ class GitLabProvider:
         """The MR's discussions, mapped to the host-neutral review model — the read side of the
         thread-conversation surface (used by initial load and by on-demand refresh)."""
         pid = quote(ref.project, safe="")
-        discussions = await self._get(f"/projects/{pid}/merge_requests/{ref.iid}/discussions")
+        discussions = await self._get_paged(f"/projects/{pid}/merge_requests/{ref.iid}/discussions")
         # drop system-note-only discussions (approvals, pushes, label changes, …) — not review threads
         return [t for d in discussions if (t := _to_thread(d)).comments]
 
@@ -342,6 +342,23 @@ class GitLabProvider:
             kw["timeout"] = timeout
         resp = await _authed(self._client, self, "GET", path, **kw)
         return resp.json()
+
+    async def _get_paged(self, path: str, params: dict | None = None,
+                         per_page: int = 100, max_pages: int = 20) -> list:
+        """Every page of a list endpoint, concatenated, preserving host order. GitLab serves list
+        endpoints 20-at-a-time by default, so a plain `_get` truncates silently once a busy MR grows
+        past that — and the tail it drops is whichever end the endpoint sorts last (for discussions,
+        oldest-first, that's the newest threads). Capped for safety, like `get_repo_tree`."""
+        out: list = []
+        for page in range(1, max_pages + 1):
+            rows = await self._get(path, params={**(params or {}),
+                                                 "per_page": per_page, "page": page})
+            if not isinstance(rows, list):
+                break
+            out.extend(rows)
+            if len(rows) < per_page:
+                break
+        return out
 
 
 class GitLabWriter:

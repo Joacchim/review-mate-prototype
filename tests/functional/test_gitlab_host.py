@@ -29,6 +29,13 @@ DISCUSSIONS = [
     {"id": "sys1", "notes": [
         {"id": 2, "author": {"username": "rev"}, "body": "approved this merge request",
          "system": True, "created_at": "t"}]}]
+# A busy MR: more discussions than one page holds. GitLab serves them oldest-first, so the reviewer's
+# own (newest) comments are exactly what an unpaginated fetch drops.
+BUSY_DISCUSSIONS = [
+    {"id": f"disc{i}", "notes": [
+        {"id": 100 + i, "author": {"username": "rev"}, "body": f"note {i}", "created_at": "t",
+         "position": {"new_path": "a.py", "new_line": i}, "resolved": False}]}
+    for i in range(1, 251)]
 QUEUE = [{"web_url": "https://gitlab/group/proj/-/merge_requests/42"},
          {"web_url": "https://gitlab/group/proj/-/merge_requests/43"}]
 
@@ -61,6 +68,14 @@ APPROVALS = {"approved": True, "approved_by": [{"user": {"username": "me"}},
                                                {"user": {"username": "other"}}]}
 
 
+def _page(rows: list, params: dict) -> list:
+    """Serve `rows` the way GitLab serves a list endpoint — 20 per page unless asked otherwise, so a
+    caller that forgets to paginate gets silently truncated here exactly as it would in production."""
+    per_page = min(int(params.get("per_page", 20)), 100)
+    page = int(params.get("page", 1))
+    return rows[(page - 1) * per_page: page * per_page]
+
+
 def _handler(request: httpx.Request) -> httpx.Response:
     p = request.url.path
     params = dict(request.url.params)
@@ -80,7 +95,8 @@ def _handler(request: httpx.Request) -> httpx.Response:
     if p.endswith("/changes"):
         return httpx.Response(200, json=CHANGES)
     if p.endswith("/discussions"):
-        return httpx.Response(200, json=DISCUSSIONS)
+        rows = BUSY_DISCUSSIONS if "/merge_requests/43/" in p else DISCUSSIONS
+        return httpx.Response(200, json=_page(rows, params))
     if p.endswith("/related_merge_requests"):
         return httpx.Response(200, json=QUEUE)
     if "/merge_requests/42" in p:
@@ -221,6 +237,15 @@ async def test_fetch_threads_maps_discussions_and_drops_system_notes(provider):
     assert t.resolved is False
     assert t.comments[0].body == "nit" and t.comments[0].author == "rev"
     assert t.anchor == {"file": "a.py", "line": 1}
+
+
+async def test_fetch_threads_pages_past_the_host_default(provider):
+    """A busy MR has more discussions than one page holds, and GitLab returns them oldest-first — so
+    stopping at page 1 loses the newest threads, which is precisely the reviewer's own just-posted
+    comments. Every thread must come back, in host order."""
+    threads = await provider.fetch_threads(MRRef(host="gitlab", project="group/proj", iid=43))
+    assert len(threads) == len(BUSY_DISCUSSIONS)
+    assert [t.id for t in threads] == [d["id"] for d in BUSY_DISCUSSIONS]   # in order, no duplicates
 
 
 async def test_search_fuzzy_text_falls_back_to_global(provider):
