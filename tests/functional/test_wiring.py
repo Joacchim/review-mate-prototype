@@ -26,6 +26,27 @@ def test_config_from_env(monkeypatch):
     assert provider.host == "gl.example.com"
 
 
+def test_config_from_glab_auth_status(monkeypatch):
+    """glab's `--show-token` output reads "Token found: <tok>", not "Token: <tok>" — a config
+    that only matches the latter silently drops the token and leaves review-mate providerless."""
+    for var in ("REVIEW_MATE_GITLAB_URL", "REVIEW_MATE_GITLAB_TOKEN", "REVIEW_MATE_GITLAB_USER",
+                "GITLAB_TOKEN", "GITLAB_USER"):
+        monkeypatch.delenv(var, raising=False)
+
+    class _FakeProc:
+        returncode = 0
+        stdout = ("gitlab.com\n"
+                   "  ✓ Logged in to gitlab.com as me\n"
+                   "  ✓ Token found: glpat-abc123\n")
+        stderr = ""
+
+    import review_mate.host.config as config_mod
+    monkeypatch.setattr(config_mod.subprocess, "run", lambda *a, **kw: _FakeProc())
+    cfg = resolve_gitlab_config()
+    assert cfg is not None
+    assert cfg.host == "gitlab.com" and cfg.username == "me" and cfg.token == "glpat-abc123"
+
+
 def test_no_credentials_no_provider(monkeypatch):
     for var in ("REVIEW_MATE_GITLAB_URL", "REVIEW_MATE_GITLAB_TOKEN", "REVIEW_MATE_GITLAB_USER",
                 "GITLAB_TOKEN", "GITLAB_USER", "XDG_CONFIG_HOME"):
