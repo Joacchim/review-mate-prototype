@@ -44,12 +44,18 @@
   header .agent.working .alab{color:var(--warnfg)}
   header .agent.stalled .dot{background:var(--delln);animation:apulse 1.1s ease-in-out infinite}
   header .agent.stalled .alab{color:var(--delfg)}
+  /* attached but not progressing — amber has stopped being honest, so it reads as a problem */
+  header .agent.working.stale .dot{background:var(--delln);animation:apulse 2.2s ease-in-out infinite}
+  header .agent.working.stale .alab{color:var(--delfg)}
   /* the inline "still waiting" line, in the chat thread and under an escalated highlight */
   .agentwait{display:flex;align-items:center;gap:7px;padding:6px 0;font-size:11.5px;color:var(--fg2)}
   .agentwait .spin{width:9px;height:9px;flex:none;border-radius:50%;border:1.5px solid var(--line2);
                    border-top-color:var(--accent);animation:aspin .8s linear infinite}
   .agentwait.stalled{color:var(--delfg)}
   .agentwait.stalled .spin{border-color:var(--delln);border-top-color:var(--delln);animation:none}
+  /* still spinning, but the spin is the lie — colour it as the problem it is */
+  .agentwait.stale{color:var(--delfg)}
+  .agentwait.stale .spin{border-color:var(--delln);border-top-color:var(--delfg)}
   .agentwait.mini{padding:0;gap:5px;font-size:11px}
   .agentwait.mini .spin{width:7px;height:7px;border-width:1.5px}
   @keyframes aspin{to{transform:rotate(360deg)}}

@@ -267,13 +267,26 @@ function outstandingAsks() {
   return out.sort((a, b) => (a.since || "").localeCompare(b.since || ""));
 }
 
+// How long an ask may sit with an agent attached before "working" stops being a credible reading.
+// Well past normal card latency (the coordinator's long-poll ceiling is 50s), well under the many
+// minutes it takes a human to get suspicious on their own.
+const AGENT_STALE_AFTER = 300;
+
 // working: something outstanding and an agent is watching. stalled: outstanding and nothing is —
 // the case that used to be indistinguishable from "slow". watching/off: nothing outstanding.
+// `stale` qualifies "working": an agent IS attached, but the ask has sat long enough that "it's
+// being worked on" is no longer the likely explanation — it may never have received the request at
+// all, since the activity stream is ephemeral and a server restart drops in-flight notifications.
+// Watcher presence can't distinguish those two, so age is the only signal the browser has.
 function agentState() {
   const asks = outstandingAsks();
   const attached = !!(agentWatch && agentWatch.attached);
-  if (asks.length) return { cls: attached ? "working" : "stalled", since: asks[0].since, asks };
-  return { cls: attached ? "watching" : "off", since: null, asks };
+  if (asks.length) {
+    const age = (Date.now() - Date.parse(asks[0].since || "")) / 1000;
+    const stale = attached && age > AGENT_STALE_AFTER;
+    return { cls: attached ? "working" : "stalled", stale, since: asks[0].since, asks };
+  }
+  return { cls: attached ? "watching" : "off", stale: false, since: null, asks };
 }
 
 function elapsed(iso) {
@@ -289,15 +302,19 @@ const AGENT_TITLE = {
   watching: "Claude is watching this review",
   off: "no agent is watching — start one with the review-mate skill",
 };
+const AGENT_STALE_TITLE = "an agent is watching but hasn't picked this up — it may never have " +
+  "received the request (a server restart drops in-flight notifications). Re-send it, or ask the " +
+  "agent to reconcile from durable state.";
 
 // the header light: colour + pulse for the state, and a word only when it needs the reviewer's eye
 function renderAgentLight() {
   const el = $("agent");
   if (!el) return;
   const st = agentState();
-  el.className = "agent " + st.cls;
-  el.title = AGENT_TITLE[st.cls];
+  el.className = "agent " + st.cls + (st.stale ? " stale" : "");
+  el.title = st.stale ? AGENT_STALE_TITLE : AGENT_TITLE[st.cls];
   el.querySelector(".alab").textContent =
+    st.stale ? `Claude · ${elapsed(st.since)} · no progress` :
     st.cls === "working" ? `Claude · ${elapsed(st.since)}` :
     st.cls === "stalled" ? "no agent watching" : "";
 }
@@ -315,12 +332,18 @@ function agentWaitLine(since, mini) {
 }
 
 function paintWaitLine(el) {
-  const stalled = agentState().cls === "stalled";
-  el.className = "agentwait " + (stalled ? "stalled" : "working") + (el.dataset.mini ? " mini" : "");
+  const st = agentState();
+  const stalled = st.cls === "stalled";
+  // a per-line staleness age: this line's own ask may be older or newer than the panel's oldest
+  const stale = st.cls === "working" &&
+    (Date.now() - Date.parse(el.dataset.since || "")) / 1000 > AGENT_STALE_AFTER;
+  el.className = "agentwait " + (stalled ? "stalled" : stale ? "stale" : "working")
+               + (el.dataset.mini ? " mini" : "");
   const age = elapsed(el.dataset.since);
   el.querySelector(".awtext").textContent = el.dataset.mini
-    ? (stalled ? `not picked up · ${age}` : `Claude working · ${age}`)
+    ? (stalled ? `not picked up · ${age}` : stale ? `no progress · ${age}` : `Claude working · ${age}`)
     : (stalled ? `no agent is watching — waiting ${age}, nothing has picked this up`
+       : stale ? `waiting ${age} with an agent attached — it may never have received this; re-send it`
                : `Claude is working on it… ${age}`);
 }
 
