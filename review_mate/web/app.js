@@ -86,9 +86,11 @@ function md(src) {
 }
 
 // --- lightweight, self-contained syntax highlighting ------------------------
-// A conservative per-line tokenizer: strings, line comments (style by file type), numbers, and a
-// union keyword set. Escapes all text (XSS-safe); unknown file types are left plain. Per-line, so
-// multi-line strings/comments only colour to end of line — an accepted trade for zero dependencies.
+// A conservative tokenizer: strings, line comments (style by file type), numbers, and a union keyword
+// set. Escapes all text (XSS-safe); unknown file types are left plain. Constructs that open on one
+// line and close on a later one — Python triple-quoted blocks, C-style /* */, JS template literals —
+// are carried across lines by a caller-owned state object (see `hlState`), so a docstring reads as one
+// block of prose instead of dissolving into mis-coloured keywords after its first line.
 const SYNTAX_KW = new Set(("if else elif for while do switch case break continue return function " +
   "func def class struct enum interface type const let var val fn import from export default void " +
   "int float double bool boolean string char new delete try catch finally throw throws raise with " +
@@ -96,35 +98,103 @@ const SYNTAX_KW = new Set(("if else elif for while do switch case break continue
   "this self super extends implements package namespace using module require public private " +
   "protected static").split(" "));
 
+// A multi-line construct: how it opens, how it closes, how it colours, and whether a backslash
+// escapes its closer. Triple-quoted Python blocks colour as *comments* — formally they're string
+// literals, but a docstring is commentary, and reading it as code is what made diffs hard to scan.
+const BLK_CMT = { open: "/*", close: "*/", cls: "tok-cmt" };
+const PY_DOC = [{ open: '"""', close: '"""', cls: "tok-cmt", esc: true },
+                { open: "'''", close: "'''", cls: "tok-cmt", esc: true }];
+const TEMPLATE = { open: "`", close: "`", cls: "tok-str", esc: true };
+
 function langOf(path) {
   const ext = (path.split(".").pop() || "").toLowerCase();
-  if (["js", "jsx", "ts", "tsx", "go", "rs", "c", "h", "cc", "cpp", "hpp", "java", "cs", "php", "swift", "kt", "scala"].includes(ext)) return { line: "//" };
-  if (["py", "rb", "sh", "bash", "zsh", "yml", "yaml", "toml", "pl", "r"].includes(ext)) return { line: "#" };
+  // backticks only span lines where the language says so (JS template literals, Go raw strings) —
+  // elsewhere a stray one must not paint the rest of the file as a string
+  if (["js", "jsx", "ts", "tsx", "go"].includes(ext)) return { line: "//", blocks: [BLK_CMT, TEMPLATE] };
+  if (["rs", "c", "h", "cc", "cpp", "hpp", "java", "cs", "php", "swift", "kt", "scala"].includes(ext)) return { line: "//", blocks: [BLK_CMT] };
+  if (["py", "pyi"].includes(ext)) return { line: "#", blocks: PY_DOC };
+  if (["rb", "sh", "bash", "zsh", "yml", "yaml", "toml", "pl", "r"].includes(ext)) return { line: "#" };
   if (["sql", "lua", "hs"].includes(ext)) return { line: "--" };
-  if (["css", "scss", "less", "json"].includes(ext)) return { line: null };
+  if (["css", "scss", "less"].includes(ext)) return { line: null, blocks: [BLK_CMT] };
+  if (["json"].includes(ext)) return { line: null };
   return null;   // unknown → no highlighting (stay plain, never mis-colour)
 }
 
-function highlightCode(code, lang) {
-  if (!lang) return esc(code);
-  const cmtPat = lang.line ? lang.line.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ".*$" : "(?!)";
-  const re = new RegExp("(" + cmtPat + ")|(\"(?:\\\\.|[^\"\\\\])*\"?|'(?:\\\\.|[^'\\\\])*'?|`(?:\\\\.|[^`\\\\])*`?)|(\\b\\d[\\w.]*)|([A-Za-z_$][\\w$]*)", "gm");
-  let last = 0, m, out = "";
-  while ((m = re.exec(code))) {
-    if (m.index > last) out += esc(code.slice(last, m.index));
-    if (m[1]) out += `<span class="tok-cmt">${esc(m[1])}</span>`;
-    else if (m[2]) out += `<span class="tok-str">${esc(m[2])}</span>`;
-    else if (m[3]) out += `<span class="tok-num">${esc(m[3])}</span>`;
-    else if (m[4]) out += SYNTAX_KW.has(m[4]) ? `<span class="tok-kw">${esc(m[4])}</span>` : esc(m[4]);
-    last = re.lastIndex;
-    if (m.index === re.lastIndex) re.lastIndex++;   // guard against a zero-width match looping
+// a fresh carry-state for a contiguous run of lines. Renderers keep one per diff side, since the
+// old and new sides are different versions of the file and their blocks open/close independently.
+function hlState() { return { open: null }; }
+
+const RE_ESC = /[.*+?^${}()|[\]\\]/g;
+
+// the per-language token pattern, built once and cached on the lang descriptor. Group order matters:
+// a line comment wins first, then a block opener (so `"""` beats the `"` string rule), then a
+// single-line string, a number, and finally a bare word.
+function lexer(lang) {
+  if (!lang._re) {
+    const quote = (s) => s.replace(RE_ESC, "\\$&");
+    const cmt = lang.line ? quote(lang.line) + ".*$" : "(?!)";
+    const blocks = (lang.blocks || []).length
+      ? lang.blocks.map((b) => quote(b.open)).join("|") : "(?!)";
+    lang._re = new RegExp("(" + cmt + ")|(" + blocks + ")" +
+      "|(\"(?:\\\\.|[^\"\\\\])*\"?|'(?:\\\\.|[^'\\\\])*'?|`(?:\\\\.|[^`\\\\])*`?)" +
+      "|(\\b\\d[\\w.]*)|([A-Za-z_$][\\w$]*)", "gm");
   }
-  out += esc(code.slice(last));
+  return lang._re;
+}
+
+// the offset just past `blk`'s closer in `code` at/after `from`, or -1 if it doesn't close here
+function blockEnd(code, from, blk) {
+  for (let i = from; (i = code.indexOf(blk.close, i)) >= 0; i += blk.close.length) {
+    let back = 0;
+    while (blk.esc && i - back - 1 >= from && code[i - back - 1] === "\\") back += 1;
+    if (back % 2 === 0) return i + blk.close.length;   // an odd run of backslashes escapes it
+  }
+  return -1;
+}
+
+// `st` is the multi-line carry-state (from `hlState`), mutated as blocks open and close. Omit it to
+// tokenize one line in isolation — then multi-line constructs only colour to end of line, as before.
+function highlightCode(code, lang, st) {
+  if (!lang) return esc(code);
+  st = st || { open: null };
+  let out = "", i = 0;
+  while (i <= code.length) {
+    if (st.open) {   // inside a multi-line block — everything up to its closer belongs to it
+      const end = blockEnd(code, i, st.open);
+      const stop = end < 0 ? code.length : end;
+      if (stop > i) out += `<span class="${st.open.cls}">${esc(code.slice(i, stop))}</span>`;
+      i = stop;
+      if (end < 0) break;         // still open at end of line — the next line resumes inside it
+      st.open = null;
+      continue;
+    }
+    if (i === code.length) break;
+    const re = lexer(lang);
+    re.lastIndex = i;
+    const m = re.exec(code);
+    if (!m) { out += esc(code.slice(i)); break; }
+    if (m.index > i) out += esc(code.slice(i, m.index));
+    if (m[1]) { out += `<span class="tok-cmt">${esc(m[1])}</span>`; i = re.lastIndex; }
+    else if (m[2]) {   // a block opens here: colour the opener, then let the loop hunt its closer
+      st.open = lang.blocks.find((b) => b.open === m[2]);
+      out += `<span class="${st.open.cls}">${esc(m[2])}</span>`;
+      i = m.index + m[2].length;
+    }
+    else if (m[3]) { out += `<span class="tok-str">${esc(m[3])}</span>`; i = re.lastIndex; }
+    else if (m[4]) { out += `<span class="tok-num">${esc(m[4])}</span>`; i = re.lastIndex; }
+    else { out += SYNTAX_KW.has(m[5]) ? `<span class="tok-kw">${esc(m[5])}</span>` : esc(m[5]); i = re.lastIndex; }
+    if (i === m.index) i += 1;   // guard against a zero-width match looping
+  }
   return out;
 }
 
+// advance `st` over a line without emitting anything — used to keep the carry-state honest across
+// lines the reader can't see (a collapsed unfold gap), so a block that closes in there doesn't
+// bleed its colour into the next hunk
+function hlSkip(code, lang, st) { if (lang && st) highlightCode(code, lang, st); }
+
 // a diff content line: keep its +/-/space marker plain, highlight the code after it
-function hlLine(raw, lang) { return esc(raw[0] || "") + highlightCode(raw.slice(1), lang); }
+function hlLine(raw, lang, st) { return esc(raw[0] || "") + highlightCode(raw.slice(1), lang, st); }
 
 // --- boot -------------------------------------------------------------------
 
@@ -1143,15 +1213,22 @@ function renderUnifiedUnfoldable(table, fileDiff, path, hl) {
   const lines = fileContents[path] !== undefined ? fileContents[path].split("\n") : null;
   const exp = expandedGaps[path] || new Map();
   const lang = langOf(path);
+  // one carry-state per side: a removed line belongs only to the old version of the file, an added
+  // line only to the new one, so their docstrings/block comments open and close independently
+  const sts = { neu: hlState(), old: hlState() };
   let cursor = 1;   // next not-yet-shown new-side line number
   hunks.forEach((h) => {
-    renderGap(table, path, cursor, h.newStart - 1, lines, exp, hl, lang);
+    renderGap(table, path, cursor, h.newStart - 1, lines, exp, hl, lang, sts);
     let newLine = h.newStart;
     h.lines.forEach((raw) => {
       const kind = raw[0] === "+" ? "add" : raw[0] === "-" ? "del" : "ctx";
       const tr = document.createElement("tr");
       tr.className = "line " + kind + (kind !== "del" && hl.has(newLine) ? " hl" : "");
-      const code = `<td class="code"${kind !== "del" ? ` data-line="${newLine}"` : ""}>${hlLine(raw, lang)}</td>`;
+      // context sits in both versions: colour it on the new side, then walk the old side over it too
+      const st = kind === "del" ? sts.old : sts.neu;
+      const cell = hlLine(raw, lang, st);
+      if (kind === "ctx") hlSkip(raw.slice(1), lang, sts.old);
+      const code = `<td class="code"${kind !== "del" ? ` data-line="${newLine}"` : ""}>${cell}</td>`;
       tr.innerHTML = `<td class="ln">${kind === "del" ? "" : newLine}</td>${code}`;
       if (kind !== "del") newLine += 1;
       table.appendChild(tr);
@@ -1159,7 +1236,7 @@ function renderUnifiedUnfoldable(table, fileDiff, path, hl) {
     cursor = h.newStart + h.newCount;
   });
   if (lines) {
-    renderGap(table, path, cursor, lines.length, lines, exp, hl, lang);   // trailing gap — exact, length known
+    renderGap(table, path, cursor, lines.length, lines, exp, hl, lang, sts);   // trailing gap — exact, length known
   } else {
     // file length isn't known until the blob is fetched, so a single-hunk file that stops before EOF
     // couldn't reveal its tail. Offer a band that fetches on click; the re-render then shows the exact tail.
@@ -1181,22 +1258,34 @@ const UNFOLD_CHUNK = 20;   // lines revealed per incremental unfold step
 
 // a gap of new-side lines [from..to]: revealed context rows at the edges (grown incrementally) and,
 // for whatever is still collapsed in the middle, a band offering ▼/▲ N-more and "show all".
-function renderGap(table, path, from, to, lines, exp, hl, lang) {
+function renderGap(table, path, from, to, lines, exp, hl, lang, sts) {
   if (to < from) return;
   const size = to - from + 1;
   const g = exp.get(from) || { top: 0, bot: 0, all: false };
+  const lineAt = (n) => (lines && lines[n - 1] !== undefined ? lines[n - 1] : "");
   const ctxRow = (n) => {
-    const text = lines && lines[n - 1] !== undefined ? lines[n - 1] : "";
+    const text = lineAt(n);
     const tr = document.createElement("tr");
     tr.className = "line ctx" + (hl.has(n) ? " hl" : "");
-    tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${esc(" ") + highlightCode(text, lang)}</td>`;
+    const code = esc(" ") + highlightCode(text, lang, sts && sts.neu);
+    if (sts) hlSkip(text, lang, sts.old);   // gap context is in both versions
+    tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${code}</td>`;
     table.appendChild(tr);
+  };
+  // a collapsed run is still part of the file: walk the carry-state over it so a docstring that
+  // closes out of sight doesn't bleed its colour into the next hunk. Without the blob we can't —
+  // then reset to top-level, the same assumption the tokenizer made before it carried state at all.
+  const skipRun = (lo, hi) => {
+    if (!sts) return;
+    if (!lines) { sts.neu = hlState(); sts.old = hlState(); return; }
+    for (let n = lo; n <= hi; n++) { hlSkip(lineAt(n), lang, sts.neu); hlSkip(lineAt(n), lang, sts.old); }
   };
   if ((g.all || g.top + g.bot >= size) && lines) { for (let n = from; n <= to; n++) ctxRow(n); return; }
   const topN = Math.min(g.top, size);
   const botN = Math.min(g.bot, size - topN);
   if (lines) for (let n = from; n < from + topN; n++) ctxRow(n);          // revealed near the previous hunk
   const mFrom = from + topN, mTo = to - botN, mSize = mTo - mFrom + 1;    // still-collapsed middle
+  skipRun(mFrom, mTo);
   if (mSize > 0) {
     const tr = document.createElement("tr"); tr.className = "expand";
     const ln = document.createElement("td"); ln.className = "ln"; ln.textContent = "⋯";
@@ -1313,13 +1402,14 @@ function renderFileView(el, path) {
   if (content === undefined) { el.appendChild(empty("loading " + path + "…")); return; }
   const hl = highlightLines(path);
   const lang = langOf(path);
+  const st = hlState();   // whole file, in order — docstrings and block comments carry across lines
   const table = document.createElement("table");
   table.className = "hunk";
   content.split("\n").forEach((line, i) => {
     const n = i + 1;
     const tr = document.createElement("tr");
     tr.className = "line ctx" + (hl.has(n) ? " hl" : "");
-    tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${highlightCode(line, lang)}</td>`;
+    tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${highlightCode(line, lang, st)}</td>`;
     table.appendChild(tr);
   });
   wireSelection(table, path);
@@ -1352,18 +1442,24 @@ function commitSelection(path, a, b) {
 
 function unifiedRows(diff, hl, table, lang) {
   let newLine = 0;
+  // no blob to read the between-hunk context from here, so the carry-state can only span one hunk;
+  // each @@ starts over at top-level rather than guessing what the skipped lines opened or closed
+  let sts = { neu: hlState(), old: hlState() };
   diff.split("\n").forEach((raw) => {
     if (raw === "") return;
     const tr = document.createElement("tr");
     if (raw.startsWith("@@")) {
       tr.className = "hh";
       const m = raw.match(/\+(\d+)/); if (m) newLine = parseInt(m[1], 10);
+      sts = { neu: hlState(), old: hlState() };
       tr.innerHTML = `<td class="ln"></td><td class="code">${esc(raw)}</td>`;
       table.appendChild(tr); return;
     }
     const kind = raw[0] === "+" ? "add" : raw[0] === "-" ? "del" : "ctx";
     tr.className = "line " + kind + (kind !== "del" && hl.has(newLine) ? " hl" : "");
-    const code = `<td class="code"${kind !== "del" ? ` data-line="${newLine}"` : ""}>${hlLine(raw, lang)}</td>`;
+    const cell = hlLine(raw, lang, kind === "del" ? sts.old : sts.neu);
+    if (kind === "ctx") hlSkip(raw.slice(1), lang, sts.old);   // context is in both versions
+    const code = `<td class="code"${kind !== "del" ? ` data-line="${newLine}"` : ""}>${cell}</td>`;
     tr.innerHTML = `<td class="ln">${kind === "del" ? "" : newLine}</td>${code}`;
     if (kind !== "del") newLine += 1;
     table.appendChild(tr);
@@ -1373,13 +1469,14 @@ function unifiedRows(diff, hl, table, lang) {
 function splitRows(diff, hl, table, lang) {
   let oldLine = 0, newLine = 0;
   let pendDel = [], pendAdd = [];
+  let sts = { neu: hlState(), old: hlState() };   // per side; reset per hunk, as in `unifiedRows`
   const flush = () => {
     const n = Math.max(pendDel.length, pendAdd.length);
     for (let i = 0; i < n; i++) {
       const d = pendDel[i], a = pendAdd[i];
       const tr = document.createElement("tr"); tr.className = "line";
-      appendCell(tr, d ? "del" : "gap", d ? d.ln : "", d ? d.text : "", null, false, lang);
-      appendCell(tr, a ? "add" : "gap", a ? a.ln : "", a ? a.text : "", a ? a.ln : null, a && hl.has(a.ln), lang);
+      appendCell(tr, d ? "del" : "gap", d ? d.ln : "", d ? d.text : "", null, false, lang, sts.old);
+      appendCell(tr, a ? "add" : "gap", a ? a.ln : "", a ? a.text : "", a ? a.ln : null, a && hl.has(a.ln), lang, sts.neu);
       table.appendChild(tr);
     }
     pendDel = []; pendAdd = [];
@@ -1391,6 +1488,7 @@ function splitRows(diff, hl, table, lang) {
       const mo = raw.match(/-(\d+)/), mn = raw.match(/\+(\d+)/);
       if (mo) oldLine = parseInt(mo[1], 10);
       if (mn) newLine = parseInt(mn[1], 10);
+      sts = { neu: hlState(), old: hlState() };
       const tr = document.createElement("tr"); tr.className = "hh";
       tr.innerHTML = `<td class="ln"></td><td class="code">${esc(raw)}</td><td class="ln"></td><td class="code">${esc(raw)}</td>`;
       table.appendChild(tr); return;
@@ -1401,23 +1499,24 @@ function splitRows(diff, hl, table, lang) {
       flush();
       const tr = document.createElement("tr"); tr.className = "line";
       const txt = raw.slice(1);
-      appendCell(tr, "ctx", oldLine, txt, null, false, lang);
-      appendCell(tr, "ctx", newLine, txt, newLine, hl.has(newLine), lang);
+      appendCell(tr, "ctx", oldLine, txt, null, false, lang, sts.old);
+      appendCell(tr, "ctx", newLine, txt, newLine, hl.has(newLine), lang, sts.neu);
       table.appendChild(tr); oldLine += 1; newLine += 1;
     }
   });
   flush();
 }
 
-function appendCell(tr, kind, ln, text, dataLine, isHl, lang) {
+function appendCell(tr, kind, ln, text, dataLine, isHl, lang, st) {
   const tdLn = document.createElement("td");
   tdLn.className = "ln" + (kind === "gap" ? " gap" : kind === "del" ? " delln" : kind === "add" ? " addln" : "");
   tdLn.textContent = ln === "" ? "" : ln;
   const tdCode = document.createElement("td");
   tdCode.className = "code" + (kind === "gap" ? " gap" : kind === "del" ? " delc" : kind === "add" ? " addc" : "")
                    + (isHl ? " hlc" : "");
+  // a "gap" cell means this side has no line here — nothing to colour, and nothing to advance
   if (kind === "gap") tdCode.textContent = "";
-  else tdCode.innerHTML = highlightCode(text || "", lang);
+  else tdCode.innerHTML = highlightCode(text || "", lang, st);
   if (dataLine != null) tdCode.dataset.line = dataLine;  // new-side, selectable
   tr.appendChild(tdLn); tr.appendChild(tdCode);
 }
