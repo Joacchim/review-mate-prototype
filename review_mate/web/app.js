@@ -584,9 +584,28 @@ async function post(command) {
 
 // --- toolbar ----------------------------------------------------------------
 
+// dark is the bare :root, light is an attribute override — same resolution order as the no-flash
+// script in index.html, which sets the attribute before first paint but can't touch the button glyph.
+const lightScheme = matchMedia("(prefers-color-scheme: light)");
+function applyTheme() {
+  const stored = localStorage.getItem("rm-theme");
+  const light = stored ? stored === "light" : lightScheme.matches;
+  document.documentElement.dataset.theme = light ? "light" : "";
+  $("t-theme").textContent = light ? "☀" : "☾";
+}
+lightScheme.addEventListener("change", () => {   // follow the OS until the reviewer pins a theme
+  if (!localStorage.getItem("rm-theme")) applyTheme();
+});
+
 function wireToolbar() {
   $("t-left").onclick = () => $("shell").classList.toggle("hl");
   $("t-right").onclick = () => $("shell").classList.toggle("hr");
+  applyTheme();
+  $("t-theme").onclick = () => {
+    const light = document.documentElement.dataset.theme !== "light";
+    localStorage.setItem("rm-theme", light ? "light" : "dark");
+    applyTheme();
+  };
   $("t-split").classList.toggle("on", splitMode);
   $("t-split").onclick = () => {
     splitMode = !splitMode;
