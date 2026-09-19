@@ -7,6 +7,7 @@ class StubHost:
 
     def __init__(self, queue=None) -> None:
         self.queue = list(queue or [])
+        self.files: dict[str, str] = {}
         self.fail_with: Exception | None = None
         self.calls = 0
 
@@ -18,3 +19,9 @@ class StubHost:
 
     async def search(self, query: str):
         return []
+
+    async def get_file(self, project: str, path: str, ref: str) -> str:
+        """Whole-file content, which unfolding context and the markdown view both read."""
+        if self.fail_with is not None:
+            raise self.fail_with
+        return self.files.get(path, "")

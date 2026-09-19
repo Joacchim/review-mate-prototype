@@ -23,6 +23,13 @@ class FakeActor:
     def snapshot(self) -> SessionState:
         return self._state
 
+    async def subscribe(self, since: int = 0):
+        """The per-session event stream. A staged session never changes, so it yields nothing and
+        holds the connection open — which is what the page expects while it is idle."""
+        import asyncio
+        await asyncio.Event().wait()
+        yield  # pragma: no cover - unreachable, present to make this an async generator
+
 
 class FakeManager:
     """Holds sessions as state objects. `create` mints an empty one unless a test staged it."""

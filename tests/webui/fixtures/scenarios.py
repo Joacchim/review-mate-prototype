@@ -49,3 +49,21 @@ def review_with_drafts(session_id="s1") -> SessionState:
     return session(session_id, drafts=[
         DraftComment(id="d1", highlight_id=None, body="an unsubmitted thought", status=DraftStatus.DRAFT),
     ])
+
+
+# a file whose body is long enough for the unfold bands to appear between hunks
+CAPACITY_BODY = "\n".join(
+    [f"# line {n}" for n in range(1, 44)]
+    + ["    def reserve(self, pu):", "        if pu.fleet == LEGACY:",
+       "            q = self._legacy", "        return q.take(pu.size)"]
+    + [f"# tail {n}" for n in range(1, 10)]
+)
+
+MARKDOWN_DIFF = "@@ -1,1 +1,2 @@\n # Title\n+some *emphasis* here\n"
+
+
+def markdown_review(session_id="s1") -> SessionState:
+    return session(session_id, files=[
+        FileEntry(path="README.md", change_type=ChangeType.MODIFIED, language="markdown",
+                  hunks=[{"diff": MARKDOWN_DIFF}]),
+    ])
