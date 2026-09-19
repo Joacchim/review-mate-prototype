@@ -118,13 +118,15 @@ def test_a_path_the_change_does_not_touch_says_so(tmp_path):
             assert view["state"] == "unknown-file" and view["hunks"] == []
 
 
-def test_an_unimplemented_mode_is_named_rather_than_faked(tmp_path):
+def test_a_mode_the_host_cannot_serve_says_unavailable(tmp_path):
+    """A host with no version list cannot answer "since", and the view says so rather than
+    reporting an empty change."""
     with TestClient(build(tmp_path)) as tc:
         sid = open_session(tc)
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:since"]})
             view = read_scope(ws, f"diff:{sid}:since")["view"]
-            assert view["state"] == "unsupported-mode" and view["files"] == []
+            assert view["state"] == "unavailable" and view["files"] == []
 
 
 def test_an_unknown_session_is_reported_not_crashed(tmp_path):
@@ -270,3 +272,152 @@ def test_a_blob_needs_a_path(tmp_path):
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "scopes": [f"blob:{sid}:full"]})
             assert read_scope(ws, f"blob:{sid}:full")["view"]["state"] == "malformed-name"
+
+
+# --- the since and commit modes ---------------------------------------------
+
+SINCE_DIFF = """diff --git a/a.py b/a.py
+--- a/a.py
++++ b/a.py
+@@ -1,1 +1,2 @@
+ def reserve(self, pu):
++    # added since you last looked
+diff --git a/pkg/__init__.py b/pkg/__init__.py
+new file mode 100644
+index 0000000..e69de29
+"""
+
+
+class VersionHost(TwoFileHost):
+    """A host that knows its MR versions and can diff a single commit."""
+
+    def __init__(self, newest_head="abc"):
+        super().__init__()
+        self.newest_head = newest_head
+        self.commit_calls = []
+
+    async def mr_versions(self, ref):
+        return [{"head_sha": self.newest_head, "base_sha": "base2"},
+                {"head_sha": "reviewed", "base_sha": "base1"}]
+
+    async def commit_diff(self, project, sha):
+        self.commit_calls.append((project, sha))
+        return [FileEntry(path="pkg/b.py", change_type=ChangeType.MODIFIED, language="python",
+                          hunks=[{"diff": DIFF_B}])]
+
+
+class StubWorkspace:
+    def __init__(self, diff=SINCE_DIFF, fail=None):
+        self.calls = []
+        self._diff = diff
+        self._fail = fail
+
+    async def since_diff(self, repo, old_base, old_head, new_base, new_head):
+        self.calls.append((old_base, old_head, new_base, new_head))
+        if self._fail is not None:
+            raise self._fail
+        return {"diff": self._diff, "clean": True}
+
+
+def build_versioned(tmp_path, provider=None, workspace=None, watermark="reviewed"):
+    from review_mate.kb.store import ReviewKB
+    provider = provider or VersionHost()
+    kb = ReviewKB(root=tmp_path / "kb")
+    if watermark:
+        kb.set_watermark("gitlab", "g/p", 1, watermark)
+    manager = SessionManager(root=tmp_path / "sessions", mr_source=provider,
+                             workspace=workspace or StubWorkspace())
+    app = create_app(manager=manager, provider=provider, with_mcp=False, kb=kb,
+                     resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+    return app, provider
+
+
+def settled(ws, scope, limit=10):
+    """The view once it stops reporting `loading`."""
+    for _ in range(limit):
+        view = read_scope(ws, scope, limit)["view"]
+        if view["state"] != "loading":
+            return view
+    raise AssertionError(f"{scope} never settled")
+
+
+def test_since_resolves_to_per_file_diffs(tmp_path):
+    app, _ = build_versioned(tmp_path)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        scope = f"diff:{sid}:since"
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [scope]})
+            view = settled(ws, scope)
+            assert view["state"] == "ready"
+            # the multi-file diff was split, empty new file included
+            assert [f["path"] for f in view["files"]] == ["a.py", "pkg/__init__.py"]
+            assert view["head_aligned"] is True
+
+
+def test_since_passes_the_watermark_bases_to_the_workspace(tmp_path):
+    workspace = StubWorkspace()
+    app, _ = build_versioned(tmp_path, workspace=workspace)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:since"]})
+            settled(ws, f"diff:{sid}:since")
+            assert workspace.calls == [("base1", "reviewed", "base2", "abc")]
+
+
+def test_since_marks_a_view_that_cannot_anchor(tmp_path):
+    """The MR advanced past this session, so the diff's new side is not the head it holds."""
+    app, _ = build_versioned(tmp_path, provider=VersionHost(newest_head="moved-on"))
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:since"]})
+            assert settled(ws, f"diff:{sid}:since")["head_aligned"] is False
+
+
+def test_nothing_reviewed_yet_means_nothing_new(tmp_path):
+    app, _ = build_versioned(tmp_path, watermark=None)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:since"]})
+            view = settled(ws, f"diff:{sid}:since")
+            assert view["state"] == "ready" and view["files"] == []
+
+
+def test_a_commit_mode_reads_that_commits_files(tmp_path):
+    app, provider = build_versioned(tmp_path)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        scope = f"diff:{sid}:commit@deadbee"
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [scope]})
+            view = settled(ws, scope)
+            assert [f["path"] for f in view["files"]] == ["pkg/b.py"]
+            assert provider.commit_calls == [("g/p", "deadbee")]
+
+
+def test_one_resolution_serves_the_list_and_the_open_file(tmp_path):
+    workspace = StubWorkspace()
+    app, _ = build_versioned(tmp_path, workspace=workspace)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        listing, body = f"diff:{sid}:since", f"diff:{sid}:since:a.py"
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [listing, body]})
+            assert settled(ws, listing)["state"] == "ready"
+            file_view = settled(ws, body)
+            assert file_view["state"] == "ready"
+            assert file_view["hunks"][0]["lines"][-1]["text"] == "    # added since you last looked"
+            assert len(workspace.calls) == 1        # both scopes came from one resolution
+
+
+def test_a_failed_resolution_is_reported(tmp_path):
+    app, _ = build_versioned(tmp_path, workspace=StubWorkspace(fail=RuntimeError("git exploded")))
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:since"]})
+            view = settled(ws, f"diff:{sid}:since")
+            assert view["state"] == "error" and "git exploded" in view["error"]

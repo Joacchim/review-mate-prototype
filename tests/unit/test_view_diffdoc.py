@@ -4,7 +4,7 @@ Line numbers are what a review comment anchors to, so they are the thing worth p
 """
 import subprocess
 
-from review_mate.view.diffdoc import ADDED, CONTEXT, REMOVED, build, parse
+from review_mate.view.diffdoc import ADDED, CONTEXT, REMOVED, build, parse, split_files
 
 SAMPLE = """@@ -46,3 +46,4 @@ def reserve(self, pu):
      def reserve(self, pu):
@@ -81,3 +81,51 @@ def test_every_hunk_in_real_history_matches_its_declared_counts():
             assert (old, new) == (hunk.old_count, hunk.new_count), (rev, hunk.old_start)
             checked += 1
     assert checked > 50, f"only {checked} hunks exercised"
+
+
+# --- splitting a multi-file diff --------------------------------------------
+
+def test_content_containing_a_file_header_does_not_start_a_file():
+    """The reason the splitter tracks hunk bounds instead of matching on the header string."""
+    text = (
+        "diff --git a/doc.md b/doc.md\n--- a/doc.md\n+++ b/doc.md\n"
+        "@@ -1,2 +1,3 @@\n"
+        " an example of the format:\n"
+        "+diff --git a/fake.py b/fake.py\n"
+        " end\n"
+    )
+    files = split_files(text)
+    assert [path for path, _ in files] == ["doc.md"]
+    assert "fake.py" in files[0][1]            # it stayed inside doc.md's hunk, as content
+
+
+def test_an_added_empty_file_is_named_from_its_header():
+    text = ("diff --git a/pkg/__init__.py b/pkg/__init__.py\n"
+            "new file mode 100644\nindex 0000000..e69de29\n")
+    assert [path for path, _ in split_files(text)] == ["pkg/__init__.py"]
+
+
+def test_a_deletion_is_named_from_the_old_side():
+    text = ("diff --git a/gone.py b/gone.py\ndeleted file mode 100644\n"
+            "--- a/gone.py\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-x = 1\n")
+    assert [path for path, _ in split_files(text)] == ["gone.py"]
+
+
+def test_each_split_file_parses_on_its_own():
+    text = ("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,1 +1,1 @@\n-a\n+b\n"
+            "diff --git a/c.py b/c.py\n--- a/c.py\n+++ b/c.py\n@@ -5,1 +5,2 @@\n c\n+d\n")
+    files = split_files(text)
+    assert [path for path, _ in files] == ["a.py", "c.py"]
+    second = parse(files[1][1])[0]
+    assert second.new_start == 5 and [line.side for line in second.lines] == [CONTEXT, ADDED]
+
+
+def test_splitting_real_history_matches_git(tmp_path):
+    revs = subprocess.run(["git", "rev-list", "-60", "HEAD"],
+                          capture_output=True, text=True).stdout.split()
+    for rev in revs:
+        expected = subprocess.run(["git", "show", "--format=", "--name-only", rev],
+                                  capture_output=True, text=True).stdout.split()
+        text = subprocess.run(["git", "show", "--format=", "--unified=3", rev],
+                              capture_output=True, text=True).stdout
+        assert [path for path, _ in split_files(text)] == expected, rev

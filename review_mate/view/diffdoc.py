@@ -40,6 +40,84 @@ class Hunk(BaseModel):
     lines: list[DiffLine] = Field(default_factory=list)
 
 
+FILE_HEADER = "diff --git "
+# an added or removed *empty* file has no ---/+++ lines at all, so its name is only in the header.
+# The backreference keeps a path containing spaces in one piece for the usual same-path case.
+FILE_HEADER_PATHS = re.compile(r"^diff --git a/(.+) b/\1$")
+
+
+def split_files(diff_text: str) -> list[tuple[str, str]]:
+    """Split a multi-file unified diff into `(path, text)`, one entry per file.
+
+    A `diff --git` line only begins a file when the walk is not inside a hunk body. Diff *content*
+    can contain that string — this repository's own tests do — and matching on it blindly cuts a
+    hunk in half. Hunk bodies are bounded by the counts in their @@ header, which is what makes
+    "inside a body" answerable without guessing.
+
+    The path is read from the `+++ b/…` line, falling back to `--- a/…` for a deletion and to the
+    `diff --git` header itself for an added or removed empty file, which carries neither.
+    """
+    files: list[tuple[str, list[str]]] = []
+    current: list[str] | None = None
+    path = ""
+    taken_old = taken_new = want_old = want_new = 0
+    inside = False
+
+    def flush() -> None:
+        if current is None:
+            return
+        name = path
+        if not name and current:
+            header_paths = FILE_HEADER_PATHS.match(current[0])
+            if header_paths:
+                name = header_paths.group(1)
+        files.append((name, current))
+
+    for raw in (diff_text or "").split("\n"):
+        if not inside and raw.startswith(FILE_HEADER):
+            flush()
+            current, path = [], ""
+            taken_old = taken_new = want_old = want_new = 0
+            current.append(raw)
+            continue
+        if current is None:
+            continue
+        header = HUNK_HEADER.match(raw)
+        if header:
+            _, old_count, _, new_count, _ = header.groups()
+            want_old, want_new = int(old_count or 1), int(new_count or 1)
+            taken_old = taken_new = 0
+            inside = True
+            current.append(raw)
+            continue
+        if inside:
+            if raw.startswith("\\"):
+                current.append(raw)
+                continue
+            marker = raw[:1] if raw else " "
+            if marker == "+":
+                taken_new += 1
+            elif marker == "-":
+                taken_old += 1
+            elif marker == " ":
+                taken_old += 1
+                taken_new += 1
+            else:
+                inside = False        # not diff body — the hunk ended early
+                continue
+            current.append(raw)
+            if taken_old >= want_old and taken_new >= want_new:
+                inside = False
+            continue
+        if raw.startswith("+++ ") and not raw.endswith("/dev/null"):
+            path = raw[4:].split("\t")[0].removeprefix("b/")
+        elif raw.startswith("--- ") and not path and not raw.endswith("/dev/null"):
+            path = raw[4:].split("\t")[0].removeprefix("a/")
+        current.append(raw)
+    flush()
+    return [(name, "\n".join(lines)) for name, lines in files]
+
+
 def parse(diff_text: str) -> list[Hunk]:
     """Hunks with per-line old/new numbering, for **one file's** diff. Untokenized — see
     `tokenize_hunks`.

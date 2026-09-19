@@ -37,8 +37,10 @@ from contextlib import suppress
 
 from pydantic import BaseModel, Field
 
-from review_mate.session.state import SessionStatus
+from review_mate.seams import MRRef, RepoRef
+from review_mate.session.state import ChangeType, FileEntry, SessionStatus
 from review_mate.view.diffdoc import build as build_hunks
+from review_mate.view.diffdoc import split_files
 from review_mate.view.tokens import tokenize
 
 FULL = "full"
@@ -86,7 +88,11 @@ class FileRow(BaseModel):
 class DiffView(BaseModel):
     session: str
     mode: str = FULL
-    state: str = "ready"               # ready | unknown-session | unsupported-mode
+    state: str = "ready"       # ready | loading | unknown-session | unsupported-mode
+                               # | malformed-name | unavailable | error | empty
+    error: str = ""
+    head_aligned: bool = True  # false when a since view is computed against a head the session
+                               # has not re-synced to, so its lines cannot anchor a comment
     mr: dict = Field(default_factory=dict)
     files: list[FileRow] = Field(default_factory=list)
 
@@ -98,7 +104,10 @@ class FileView(BaseModel):
     old_path: str | None = None
     change_type: str = ""
     language: str | None = None
-    state: str = "ready"               # ready | unknown-session | unknown-file | unsupported-mode
+    state: str = "ready"       # ready | loading | unknown-session | unknown-file
+                               # | unsupported-mode | malformed-name | unavailable | error
+    error: str = ""
+    head_aligned: bool = True
     hunks: list[dict] = Field(default_factory=list)
 
 
@@ -120,8 +129,16 @@ def _diff_text(entry) -> str:
 class DiffScopes:
     """Builders for both scopes. Reads session state only — no host call, no git."""
 
-    def __init__(self, manager) -> None:
+    def __init__(self, manager, provider=None, workspace=None, kb=None, publish=None) -> None:
         self._manager = manager
+        self._provider = provider
+        self._workspace = workspace
+        self._kb = kb
+        self._publish = publish          # publish(session_id, mode) -> awaitable
+        self._resolved: dict[tuple, list] = {}
+        self._failed: dict[tuple, str] = {}
+        self._aligned: dict[tuple, bool] = {}
+        self._tasks: dict[tuple, asyncio.Task] = {}
 
     # --- diff:<sid>:<mode>[:<path>] ---------------------------------------
 
@@ -139,18 +156,22 @@ class DiffScopes:
         snapshot = self._snapshot(session_id)
         if snapshot is None:
             return DiffView(session=session_id, mode=mode, state="unknown-session").model_dump(mode="json")
-        if mode != FULL:
-            return DiffView(session=session_id, mode=mode,
-                            state="unsupported-mode").model_dump(mode="json")
+        state, files, error = self._files_for(session_id, mode, snapshot)
+        if state != "ready":
+            return DiffView(session=session_id, mode=mode, state=state, error=error,
+                            mr=snapshot.mr.model_dump(mode="json") if snapshot.mr else {},
+                            ).model_dump(mode="json")
         rows = []
-        for entry in snapshot.files or []:
+        for entry in files:
             additions, deletions = _counts(_diff_text(entry))
             rows.append(FileRow(path=entry.path, old_path=entry.old_path,
                                 change_type=getattr(entry.change_type, "value", "") or "",
                                 language=entry.language, additions=additions, deletions=deletions,
                                 has_diff=bool(_diff_text(entry).strip())))
         mr = snapshot.mr.model_dump(mode="json") if snapshot.mr else {}
-        return DiffView(session=session_id, mode=mode, mr=mr, files=rows).model_dump(mode="json")
+        return DiffView(session=session_id, mode=mode, mr=mr, files=rows,
+                        head_aligned=self._aligned.get((session_id, mode, self._head(snapshot)), True),
+                        ).model_dump(mode="json")
 
     async def _build_file(self, address: Address) -> dict:
         session_id, mode, path = address.session, address.mode, address.path
@@ -158,10 +179,11 @@ class DiffScopes:
         if snapshot is None:
             return FileView(session=session_id, mode=mode, path=path,
                             state="unknown-session").model_dump(mode="json")
-        if mode != FULL:
-            return FileView(session=session_id, mode=mode, path=path,
-                            state="unsupported-mode").model_dump(mode="json")
-        entry = next((f for f in (snapshot.files or []) if f.path == path), None)
+        state, files, error = self._files_for(session_id, mode, snapshot)
+        if state != "ready":
+            return FileView(session=session_id, mode=mode, path=path, state=state,
+                            error=error).model_dump(mode="json")
+        entry = next((f for f in files if f.path == path), None)
         if entry is None:
             return FileView(session=session_id, mode=mode, path=path,
                             state="unknown-file").model_dump(mode="json")
@@ -169,7 +191,108 @@ class DiffScopes:
         return FileView(session=session_id, mode=mode, path=entry.path, old_path=entry.old_path,
                         change_type=getattr(entry.change_type, "value", "") or "",
                         language=entry.language,
+                        head_aligned=self._aligned.get((session_id, mode, self._head(snapshot)), True),
                         hunks=[hunk.model_dump(mode="json") for hunk in hunks]).model_dump(mode="json")
+
+    # --- resolving a mode to files ------------------------------------------
+
+    @staticmethod
+    def _head(snapshot) -> str:
+        return snapshot.mr.sha if snapshot.mr else ""
+
+    def _files_for(self, session_id: str, mode: str, snapshot):
+        """`(state, files, error)` for a mode.
+
+        The full mode is session state and answers immediately. The others resolve through the host
+        or the workspace, so they follow the loading shape: report `loading`, fetch once, republish.
+        A resolution is keyed on the MR head it was computed against, so a re-synced head asks again
+        instead of serving a stale answer.
+        """
+        if mode == FULL:
+            return "ready", list(snapshot.files or []), ""
+        if snapshot.mr is None:
+            return "unsupported-mode", [], ""
+        key = (session_id, mode, self._head(snapshot))
+        if key in self._failed:
+            return "error", [], self._failed[key]
+        if key in self._resolved:
+            return "ready", self._resolved[key], ""
+        if not self._can_resolve(mode):
+            return "unavailable", [], ""
+        self._start(key, mode, snapshot)
+        return "loading", [], ""
+
+    def _can_resolve(self, mode: str) -> bool:
+        if mode.startswith(COMMIT_PREFIX):
+            return self._provider is not None and hasattr(self._provider, "commit_diff")
+        if mode == SINCE:
+            return (self._provider is not None and hasattr(self._provider, "mr_versions")
+                    and self._workspace is not None and hasattr(self._workspace, "since_diff"))
+        return False
+
+    def _start(self, key, mode: str, snapshot) -> None:
+        if key in self._tasks:
+            return
+        task = asyncio.create_task(self._resolve(key, mode, snapshot))
+        self._tasks[key] = task
+        task.add_done_callback(lambda finished: self._finished(key, finished))
+
+    def _finished(self, key, task) -> None:
+        self._tasks.pop(key, None)
+        if not task.cancelled():
+            task.exception()      # retrieve it; the failure is already recorded in the view
+
+    async def _resolve(self, key, mode: str, snapshot) -> None:
+        session_id = key[0]
+        try:
+            if mode.startswith(COMMIT_PREFIX):
+                files = await self._provider.commit_diff(snapshot.mr.project,
+                                                         mode[len(COMMIT_PREFIX):])
+                self._resolved[key] = list(files)
+            else:
+                self._resolved[key], self._aligned[key] = await self._since(snapshot)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._failed[key] = f"{type(exc).__name__}: {exc}"
+        if self._publish is not None:
+            await self._publish(session_id, mode)
+
+    async def _since(self, snapshot) -> tuple[list, bool]:
+        """The author's work since the reviewer's watermark, as ordinary per-file diffs.
+
+        Mirrors the host/workspace resolution the since-last surface already performs: the
+        watermark names the reviewed version, the MR's version list supplies the bases, and
+        since_diff excludes target-branch movement while keeping the head as its new side.
+        """
+        mr = snapshot.mr
+        watermark = (self._kb.get_watermark(mr.host, mr.project, mr.iid)
+                     if self._kb is not None else None)
+        if not watermark or watermark == mr.sha:
+            return [], True                        # never reviewed, or reviewed at this very head
+        ref = MRRef(host=mr.host, project=mr.project, iid=mr.iid)
+        versions = await self._provider.mr_versions(ref)
+        newest = versions[0] if versions else None
+        if newest is None:
+            return [], True
+        reviewed = next((v for v in versions if v["head_sha"] == watermark), None)
+        repo = RepoRef(host=mr.host, project=mr.project, clone_url=mr.clone_url)
+        result = await self._workspace.since_diff(
+            repo, reviewed["base_sha"] if reviewed else None, watermark,
+            newest["base_sha"], newest["head_sha"])
+        # anchoring is only safe when the diff's new side is the head this session holds
+        aligned = bool(newest.get("head_sha") and newest["head_sha"] == mr.sha)
+        known = {f.path: f.language for f in (snapshot.files or [])}
+        files = [FileEntry(path=path, change_type=ChangeType.MODIFIED, language=known.get(path),
+                           hunks=[{"diff": text}])
+                 for path, text in split_files(result.get("diff", ""))]
+        return files, aligned
+
+    async def aclose(self) -> None:
+        for task in list(self._tasks.values()):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     # --- internals ---------------------------------------------------------
 
