@@ -146,3 +146,73 @@ async def test_closing_a_connection_ends_its_drain():
     with pytest.raises(StopAsyncIteration):
         await take(gen)
 
+
+
+# --- parameterised scope families -------------------------------------------
+
+def family_bus(builder):
+    bus = ViewBus()
+    bus.register_family("file", builder)
+    return bus
+
+
+async def test_a_family_serves_any_member_from_one_registration():
+    async def builder(argument):
+        return {"arg": argument}
+
+    bus = family_bus(builder)
+    async with bus.connect() as sub:
+        gen = sub.drain()
+        await bus.subscribe(sub, ["file:s1:a.py", "file:s1:pkg/b.py"])
+        first, second = await take(gen), await take(gen)
+        assert {first.view["arg"], second.view["arg"]} == {"s1:a.py", "s1:pkg/b.py"}
+
+
+async def test_family_members_carry_independent_seq():
+    async def builder(argument):
+        return {"arg": argument}
+
+    bus = family_bus(builder)
+    async with bus.connect() as sub:
+        gen = sub.drain()
+        await bus.subscribe(sub, ["file:s1:a.py", "file:s1:b.py"])
+        await take(gen), await take(gen)
+        await bus.publish("file:s1:a.py")
+        msg = await take(gen)
+        assert msg.scope == "file:s1:a.py" and msg.seq == 1
+        await nothing_more(gen)              # b.py was not rebuilt, and did not advance
+
+
+async def test_an_unregistered_family_is_still_an_unknown_scope():
+    bus = family_bus(lambda a: _ready({}))
+    async with bus.connect() as sub:
+        gen = sub.drain()
+        await bus.subscribe(sub, ["diff:s1"])
+        msg = await take(gen)
+        assert isinstance(msg, ScopeError) and msg.scope == "diff:s1"
+
+
+async def test_watched_finds_the_members_to_republish():
+    bus = family_bus(lambda a: _ready({}))
+    bus.register("hub", lambda: _ready({}))
+    async with bus.connect() as sub:
+        gen = sub.drain()
+        await bus.subscribe(sub, ["hub", "file:s1:a.py", "file:s2:z.py"])
+        for _ in range(3):
+            await take(gen)
+        assert bus.watched("file:s1:") == {"file:s1:a.py"}
+        assert bus.watched("file:") == {"file:s1:a.py", "file:s2:z.py"}
+
+
+async def test_forget_resets_a_members_sequence():
+    bus = family_bus(lambda a: _ready({}))
+    async with bus.connect() as sub:
+        gen = sub.drain()
+        await bus.subscribe(sub, ["file:s1:a.py"])
+        await take(gen)
+        await bus.publish("file:s1:a.py")
+        assert (await take(gen)).seq == 1
+        bus.unsubscribe(sub, ["file:s1:a.py"])
+        bus.forget("file:s1:a.py")
+        await bus.subscribe(sub, ["file:s1:a.py"])
+        assert (await take(gen)).seq == 0
