@@ -5,7 +5,7 @@ from review_mate.session.state import (
     ChangeType, DraftComment, DraftStatus, FileEntry, MRMetadata, SessionState, SessionStatus,
 )
 
-DIFF_A = """@@ -44,4 +44,6 @@ class Scheduler:
+DIFF_A = """@@ -44,3 +44,4 @@ class Scheduler:
      def reserve(self, pu):
 -        if pu.legacy:
 +        if pu.fleet == LEGACY:

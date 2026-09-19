@@ -13,8 +13,9 @@ const draftBuffers = {};   // highlight_id -> in-progress review-comment text (s
 let focusedDraft = null;   // highlight_id of the focused draft textarea, to restore after render
 let repoTree = null;                 // all repo paths (lazy-loaded when "show all" is on)
 let showAll = localStorage.getItem("rm-showall") === "1";
-let hubView = null;                  // the `hub` scope, as the server folded it
-let hubSocket = null;
+const scopeViews = {};               // scope name -> the view the server folded, whole
+let viewSocket = null;
+let wantedScopes = [];               // what this page subscribes to, re-sent on reconnect
 let refreshing = false;              // a hub.refresh is in flight
 let markHubReady = null;
 const hubReady = new Promise((resolve) => { markHubReady = resolve; });
@@ -191,9 +192,6 @@ function highlightCode(code, lang, st) {
 // bleed its colour into the next hunk
 function hlSkip(code, lang, st) { if (lang && st) highlightCode(code, lang, st); }
 
-// a diff content line: keep its +/-/space marker plain, highlight the code after it
-function hlLine(raw, lang, st) { return esc(raw[0] || "") + highlightCode(raw.slice(1), lang, st); }
-
 // --- boot -------------------------------------------------------------------
 
 async function boot() {
@@ -201,15 +199,16 @@ async function boot() {
   startAgentWatch();   // the header light runs everywhere, queue page included
   const params = new URLSearchParams(location.search);
   SID = params.get("s");
-  if (!SID) connectHub();   // the landing page and the ?ref= resolver both read the hub scope
+  if (!SID) connectViews(["hub"]);   // the landing page and the ?ref= resolver read the hub scope
   // ?ref=<project!iid> — what a queue entry links to, so it can be middle-clicked into its own tab.
   // Resolving it here (rather than on click) is what makes the entry a real link instead of a button.
   if (!SID && params.get("ref")) return openRef(params.get("ref"));
   if (!SID) return showLanding();
   $("sid").textContent = SID.slice(0, 8);
   try { me = (await fetch("/api/me").then((r) => r.json())).username; } catch (e) { me = null; }
+  connectViews(diffScopes());   // the change is read through the view protocol
   await load();          // paint fast from stored state
-  connectWS();
+  connectWS();           // the session's own event stream, for highlights, cards and threads
   syncFromHost();        // then bring the session up to the live head, so an update the hub flagged
                          // actually surfaces here (banner + "Since last review"), not just on the hub
 }
@@ -372,22 +371,54 @@ function startAgentWatch() {
 // verdict, the counts and the row order are all the server's. The terminal client reads the same
 // scope, so the two can never disagree about what a review's state is.
 
-function connectHub() {
+function connectViews(scopes) {
+  wantedScopes = scopes.slice();
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  hubSocket = new WebSocket(`${proto}://${location.host}/api/stream`);
-  hubSocket.onopen = () => hubSocket.send(JSON.stringify({ action: "subscribe", scopes: ["hub"] }));
-  hubSocket.onmessage = (ev) => {
+  viewSocket = new WebSocket(`${proto}://${location.host}/api/stream`);
+  // a reconnect re-subscribes to everything wanted and is sent each scope's current view, so
+  // there is no local state to reconcile
+  viewSocket.onopen = () => viewSocket.send(JSON.stringify({ action: "subscribe", scopes: wantedScopes }));
+  viewSocket.onmessage = (ev) => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
-    if (msg.type === "scope" && msg.scope === "hub") {
-      hubView = msg.view;
-      markHubReady();
-      if (!SID) showLanding();      // a whole-scope replacement — re-render, nothing to merge
+    if (msg.type === "scope") {
+      scopeViews[msg.scope] = msg.view;   // whole-scope replacement — nothing to merge
+      if (msg.scope === "hub") {
+        markHubReady();
+        if (!SID) showLanding();
+      } else if (SID) {
+        renderDiff();
+      }
     } else if (msg.type === "error") {
       setStatus("✕ " + (msg.reason || "stream error"));
     }
   };
-  hubSocket.onclose = () => { hubSocket = null; setTimeout(connectHub, 1000); };
+  viewSocket.onclose = () => { viewSocket = null; setTimeout(() => connectViews(wantedScopes), 1000); };
+}
+
+// subscribe to scopes this page now needs, and drop the ones it no longer shows
+function watchScopes(scopes) {
+  const fresh = scopes.filter((s) => !wantedScopes.includes(s));
+  const stale = wantedScopes.filter((s) => !scopes.includes(s) && s !== "hub");
+  if (!fresh.length && !stale.length) return;
+  wantedScopes = wantedScopes.filter((s) => !stale.includes(s)).concat(fresh);
+  stale.forEach((s) => delete scopeViews[s]);
+  if (viewSocket && viewSocket.readyState === WebSocket.OPEN) {
+    if (stale.length) viewSocket.send(JSON.stringify({ action: "unsubscribe", scopes: stale }));
+    if (fresh.length) viewSocket.send(JSON.stringify({ action: "subscribe", scopes: fresh }));
+  }
+}
+
+// the scopes the review page reads: the file list, and the file being shown
+function diffScopes() {
+  const listing = `diff:${SID}:full`;
+  return currentFile ? [listing, `${listing}:${currentFile}`] : [listing];
+}
+
+// the hunks for a path, as the server built them — null while the scope has not arrived
+function scopeHunks(path) {
+  const view = scopeViews[`diff:${SID}:full:${path}`];
+  return view && view.state === "ready" ? view.hunks : null;
 }
 
 // the single write path — every landing-page action is one named command. Reports the status
@@ -445,7 +476,7 @@ function renderOpenSessions(land, sessions) {
   hd.className = "hubhdr";
   hd.appendChild(h2("Open reviews"));
   hd.appendChild(btn(refreshing ? "checking…" : "↻ check for updates", "btn ghost", checkReviewStates));
-  const checkedAt = hubView && hubView.host_checked_at ? Date.parse(hubView.host_checked_at) : 0;
+  const checkedAt = scopeViews["hub"] && scopeViews["hub"].host_checked_at ? Date.parse(scopeViews["hub"].host_checked_at) : 0;
   if (checkedAt) {
     const note = document.createElement("span"); note.className = "hubago";
     note.textContent = `checked ${agoText(checkedAt)}`;
@@ -508,7 +539,7 @@ function hostLink(url, label) {
 // that review instead of opening a second one for the same MR
 async function findTracking(ref) {
   await hubReady;   // a cold ?ref= tab lands here before the first scope has arrived
-  const sessions = (hubView && hubView.sessions) || [];
+  const sessions = (scopeViews["hub"] && scopeViews["hub"].sessions) || [];
   return sessions.find((s) => s.mr && `${s.mr.project}!${s.mr.iid}` === ref) || null;
 }
 
@@ -569,10 +600,10 @@ async function showLanding() {
   land.className = "land";
   const d = $("diff"); d.innerHTML = ""; d.appendChild(land);
 
-  if (!hubView) { land.appendChild(empty("connecting to the review server…")); return; }
+  if (!scopeViews["hub"]) { land.appendChild(empty("connecting to the review server…")); return; }
   // open reviews are the local half of the scope and are already here; the queue half carries its
   // own loading state, so a slow host delays the queue block and nothing else
-  const active = hubView.sessions || [];
+  const active = scopeViews["hub"].sessions || [];
   renderOpenSessions(land, active);
 
   const head = document.createElement("div");
@@ -580,7 +611,7 @@ async function showLanding() {
   land.appendChild(head);
   const queueBox = document.createElement("div");
   land.appendChild(queueBox);
-  renderQueue(queueBox, hubView, active);
+  renderQueue(queueBox, scopeViews["hub"], active);
 }
 
 function renderQueue(box, view, openSessions) {
@@ -1029,12 +1060,12 @@ async function revealLine(path, line) {
 // rendered, or a deletion with no new-side row) — nothing to unfold.
 function gapContaining(file, line) {
   if (line == null) return null;
-  const hunks = parseHunks((file.hunks || []).map((h) => h.diff || "").join("\n"));
+  const hunks = scopeHunks(file.path) || [];
   let cursor = 1;
   for (const h of hunks) {
-    if (line < h.newStart) return line >= cursor ? cursor : null;
-    if (line < h.newStart + h.newCount) return null;      // inside this hunk
-    cursor = h.newStart + h.newCount;
+    if (line < h.new_start) return line >= cursor ? cursor : null;
+    if (line < h.new_start + h.new_count) return null;    // inside this hunk
+    cursor = h.new_start + h.new_count;
   }
   return line >= cursor ? cursor : null;                   // past the last hunk — the trailing gap
 }
@@ -1055,6 +1086,7 @@ function activeFiles() {
 }
 
 function renderDiff() {
+  if (SID) watchScopes(diffScopes());   // the open file decides what this page watches
   const el = $("diff");
   el.innerHTML = "";
   if (commitsMode) { renderCommitView(el); return; }
@@ -1203,18 +1235,16 @@ function renderFileDiff(el, files, suffix, interactive) {
   el.appendChild(name);
   if (isMd && mdRendered.has(file.path)) { renderMarkdownDoc(el, file.path); return; }
   const hl = interactive ? highlightLines(file.path) : new Set();
+  const hunks = scopeHunks(file.path);
+  if (hunks === null) { el.appendChild(empty("loading " + file.path + "…")); return; }
   const table = document.createElement("table");
   table.className = "hunk";
   if (!splitMode && interactive) {
     // unified: render with "unfold" bands revealing the context between hunks (full diff, and any
     // head-aligned since-last diff — its new side is the head blob the bands reveal from)
-    const fileDiff = (file.hunks || []).map((h) => h.diff || "").join("\n");
-    renderUnifiedUnfoldable(table, fileDiff, file.path, hl);
+    renderUnifiedUnfoldable(table, hunks, file.path, hl);
   } else {
-    const lang = langOf(file.path);
-    (file.hunks || []).forEach((h) => {
-      (splitMode ? splitRows : unifiedRows)(h.diff || "", hl, table, lang);
-    });
+    table.innerHTML = (splitMode ? splitRowsHtml : unifiedRowsHtml)(hunks, hl);
   }
   if (interactive) wireSelection(table, file.path);
   el.appendChild(table);
@@ -1243,53 +1273,21 @@ function renderMarkdownDoc(el, path) {
   el.appendChild(box);
 }
 
-// parse a unified file diff into hunks carrying their new-side start/count (from the @@ header)
-function parseHunks(fileDiff) {
-  const hunks = [];
-  let cur = null;
-  (fileDiff || "").split("\n").forEach((raw) => {
-    if (raw.startsWith("@@")) {
-      const mn = raw.match(/\+(\d+)(?:,(\d+))?/);
-      const newStart = mn ? parseInt(mn[1], 10) : 1;
-      const newCount = mn && mn[2] !== undefined ? parseInt(mn[2], 10) : 1;
-      cur = { newStart, newCount, lines: [] };
-      hunks.push(cur);
-    } else if (cur && raw !== "") {
-      cur.lines.push(raw);
-    }
-  });
-  return hunks;
-}
-
-// unified diff with GitHub-style unfold: gaps between hunks show a "⋯ show N lines" band that
-// reveals the real context (fetched from the file blob) on click. Gap sizes come from the @@ line
-// numbers, so the bands render before any fetch; only the revealed text needs the full file.
-function renderUnifiedUnfoldable(table, fileDiff, path, hl) {
-  const hunks = parseHunks(fileDiff);
+function renderUnifiedUnfoldable(table, hunks, path, hl) {
   const lines = fileContents[path] !== undefined ? fileContents[path].split("\n") : null;
   const exp = expandedGaps[path] || new Map();
   const lang = langOf(path);
-  // one carry-state per side: a removed line belongs only to the old version of the file, an added
-  // line only to the new one, so their docstrings/block comments open and close independently
+  // carry-state for the gap rows only: their text comes from the blob, not from the scope, so it
+  // still needs colouring here
   const sts = { neu: hlState(), old: hlState() };
   let cursor = 1;   // next not-yet-shown new-side line number
   hunks.forEach((h) => {
-    renderGap(table, path, cursor, h.newStart - 1, lines, exp, hl, lang, sts);
-    let newLine = h.newStart;
-    h.lines.forEach((raw) => {
-      const kind = raw[0] === "+" ? "add" : raw[0] === "-" ? "del" : "ctx";
-      const tr = document.createElement("tr");
-      tr.className = "line " + kind + (kind !== "del" && hl.has(newLine) ? " hl" : "");
-      // context sits in both versions: colour it on the new side, then walk the old side over it too
-      const st = kind === "del" ? sts.old : sts.neu;
-      const cell = hlLine(raw, lang, st);
-      if (kind === "ctx") hlSkip(raw.slice(1), lang, sts.old);
-      const code = `<td class="code"${kind !== "del" ? ` data-line="${newLine}"` : ""}>${cell}</td>`;
-      tr.innerHTML = `<td class="ln">${kind === "del" ? "" : newLine}</td>${code}`;
-      if (kind !== "del") newLine += 1;
-      table.appendChild(tr);
-    });
-    cursor = h.newStart + h.newCount;
+    renderGap(table, path, cursor, h.new_start - 1, lines, exp, hl, lang, sts);
+    // the hunk's own rows are built from the scope — sides, numbers and spans are all fields
+    const block = document.createElement("tbody");
+    block.innerHTML = unifiedRowsHtml([h], hl);
+    while (block.firstChild) table.appendChild(block.firstChild);
+    cursor = h.new_start + h.new_count;
   });
   if (lines) {
     renderGap(table, path, cursor, lines.length, lines, exp, hl, lang, sts);   // trailing gap — exact, length known
@@ -1496,90 +1494,6 @@ function commitSelection(path, a, b) {
   else post({ type: "add_highlight", file: path, side: "new", line_range: { start: lo, end: hi } });
 }
 
-function unifiedRows(diff, hl, table, lang) {
-  let newLine = 0;
-  // no blob to read the between-hunk context from here, so the carry-state can only span one hunk;
-  // each @@ starts over at top-level rather than guessing what the skipped lines opened or closed
-  let sts = { neu: hlState(), old: hlState() };
-  diff.split("\n").forEach((raw) => {
-    if (raw === "") return;
-    const tr = document.createElement("tr");
-    if (raw.startsWith("@@")) {
-      tr.className = "hh";
-      const m = raw.match(/\+(\d+)/); if (m) newLine = parseInt(m[1], 10);
-      sts = { neu: hlState(), old: hlState() };
-      tr.innerHTML = `<td class="ln"></td><td class="code">${esc(raw)}</td>`;
-      table.appendChild(tr); return;
-    }
-    const kind = raw[0] === "+" ? "add" : raw[0] === "-" ? "del" : "ctx";
-    tr.className = "line " + kind + (kind !== "del" && hl.has(newLine) ? " hl" : "");
-    const cell = hlLine(raw, lang, kind === "del" ? sts.old : sts.neu);
-    if (kind === "ctx") hlSkip(raw.slice(1), lang, sts.old);   // context is in both versions
-    const code = `<td class="code"${kind !== "del" ? ` data-line="${newLine}"` : ""}>${cell}</td>`;
-    tr.innerHTML = `<td class="ln">${kind === "del" ? "" : newLine}</td>${code}`;
-    if (kind !== "del") newLine += 1;
-    table.appendChild(tr);
-  });
-}
-
-function splitRows(diff, hl, table, lang) {
-  let oldLine = 0, newLine = 0;
-  let pendDel = [], pendAdd = [];
-  let sts = { neu: hlState(), old: hlState() };   // per side; reset per hunk, as in `unifiedRows`
-  const flush = () => {
-    const n = Math.max(pendDel.length, pendAdd.length);
-    for (let i = 0; i < n; i++) {
-      const d = pendDel[i], a = pendAdd[i];
-      const tr = document.createElement("tr"); tr.className = "line";
-      appendCell(tr, d ? "del" : "gap", d ? d.ln : "", d ? d.text : "", null, false, lang, sts.old);
-      appendCell(tr, a ? "add" : "gap", a ? a.ln : "", a ? a.text : "", a ? a.ln : null, a && hl.has(a.ln), lang, sts.neu);
-      table.appendChild(tr);
-    }
-    pendDel = []; pendAdd = [];
-  };
-  diff.split("\n").forEach((raw) => {
-    if (raw === "") return;
-    if (raw.startsWith("@@")) {
-      flush();
-      const mo = raw.match(/-(\d+)/), mn = raw.match(/\+(\d+)/);
-      if (mo) oldLine = parseInt(mo[1], 10);
-      if (mn) newLine = parseInt(mn[1], 10);
-      sts = { neu: hlState(), old: hlState() };
-      const tr = document.createElement("tr"); tr.className = "hh";
-      tr.innerHTML = `<td class="ln"></td><td class="code">${esc(raw)}</td><td class="ln"></td><td class="code">${esc(raw)}</td>`;
-      table.appendChild(tr); return;
-    }
-    if (raw[0] === "-") { pendDel.push({ ln: oldLine, text: raw.slice(1) }); oldLine += 1; }
-    else if (raw[0] === "+") { pendAdd.push({ ln: newLine, text: raw.slice(1) }); newLine += 1; }
-    else {
-      flush();
-      const tr = document.createElement("tr"); tr.className = "line";
-      const txt = raw.slice(1);
-      appendCell(tr, "ctx", oldLine, txt, null, false, lang, sts.old);
-      appendCell(tr, "ctx", newLine, txt, newLine, hl.has(newLine), lang, sts.neu);
-      table.appendChild(tr); oldLine += 1; newLine += 1;
-    }
-  });
-  flush();
-}
-
-function appendCell(tr, kind, ln, text, dataLine, isHl, lang, st) {
-  const tdLn = document.createElement("td");
-  tdLn.className = "ln" + (kind === "gap" ? " gap" : kind === "del" ? " delln" : kind === "add" ? " addln" : "");
-  tdLn.textContent = ln === "" ? "" : ln;
-  const tdCode = document.createElement("td");
-  tdCode.className = "code" + (kind === "gap" ? " gap" : kind === "del" ? " delc" : kind === "add" ? " addc" : "")
-                   + (isHl ? " hlc" : "");
-  // a "gap" cell means this side has no line here — nothing to colour, and nothing to advance
-  if (kind === "gap") tdCode.textContent = "";
-  else tdCode.innerHTML = highlightCode(text || "", lang, st);
-  if (dataLine != null) tdCode.dataset.line = dataLine;  // new-side, selectable
-  tr.appendChild(tdLn); tr.appendChild(tdCode);
-}
-
-// --- rail: a compact, filterable index; the card+editor open in a side overlay ----
-
-// a highlight's place in the reviewer's taxonomy: context-only "card" → drafted "comment" → posted
 function commentState(hl) {
   const d = state.drafts.find((x) => x.highlight_id === hl.id);
   if (!d) return "context";
