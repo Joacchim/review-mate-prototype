@@ -18,6 +18,7 @@ from review_mate.session.commands import (
 )
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import DraftStatus, Origin, SessionStatus
+from review_mate.view.hub import derive_state
 
 # server-side long-poll ceiling for GET /api/activity: under common idle cutoffs, and short enough
 # that the coordinator gets a regular tick (to re-evaluate the idle-reap bound) even when quiet.
@@ -204,13 +205,9 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             pending = sum(1 for d in snap.drafts if d.status is DraftStatus.DRAFT)
             posted = sum(1 for d in snap.drafts if d.status is DraftStatus.POSTED)
             behind = bool(wm and head and wm != head)
-            state = ("merged" if mr_state == "merged" else   # the MR landed — done (reviewer removes it)
-                     "closed" if mr_state == "closed" else    # closed without merging
-                     "in_progress" if pending else            # you have unsubmitted comments
-                     "git_update" if behind else               # branch advanced past your review
-                     "discussions" if unresolved else           # open discussions, no git change
-                     "reviewed" if (wm and head and wm == head) or posted else  # up to date
-                     "new")                                     # nothing established yet
+            state = derive_state(mr_state=mr_state, pending=pending, posted=posted,
+                                 unresolved=unresolved, behind=behind,
+                                 at_watermark=bool(wm and head and wm == head))
             out[summ.id] = {"state": state, "mr_state": mr_state, "behind": behind,
                             "unresolved": unresolved, "pending": pending, "posted": posted}
         return JSONResponse(out)

@@ -83,6 +83,19 @@ def create_app(manager: SessionManager | None = None,
     routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider, broker=broker,
                           writeback=writeback, activity_broker=activity_broker, kb=kb)
 
+    # the view plane — server-folded state, one scope at a time. Clients subscribe to scopes and
+    # render what they carry; none of them re-derive review state. Registered before the static
+    # mount so `/api/stream` and `/api/cmd` are never shadowed by the UI.
+    from review_mate.server.view_routes import build_view_routes
+    from review_mate.view.bus import ViewBus
+    from review_mate.view.hub import HubScope
+    from review_mate.view.protocol import HUB
+    bus = ViewBus()
+    hub = HubScope(manager, provider=provider, kb=kb,
+                   user=getattr(provider, "username", "") or "")
+    bus.register(HUB, hub.build)
+    routes.extend(build_view_routes(manager, bus, hub, resolve_ref=resolve_ref))
+
     mcp_app = None
     if with_mcp:
         from review_mate.mcp.bridge import AgentBridge
@@ -102,6 +115,7 @@ def create_app(manager: SessionManager | None = None,
                 yield
         else:
             yield
+        await hub.aclose()
         await manager.shutdown()
 
     app = Starlette(routes=routes, lifespan=lifespan, middleware=[Middleware(_NoCacheUI)])
@@ -109,4 +123,6 @@ def create_app(manager: SessionManager | None = None,
     app.state.broker = broker
     app.state.activity_broker = activity_broker
     app.state.kb = kb
+    app.state.bus = bus
+    app.state.hub = hub
     return app

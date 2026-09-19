@@ -34,6 +34,19 @@ def test_core_imports_no_host_mcp_workspace_or_ui(py):  # AC-12
         assert not any(tok in low for tok in FORBIDDEN), f"{py.name} imports forbidden {imp!r}"
 
 
+# Layers that sit above the core: they fold and ship core state, and the core must not know they
+# exist. Matched as module prefixes, not substrings — "review_mate" itself contains "view".
+LAYERS_ABOVE_CORE = ("review_mate.view", "review_mate.server")
+
+
+@pytest.mark.parametrize("py", sorted((CORE / "session").glob("*.py")) + [CORE / "seams.py"])
+def test_core_does_not_import_the_layers_above_it(py):
+    for imp in _import_names(py):
+        offender = next((top for top in LAYERS_ABOVE_CORE
+                         if imp == top or imp.startswith(top + ".")), None)
+        assert offender is None, f"{py.name} imports {imp!r} — {offender} is above the core"
+
+
 def test_session_state_is_exactly_the_contract_set():  # AC-13
     doc_fields = {"mr", "files", "highlights", "cards", "access_requests", "threads",
                   "messages", "drafts"}

@@ -191,6 +191,7 @@ Layout:
 |---|---|
 | `review_mate/server/` | ASGI app, HTTP routes, websocket stream |
 | `review_mate/session/` | Event-sourced session model (commands → events → state) |
+| `review_mate/view/` | Server-folded client state — scopes, the view bus, the hub scope |
 | `review_mate/host/` | Host providers — GitLab read/write, credential resolution |
 | `review_mate/workspace/` | The isolated clone workspace (mirrors, worktrees, diffs) |
 | `review_mate/mcp/` | The agent seam, mounted at `/mcp` |
