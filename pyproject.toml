@@ -11,13 +11,27 @@ dependencies = [
     "mcp>=1.28.1",
 ]
 
+[project.optional-dependencies]
+# The TUI client. Kept out of the default install so running the server stays a lean dependency
+# set; `uv sync --extra tui` adds it. websockets is declared here rather than borrowed from
+# uvicorn[standard], which happens to ship it.
+tui = [
+    "prompt_toolkit>=3.0",
+    "websockets>=13",
+]
+
 [project.scripts]
 review-mate = "review_mate.__main__:main"
+review-mate-tui = "review_mate.tui.__main__:main"
 
 [dependency-groups]
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
+    # also in the `tui` extra — held here so the TUI client's tests always run rather than
+    # skipping out of a dev environment that happens to lack the extra
+    "prompt_toolkit>=3.0",
+    "websockets>=13",
 ]
 
 [build-system]
@@ -33,4 +47,8 @@ testpaths = ["tests"]
 filterwarnings = [
     # Starlette's TestClient still ships on httpx 0.x; this third-party deprecation is not ours.
     "ignore:Using `httpx` with `starlette.testclient`",
+    # uvicorn's websocket implementation still calls the legacy websockets API — also not ours.
+    "ignore:websockets.legacy is deprecated:DeprecationWarning",
+    "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
+    "ignore:remove second argument of ws_handler:DeprecationWarning",
 ]

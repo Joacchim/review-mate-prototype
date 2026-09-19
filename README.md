@@ -137,6 +137,22 @@ per-MR worktrees. **Your own working clones are never touched.** Cloning uses wh
 `glab` is configured for (`git_protocol`, ssh or https), so it inherits credentials you already
 have; override with `REVIEW_MATE_GIT_PROTOCOL`.
 
+### The terminal client
+
+The browser is one client of the server, not the server's only face. A terminal client ships
+alongside it and talks the same protocol:
+
+```bash
+uv sync --extra tui
+uv run review-mate-tui                      # against http://127.0.0.1:8765
+uv run review-mate-tui --url http://127.0.0.1:9000
+```
+
+It shows the review hub — your open reviews with their state, and your GitLab queue — with
+`j`/`k` to move, `enter` to start a review from the queue, `c` to close one, `r` to check the
+host for updates, `q` to quit. Both clients render state the server folds for them, so neither
+holds its own copy of the review model.
+
 ### Attaching Claude (optional)
 
 The agent plane needs a Claude Code session attached to the running server.
@@ -196,6 +212,7 @@ Layout:
 | `review_mate/workspace/` | The isolated clone workspace (mirrors, worktrees, diffs) |
 | `review_mate/mcp/` | The agent seam, mounted at `/mcp` |
 | `review_mate/web/` | The browser UI (vanilla JS, no build step) |
+| `review_mate/tui/` | The terminal client — a renderer over the view protocol |
 | `.claude/` | The Claude Code skill, worker agent, and startup hook |
 
 The UI is served uncached, so a reload picks up `app.js` / `index.html` edits immediately. Python is

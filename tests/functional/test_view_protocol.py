@@ -10,47 +10,12 @@ import json
 import pytest
 from starlette.testclient import TestClient
 
-from review_mate.seams import MRPayload, MRRef
+from review_mate.seams import MRRef
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
-from review_mate.session.state import ChangeType, FileEntry, MRMetadata, ReviewThread
 from review_mate.view.hub import HubScope
 
-
-class Provider:
-    """A host stub that counts its own calls, so a test can assert what was never called."""
-
-    username = "reviewer"
-
-    def __init__(self, queue=None, queue_error=None, unresolved=1, state="opened"):
-        self.calls = {"queue": 0, "summary": 0, "threads": 0}
-        self._queue = queue if queue is not None else [{"iid": 7, "title": "queued"}]
-        self._queue_error = queue_error
-        self._unresolved = unresolved
-        self._state = state
-
-    async def load(self, ref: MRRef) -> MRPayload:
-        return MRPayload(
-            mr=MRMetadata(host="gitlab", project=ref.project, iid=ref.iid, title="T",
-                          source_branch="x", target_branch="main", sha="abc",
-                          author="dev", url="http://x"),
-            files=[FileEntry(path="a.py", change_type=ChangeType.MODIFIED)],
-            threads=[],
-        )
-
-    async def review_queue_items(self):
-        self.calls["queue"] += 1
-        if self._queue_error is not None:
-            raise self._queue_error
-        return self._queue
-
-    async def mr_summary(self, ref: MRRef):
-        self.calls["summary"] += 1
-        return {"head": "abc", "state": self._state}
-
-    async def fetch_threads(self, ref: MRRef):
-        self.calls["threads"] += 1
-        return [ReviewThread(id=str(n), resolved=False) for n in range(self._unresolved)]
+from conftest import HostStub
 
 
 def build(tmp_path, provider):
@@ -82,7 +47,7 @@ def hub_view(ws, predicate=lambda view: True, limit=6):
 
 
 def test_subscribing_delivers_the_hub_scope(tmp_path):
-    with TestClient(build(tmp_path, Provider())) as tc:
+    with TestClient(build(tmp_path, HostStub())) as tc:
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "scopes": ["hub"]})
             view = hub_view(ws)
@@ -92,15 +57,16 @@ def test_subscribing_delivers_the_hub_scope(tmp_path):
 
 
 def test_the_queue_arrives_in_the_view(tmp_path):
-    with TestClient(build(tmp_path, Provider())) as tc:
+    with TestClient(build(tmp_path, HostStub())) as tc:
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "scopes": ["hub"]})
             view = hub_view(ws, lambda v: v["queue_state"] == "ready")
-            assert view["queue"] == [{"iid": 7, "title": "queued"}]
+            assert view["queue"] == [{"host": "gitlab", "project": "g/p", "iid": 7,
+                                      "title": "queued", "url": "http://q"}]
 
 
 def test_a_failing_queue_read_is_a_field_not_a_broken_view(tmp_path):
-    provider = Provider(queue_error=RuntimeError("gitlab 503"))
+    provider = HostStub(queue_error=RuntimeError("gitlab 503"))
     with TestClient(build(tmp_path, provider)) as tc:
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "scopes": ["hub"]})
@@ -112,7 +78,7 @@ def test_a_failing_queue_read_is_a_field_not_a_broken_view(tmp_path):
 async def test_the_queue_reads_as_loading_until_the_host_answers(tmp_path):
     """The ordering guarantee, away from the transport where it would be a race."""
     gate = asyncio.Event()
-    provider = Provider()
+    provider = HostStub()
 
     async def gated_queue():
         await gate.wait()
@@ -137,7 +103,7 @@ async def test_the_queue_reads_as_loading_until_the_host_answers(tmp_path):
 
 
 def test_opening_and_closing_a_review_republishes_the_hub(tmp_path):
-    with TestClient(build(tmp_path, Provider())) as tc:
+    with TestClient(build(tmp_path, HostStub())) as tc:
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "scopes": ["hub"]})
             hub_view(ws)
@@ -155,7 +121,7 @@ def test_opening_and_closing_a_review_republishes_the_hub(tmp_path):
 
 
 def test_building_the_hub_never_fans_out_to_the_host(tmp_path):   # D19
-    provider = Provider()
+    provider = HostStub()
     with TestClient(build(tmp_path, provider)) as tc:
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "scopes": ["hub"]})
@@ -170,7 +136,7 @@ def test_building_the_hub_never_fans_out_to_the_host(tmp_path):   # D19
 
 
 def test_refresh_is_what_prices_in_the_host(tmp_path):
-    provider = Provider(unresolved=3)
+    provider = HostStub(unresolved=3)
     with TestClient(build(tmp_path, provider)) as tc:
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "scopes": ["hub"]})
@@ -187,7 +153,7 @@ def test_refresh_is_what_prices_in_the_host(tmp_path):
 
 
 def test_an_unknown_scope_is_reported_without_dropping_the_stream(tmp_path):
-    with TestClient(build(tmp_path, Provider())) as tc:
+    with TestClient(build(tmp_path, HostStub())) as tc:
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "scopes": ["nope"]})
             err = read_until(ws, lambda m: m["type"] == "error")
@@ -197,7 +163,7 @@ def test_an_unknown_scope_is_reported_without_dropping_the_stream(tmp_path):
 
 
 def test_a_malformed_frame_is_answered_and_the_stream_survives(tmp_path):
-    with TestClient(build(tmp_path, Provider())) as tc:
+    with TestClient(build(tmp_path, HostStub())) as tc:
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "nonsense"})
             err = read_until(ws, lambda m: m["type"] == "error")
@@ -214,7 +180,7 @@ def test_a_malformed_frame_is_answered_and_the_stream_survives(tmp_path):
     ({"cmd": "session.open", "args": {"ref": {"bogus": 1}}}, 400),
 ])
 def test_command_errors_are_reported_as_status_codes(tmp_path, body, expected):
-    with TestClient(build(tmp_path, Provider())) as tc:
+    with TestClient(build(tmp_path, HostStub())) as tc:
         r = tc.post("/api/cmd", json=body)
         assert r.status_code == expected
         assert r.json()["ok"] is False
