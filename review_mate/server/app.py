@@ -80,20 +80,34 @@ def create_app(manager: SessionManager | None = None,
         from review_mate.kb.store import ReviewKB
         kb = ReviewKB()
 
-    routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider, broker=broker,
-                          writeback=writeback, activity_broker=activity_broker, kb=kb)
-
     # the view plane — server-folded state, one scope at a time. Clients subscribe to scopes and
-    # render what they carry; none of them re-derive review state. Registered before the static
-    # mount so `/api/stream` and `/api/cmd` are never shadowed by the UI.
+    # render what they carry; none of them re-derive review state.
     from review_mate.server.view_routes import build_view_routes
     from review_mate.view.bus import ViewBus
+    from review_mate.view.diffscope import DiffScopes
     from review_mate.view.hub import HubScope
     from review_mate.view.protocol import HUB
     bus = ViewBus()
     hub = HubScope(manager, provider=provider, kb=kb,
                    user=getattr(provider, "username", "") or "")
     bus.register(HUB, hub.build)
+    diff_scopes = DiffScopes(manager)
+    bus.register_family("diff", diff_scopes.build_diff)
+    bus.register_family("file", diff_scopes.build_file)
+
+    async def republish_session(session_id: str) -> None:
+        """Rebuild the reading scopes a client currently holds for one session.
+
+        Called where a session's files actually change — a host re-sync — rather than on every
+        event, and only for scopes someone is watching, so a review nobody has open costs nothing.
+        """
+        for scope in bus.watched(f"diff:{session_id}") | bus.watched(f"file:{session_id}:"):
+            await bus.publish(scope)
+
+    routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider, broker=broker,
+                          writeback=writeback, activity_broker=activity_broker, kb=kb,
+                          republish_session=republish_session)
+    # registered before the static mount so `/api/stream` and `/api/cmd` are never shadowed by the UI
     routes.extend(build_view_routes(manager, bus, hub, resolve_ref=resolve_ref))
 
     mcp_app = None

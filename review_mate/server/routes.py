@@ -25,7 +25,7 @@ ACTIVITY_TIMEOUT = 50.0
 
 
 def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broker=None,
-                 writeback=None, activity_broker=None, kb=None) -> list:
+                 writeback=None, activity_broker=None, kb=None, republish_session=None) -> list:
     async def create_session(request: Request) -> JSONResponse:
         body = await _maybe_json(request)
         raw = body.get("ref") if isinstance(body, dict) else None
@@ -483,6 +483,8 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             await actor.submit(ApplyMRMetadata(mr=payload.mr), Origin.SYSTEM)
             await actor.submit(ApplyFiles(files=payload.files), Origin.SYSTEM)
             await actor.submit(ReplaceThreads(threads=payload.threads), Origin.SYSTEM)  # reconcile wholesale
+            if republish_session is not None:
+                await republish_session(request.path_params["id"])   # the files changed under any reader
             return JSONResponse({"threads": len(payload.threads), "head": payload.mr.sha})
         threads = await _remirror_threads(actor, ref)
         return JSONResponse({"threads": len(threads)})
