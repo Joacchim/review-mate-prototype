@@ -58,6 +58,7 @@ class HubMR(BaseModel):
 class HubSession(BaseModel):
     id: str
     status: str
+    created_at: str = ""
     mr: HubMR | None = None
     state: str = "new"
     mr_state: str = ""
@@ -65,6 +66,8 @@ class HubSession(BaseModel):
     unresolved: int = 0
     pending: int = 0
     posted: int = 0
+    highlights: int = 0
+    cards: int = 0
     host_checked: bool = False
 
 
@@ -106,6 +109,8 @@ class HubScope:
             if actor is None:
                 continue
             sessions.append(self._fold(summ.id, actor.snapshot()))
+        # newest first — row order is a view decision, so both clients get the same one
+        sessions.sort(key=lambda s: s.created_at, reverse=True)
         return HubView(user=self._user, sessions=sessions, queue=list(self._queue),
                        queue_state=self._queue_state, queue_error=self._queue_error,
                        host_checked_at=self._checked_at).model_dump(mode="json")
@@ -113,8 +118,10 @@ class HubScope:
     def _fold(self, sid: str, snap) -> HubSession:
         pending = sum(1 for d in snap.drafts if d.status is DraftStatus.DRAFT)
         posted = sum(1 for d in snap.drafts if d.status is DraftStatus.POSTED)
+        counts = dict(highlights=len(snap.highlights), cards=len(snap.cards),
+                      pending=pending, posted=posted)
         if snap.mr is None:
-            return HubSession(id=sid, status="active", pending=pending, posted=posted,
+            return HubSession(id=sid, status="active", created_at=snap.created_at, **counts,
                               state=derive_state(mr_state="", pending=pending, posted=posted,
                                                  unresolved=0, behind=False, at_watermark=False))
         host = self._host.get(sid, {})
@@ -126,13 +133,13 @@ class HubScope:
         behind = bool(wm and head and wm != head)
         at_watermark = bool(wm and head and wm == head)
         return HubSession(
-            id=sid, status="active",
+            id=sid, status="active", created_at=snap.created_at,
             mr=HubMR(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid,
                      title=snap.mr.title, url=snap.mr.url, author=snap.mr.author),
             state=derive_state(mr_state=mr_state, pending=pending, posted=posted,
                                unresolved=unresolved, behind=behind, at_watermark=at_watermark),
             mr_state=mr_state, behind=behind, unresolved=unresolved,
-            pending=pending, posted=posted, host_checked=sid in self._host,
+            host_checked=sid in self._host, **counts,
         )
 
     def ensure_queue(self, publish) -> asyncio.Task | None:

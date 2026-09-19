@@ -184,3 +184,85 @@ def test_command_errors_are_reported_as_status_codes(tmp_path, body, expected):
         r = tc.post("/api/cmd", json=body)
         assert r.status_code == expected
         assert r.json()["ok"] is False
+
+
+def test_reviews_arrive_newest_first_and_carry_their_counts(tmp_path):
+    """Row order and the per-review counts are the server's call, so every client agrees."""
+    with TestClient(build(tmp_path, HostStub())) as tc:
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            hub_view(ws)
+
+            first = tc.post("/api/cmd", json={"cmd": "session.open",
+                                              "args": {"ref": "g/p!1"}}).json()["session"]
+            second = tc.post("/api/cmd", json={"cmd": "session.open",
+                                               "args": {"ref": "g/p!2"}}).json()["session"]
+            tc.post(f"/api/sessions/{first}/commands",
+                    json={"type": "add_highlight", "file": "a.py", "side": "new",
+                          "line_range": {"start": 1, "end": 2}})
+            tc.post("/api/cmd", json={"cmd": "hub.refresh"})
+
+            view = hub_view(ws, lambda v: len(v["sessions"]) == 2
+                            and any(s["highlights"] for s in v["sessions"]))
+            ids = [s["id"] for s in view["sessions"]]
+            assert ids == [second, first]        # newest first, decided server-side
+            by_id = {s["id"]: s for s in view["sessions"]}
+            assert by_id[first]["highlights"] == 1 and by_id[second]["highlights"] == 0
+            assert all(s["created_at"] for s in view["sessions"])
+
+
+def test_no_host_means_an_empty_queue_not_an_error(tmp_path):
+    manager = SessionManager(root=tmp_path / "sessions")
+    with TestClient(create_app(manager=manager, with_mcp=False)) as tc:
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            view = hub_view(ws, lambda v: v["queue_state"] == "ready")
+            assert view["queue"] == [] and view["queue_error"] == ""
+
+
+def test_a_host_without_mr_summary_falls_back_to_versions(tmp_path):
+    """The watermark comparison drives `git_update`, whichever host read supplies the head."""
+    from review_mate.kb.store import ReviewKB
+
+    class VersionsOnly:
+        username = "reviewer"
+
+        async def load(self, ref):
+            return await HostStub().load(ref)
+
+        async def review_queue_items(self):
+            return []
+
+        async def mr_versions(self, ref):
+            return [{"base_sha": "b", "head_sha": "HEAD2", "start_sha": "", "created_at": ""}]
+
+    kb = ReviewKB(root=tmp_path / "kb")
+    provider = VersionsOnly()
+    manager = SessionManager(root=tmp_path / "sessions", mr_source=provider)
+    app = create_app(manager=manager, provider=provider, with_mcp=False, kb=kb,
+                     resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+    with TestClient(app) as tc:
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            hub_view(ws)
+            tc.post("/api/cmd", json={"cmd": "session.open", "args": {"ref": "g/p!1"}})
+            view = hub_view(ws, lambda v: v["sessions"])
+            kb.set_watermark("gitlab", "g/p", 1, "abc")      # reviewed the head the session loaded
+
+            tc.post("/api/cmd", json={"cmd": "hub.refresh"})
+            view = hub_view(ws, lambda v: v["sessions"] and v["sessions"][0]["behind"])
+            assert view["sessions"][0]["state"] == "git_update"   # host head moved past the watermark
+
+
+def test_a_merged_mr_reads_as_merged(tmp_path):
+    provider = HostStub(state="merged")
+    with TestClient(build(tmp_path, provider)) as tc:
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            hub_view(ws)
+            tc.post("/api/cmd", json={"cmd": "session.open", "args": {"ref": "g/p!1"}})
+            hub_view(ws, lambda v: v["sessions"])
+            tc.post("/api/cmd", json={"cmd": "hub.refresh"})
+            view = hub_view(ws, lambda v: v["sessions"] and v["sessions"][0]["host_checked"])
+            assert view["sessions"][0]["state"] == "merged"
+            assert view["sessions"][0]["mr_state"] == "merged"

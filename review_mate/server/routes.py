@@ -18,7 +18,6 @@ from review_mate.session.commands import (
 )
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import DraftStatus, Origin, SessionStatus
-from review_mate.view.hub import derive_state
 
 # server-side long-poll ceiling for GET /api/activity: under common idle cutoffs, and short enough
 # that the coordinator gets a regular tick (to re-evaluate the idle-reap bound) even when quiet.
@@ -42,14 +41,6 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         except Exception as exc:  # a bad ref / GitLab failure shouldn't 500 the UI
             return JSONResponse({"error": f"failed to load MR: {exc}"}, status_code=502)
         return JSONResponse({"id": sid, "ref_resolved": ref is not None})
-
-    async def review_queue(request: Request) -> JSONResponse:
-        if provider is None or not hasattr(provider, "review_queue_items"):
-            return JSONResponse([])  # no host configured → empty queue (baseline still runs)
-        try:
-            return JSONResponse(await provider.review_queue_items())
-        except Exception as exc:
-            return JSONResponse({"error": str(exc)}, status_code=502)
 
     async def search(request: Request) -> JSONResponse:
         q = request.query_params.get("q", "").strip()
@@ -99,8 +90,8 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         outstanding work from durable state rather than only reacting to events. This route is that
         derivation — without it, work whose notification vanished has no path back.
 
-        Snapshot reads only, no host I/O, so it stays cheap enough to poll — unlike
-        `/api/sessions/status`, which fans out host calls per session by design (D19). The predicate
+        Snapshot reads only, no host I/O, so it stays cheap enough to poll — unlike the hub's
+        `hub.refresh`, which fans out host calls per session by design (D19). The predicate
         matches the browser's `outstandingAsks()`; the server still tracks no ownership of its own,
         it just reports what durable state already implies.
         """
@@ -165,52 +156,6 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
 
     async def list_sessions(request: Request) -> JSONResponse:
         return JSONResponse([s.model_dump(mode="json") for s in manager.list()])
-
-    async def sessions_status(request: Request) -> JSONResponse:
-        """Per-open-review state for the landing hub: git-behind (reviewed watermark vs current
-        head), open-discussion count, and draft/submit state. Fans out host calls per active
-        session — a manual "check for updates", not a background poll (respects D19)."""
-        out = {}
-        for summ in manager.list():
-            if summ.status is not SessionStatus.ACTIVE:
-                continue
-            actor = manager.get(summ.id)
-            if actor is None:
-                continue
-            snap = actor.snapshot()
-            if snap.mr is None:
-                continue
-            ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
-            head = snap.mr.sha
-            mr_state = ""
-            unresolved = 0
-            if provider is not None:
-                if hasattr(provider, "mr_summary"):
-                    summary = await provider.mr_summary(ref)   # {head, state} — one call, best-effort
-                    head = summary.get("head") or head
-                    mr_state = summary.get("state", "")
-                elif hasattr(provider, "mr_versions"):
-                    try:
-                        versions = await provider.mr_versions(ref)
-                        if versions and versions[0].get("head_sha"):
-                            head = versions[0]["head_sha"]
-                    except Exception:
-                        pass
-                try:
-                    if hasattr(provider, "fetch_threads"):
-                        unresolved = sum(1 for t in await provider.fetch_threads(ref) if not t.resolved)
-                except Exception:
-                    pass
-            wm = kb.get_watermark(snap.mr.host, snap.mr.project, snap.mr.iid) if kb is not None else None
-            pending = sum(1 for d in snap.drafts if d.status is DraftStatus.DRAFT)
-            posted = sum(1 for d in snap.drafts if d.status is DraftStatus.POSTED)
-            behind = bool(wm and head and wm != head)
-            state = derive_state(mr_state=mr_state, pending=pending, posted=posted,
-                                 unresolved=unresolved, behind=behind,
-                                 at_watermark=bool(wm and head and wm == head))
-            out[summ.id] = {"state": state, "mr_state": mr_state, "behind": behind,
-                            "unresolved": unresolved, "pending": pending, "posted": posted}
-        return JSONResponse(out)
 
     async def get_session(request: Request) -> JSONResponse:
         actor = manager.get(request.path_params["id"])
@@ -572,7 +517,6 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             pass
 
     return [
-        Route("/api/queue", review_queue, methods=["GET"]),
         Route("/api/search", search, methods=["GET"]),
         Route("/api/lookup", open_lookup, methods=["POST"]),
         Route("/api/lookup/{id}", poll_lookup, methods=["GET"]),
@@ -583,7 +527,6 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/sessions/{id}/file", get_file, methods=["GET"]),
         Route("/api/sessions", create_session, methods=["POST"]),
         Route("/api/sessions", list_sessions, methods=["GET"]),
-        Route("/api/sessions/status", sessions_status, methods=["GET"]),   # before /{id} — literal wins
         Route("/api/sessions/{id}", get_session, methods=["GET"]),
         Route("/api/sessions/{id}", end_session, methods=["DELETE"]),
         Route("/api/sessions/{id}/commands", submit_command, methods=["POST"]),

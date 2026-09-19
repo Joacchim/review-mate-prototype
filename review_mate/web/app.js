@@ -13,13 +13,11 @@ const draftBuffers = {};   // highlight_id -> in-progress review-comment text (s
 let focusedDraft = null;   // highlight_id of the focused draft textarea, to restore after render
 let repoTree = null;                 // all repo paths (lazy-loaded when "show all" is on)
 let showAll = localStorage.getItem("rm-showall") === "1";
-let sessionStates = null;            // sid -> {state, mr_state, behind, unresolved, …} from the hub check
-let sessionStatesAt = 0;             // when the states were last computed (ms), for the "checked … ago" note
-let checkingStates = false;          // a hub "check for updates" fan-out is in flight
-try {   // hydrate the last hub check so it survives a reload of the queue page
-  const _st = JSON.parse(localStorage.getItem("rm-review-states") || "null");
-  if (_st && _st.states) { sessionStates = _st.states; sessionStatesAt = _st.at || 0; }
-} catch (e) { /* ignore a corrupt cache */ }
+let hubView = null;                  // the `hub` scope, as the server folded it
+let hubSocket = null;
+let refreshing = false;              // a hub.refresh is in flight
+let markHubReady = null;
+const hubReady = new Promise((resolve) => { markHubReady = resolve; });
 const fileContents = {};             // path -> content (cache for non-diff file views + unfold)
 const expandedGaps = {};             // path -> Map of gap-start -> {top, bot, all} lines unfolded
 const mdRendered = new Set();        // .md paths currently shown rendered (vs raw diff)
@@ -203,6 +201,7 @@ async function boot() {
   startAgentWatch();   // the header light runs everywhere, queue page included
   const params = new URLSearchParams(location.search);
   SID = params.get("s");
+  if (!SID) connectHub();   // the landing page and the ?ref= resolver both read the hub scope
   // ?ref=<project!iid> — what a queue entry links to, so it can be middle-clicked into its own tab.
   // Resolving it here (rather than on click) is what makes the entry a real link instead of a button.
   if (!SID && params.get("ref")) return openRef(params.get("ref"));
@@ -368,8 +367,51 @@ function startAgentWatch() {
   setInterval(tick, 1000);
 }
 
+// --- the hub scope ----------------------------------------------------------
+// The landing page renders the `hub` view document and derives nothing from it: the per-review
+// verdict, the counts and the row order are all the server's. The terminal client reads the same
+// scope, so the two can never disagree about what a review's state is.
+
+function connectHub() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  hubSocket = new WebSocket(`${proto}://${location.host}/api/stream`);
+  hubSocket.onopen = () => hubSocket.send(JSON.stringify({ action: "subscribe", scopes: ["hub"] }));
+  hubSocket.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    if (msg.type === "scope" && msg.scope === "hub") {
+      hubView = msg.view;
+      markHubReady();
+      if (!SID) showLanding();      // a whole-scope replacement — re-render, nothing to merge
+    } else if (msg.type === "error") {
+      setStatus("✕ " + (msg.reason || "stream error"));
+    }
+  };
+  hubSocket.onclose = () => { hubSocket = null; setTimeout(connectHub, 1000); };
+}
+
+// the single write path — every landing-page action is one named command. Reports the status
+// rather than a bare failure, because a rejected reference (400) is a prompt for suggestions
+// while anything else is a real error to surface.
+async function cmd(name, args) {
+  let r, data;
+  try {
+    r = await fetch("/api/cmd", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cmd: name, args: args || {} }),
+    });
+    data = await r.json().catch(() => ({}));
+  } catch (e) {
+    return { ok: false, status: 0, reason: String(e) };
+  }
+  if (!r.ok || !data.ok) {
+    return { ok: false, status: r.status, reason: data.reason || `${name} failed (${r.status})` };
+  }
+  return { ok: true, status: r.status, session: data.session };
+}
+
 // the queue page doubles as the session hub: resume or close an in-flight review
-// the per-review state (from a hub "check for updates") → a chip label + a row class for colour
+// the per-review state (server-derived) → a chip label + a row class for colour
 const REVIEW_STATE = {
   merged:      { label: "✓ merged",           cls: "st-merged" },
   closed:      { label: "closed",             cls: "st-closed" },
@@ -381,15 +423,15 @@ const REVIEW_STATE = {
 };
 
 async function checkReviewStates() {
-  if (checkingStates) return;
-  checkingStates = true;
+  if (refreshing) return;
+  refreshing = true;
   setStatus("checking your open reviews…");
-  try {
-    sessionStates = await fetch("/api/sessions/status").then((r) => r.json());
-    sessionStatesAt = Date.now();
-    localStorage.setItem("rm-review-states", JSON.stringify({ at: sessionStatesAt, states: sessionStates }));
-  } catch (e) { setStatus("✕ " + e); }
-  finally { checkingStates = false; setStatus(""); showLanding(); }   // re-render with the states
+  showLanding();                      // paint the "checking…" affordance before the fan-out
+  const res = await cmd("hub.refresh");
+  if (!res.ok) setStatus("✕ " + res.reason);
+  refreshing = false;
+  setStatus("");
+  showLanding();
 }
 
 function agoText(ms) {
@@ -402,49 +444,53 @@ function renderOpenSessions(land, sessions) {
   const hd = document.createElement("div");
   hd.className = "hubhdr";
   hd.appendChild(h2("Open reviews"));
-  hd.appendChild(btn(checkingStates ? "checking…" : "↻ check for updates", "btn ghost", checkReviewStates));
-  if (sessionStatesAt) {
+  hd.appendChild(btn(refreshing ? "checking…" : "↻ check for updates", "btn ghost", checkReviewStates));
+  const checkedAt = hubView && hubView.host_checked_at ? Date.parse(hubView.host_checked_at) : 0;
+  if (checkedAt) {
     const note = document.createElement("span"); note.className = "hubago";
-    note.textContent = `checked ${agoText(sessionStatesAt)}`;
+    note.textContent = `checked ${agoText(checkedAt)}`;
     hd.appendChild(note);
   }
   land.appendChild(hd);
   const list = document.createElement("div");
   list.style.margin = "0 0 26px";
-  sessions
-    .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
-    .forEach((s) => {
-      const loc = s.project ? `${esc(s.project)} !${s.iid}` : "(no MR loaded)";
-      const bits = [];
-      if (s.highlights) bits.push(`${s.highlights} highlight${s.highlights > 1 ? "s" : ""}`);
-      if (s.cards) bits.push(`${s.cards} card${s.cards > 1 ? "s" : ""}`);
-      if (s.drafts_pending) bits.push(`${s.drafts_pending} draft${s.drafts_pending > 1 ? "s" : ""}`);
-      if (s.drafts_posted) bits.push(`${s.drafts_posted} posted`);
-      const st = sessionStates && sessionStates[s.id];
-      const meta = st && REVIEW_STATE[st.state] || null;
-      if (meta && st.state === "discussions" && st.unresolved) meta.label = `${st.unresolved} open discussion${st.unresolved > 1 ? "s" : ""}`;
-      const row = document.createElement("div");
-      row.className = "sitem" + (meta ? " " + meta.cls : "");
-      // the title is a real link to the review (stretched over the card, see .rowlink) and the
-      // project!iid a real link to the MR on the host — both middle-clickable into their own tab
-      row.innerHTML =
-        `<button class="x" title="close review">×</button>` +
-        `<div class="t">${meta ? `<span class="ststate">${esc(meta.label)}</span> ` : ""}` +
-        `<a class="rowlink" href="?s=${encodeURIComponent(s.id)}">${esc(s.title || "(untitled review)")}</a></div>` +
-        `<div class="m">${hostLink(s.url, loc)}${bits.length ? " · " + bits.join(" · ") : ""}</div>`;
-      row.querySelector(".x").onclick = (e) => {
-        e.preventDefault(); e.stopPropagation();
-        closeSession(s.id, s.drafts_pending);
-      };
-      list.appendChild(row);
-    });
+  // no sort here: rows arrive in the order the server decided, so every client shows the same one
+  sessions.forEach((s) => {
+    const mr = s.mr || {};
+    const loc = mr.project ? `${esc(mr.project)} !${mr.iid}` : "(no MR loaded)";
+    const bits = [];
+    if (s.highlights) bits.push(`${s.highlights} highlight${s.highlights > 1 ? "s" : ""}`);
+    if (s.cards) bits.push(`${s.cards} card${s.cards > 1 ? "s" : ""}`);
+    if (s.pending) bits.push(`${s.pending} draft${s.pending > 1 ? "s" : ""}`);
+    if (s.posted) bits.push(`${s.posted} posted`);
+    // the chip reports host-derived state, so it appears once a check has priced this review in
+    const meta = s.host_checked ? REVIEW_STATE[s.state] : null;
+    const label = !meta ? "" :
+      (s.state === "discussions" && s.unresolved)
+        ? `${s.unresolved} open discussion${s.unresolved > 1 ? "s" : ""}`
+        : meta.label;
+    const row = document.createElement("div");
+    row.className = "sitem" + (meta ? " " + meta.cls : "");
+    // the title is a real link to the review (stretched over the card, see .rowlink) and the
+    // project!iid a real link to the MR on the host — both middle-clickable into their own tab
+    row.innerHTML =
+      `<button class="x" title="close review">×</button>` +
+      `<div class="t">${meta ? `<span class="ststate">${esc(label)}</span> ` : ""}` +
+      `<a class="rowlink" href="?s=${encodeURIComponent(s.id)}">${esc(mr.title || "(untitled review)")}</a></div>` +
+      `<div class="m">${hostLink(mr.url, loc)}${bits.length ? " · " + bits.join(" · ") : ""}</div>`;
+    row.querySelector(".x").onclick = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      closeSession(s.id, s.pending);
+    };
+    list.appendChild(row);
+  });
   land.appendChild(list);
 }
 
 async function closeSession(id, pending) {
   if (pending && !confirm(`This review has ${pending} unsubmitted comment(s). Close it anyway?`)) return;
-  try { await fetch(`/api/sessions/${id}`, { method: "DELETE" }); } catch (e) {}
-  showLanding();  // refresh the hub
+  const res = await cmd("session.close", { id });   // the hub republishes itself; nothing to re-fetch
+  if (!res.ok) setStatus("✕ " + res.reason);
 }
 
 // --- links: every navigable thing on this page is a real link ----------------
@@ -461,10 +507,9 @@ function hostLink(url, label) {
 // the session already reviewing this MR, if any — so a ?ref= link (or a stale Track button) resumes
 // that review instead of opening a second one for the same MR
 async function findTracking(ref) {
-  let sessions = [];
-  try { sessions = await fetch("/api/sessions").then((r) => r.json()); } catch (e) {}
-  if (!Array.isArray(sessions)) return null;
-  return sessions.find((s) => s.status === "active" && `${s.project}!${s.iid}` === ref) || null;
+  await hubReady;   // a cold ?ref= tab lands here before the first scope has arrived
+  const sessions = (hubView && hubView.sessions) || [];
+  return sessions.find((s) => s.mr && `${s.mr.project}!${s.mr.iid}` === ref) || null;
 }
 
 // "Track": flag a queue entry for review without leaving the queue. It starts the review session, so
@@ -473,18 +518,15 @@ async function findTracking(ref) {
 async function trackRef(ref, button) {
   button.disabled = true; button.textContent = "tracking…";
   setStatus("tracking " + ref + "…");
-  const fail = (msg) => { setStatus("✕ " + msg); button.disabled = false; button.textContent = "Track"; };
-  try {
-    if (await findTracking(ref)) { setStatus(ref + " is already in your open reviews"); showLanding(); return; }
-    const r = await fetch("/api/sessions", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ref }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) return fail(data.error || `track failed (${r.status})`);
-    setStatus("tracking " + ref + " — it's in your open reviews");
-    showLanding();   // the entry now belongs to "Open reviews", not the queue — re-render both
-  } catch (e) { fail(String(e)); }
+  if (await findTracking(ref)) { setStatus(ref + " is already in your open reviews"); showLanding(); return; }
+  const res = await cmd("session.open", { ref });
+  if (!res.ok) {
+    setStatus("✕ " + res.reason);
+    button.disabled = false; button.textContent = "Track";
+    return;
+  }
+  setStatus("tracking " + ref + " — it's in your open reviews");
+  // the entry moves from the queue into "Open reviews" when the republished scope arrives
 }
 
 // the ?ref= landing: open the review a queue link points at, resuming the existing session when the
@@ -498,15 +540,9 @@ async function openRef(ref) {
   const d = $("diff"); d.innerHTML = ""; d.appendChild(land);
   const hit = await findTracking(ref);
   if (hit) return location.replace(`?s=${encodeURIComponent(hit.id)}`);
-  try {
-    const r = await fetch("/api/sessions", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ref }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) { setStatus("✕ " + (data.error || `load failed (${r.status})`)); return showLanding(); }
-    location.replace(`?s=${encodeURIComponent(data.id)}`);   // replace: don't leave ?ref= in history
-  } catch (e) { setStatus("✕ " + e); showLanding(); }
+  const opened = await cmd("session.open", { ref });
+  if (!opened.ok) { setStatus("✕ " + opened.reason); return showLanding(); }
+  location.replace(`?s=${encodeURIComponent(opened.session)}`);   // replace: no ?ref= left in history
 }
 
 // one MR entry in a picker list — the review queue, search results, Claude's candidates. All three
@@ -533,31 +569,34 @@ async function showLanding() {
   land.className = "land";
   const d = $("diff"); d.innerHTML = ""; d.appendChild(land);
 
-  // open sessions first — local and fast; never block them behind the (possibly slow) host queue
-  let sessions = [];
-  try { sessions = await fetch("/api/sessions").then((r) => r.json()); } catch (e) {}
-  if (!Array.isArray(sessions)) sessions = [];
-  const active = sessions.filter((s) => s.status === "active");
+  if (!hubView) { land.appendChild(empty("connecting to the review server…")); return; }
+  // open reviews are the local half of the scope and are already here; the queue half carries its
+  // own loading state, so a slow host delays the queue block and nothing else
+  const active = hubView.sessions || [];
   renderOpenSessions(land, active);
 
   const head = document.createElement("div");
   head.innerHTML = `<h2>Pick a merge request</h2>`;
   land.appendChild(head);
   const queueBox = document.createElement("div");
-  queueBox.appendChild(empty("loading your review queue…"));
   land.appendChild(queueBox);
-
-  let items = [];
-  try { items = await fetch("/api/queue").then((r) => r.json()); } catch (e) {}
-  if (items && items.error) items = [];
-  renderQueue(queueBox, items, active);
+  renderQueue(queueBox, hubView, active);
 }
 
-function renderQueue(box, items, openSessions) {
+function renderQueue(box, view, openSessions) {
   box.innerHTML = "";
+  const queueState = view.queue_state || "idle";
+  if (queueState === "idle" || queueState === "loading") {
+    box.appendChild(empty("loading your review queue…"));
+    return;
+  }
+  if (queueState === "error") {
+    box.appendChild(empty("your review queue is unavailable — " + (view.queue_error || "host read failed")));
+    return;
+  }
   // drop MRs already open as reviews — they're listed under "Open reviews" above, not the queue
-  const open = new Set((openSessions || []).map((s) => `${s.project}!${s.iid}`));
-  items = items.filter((it) => !open.has(`${it.project}!${it.iid}`));
+  const open = new Set((openSessions || []).filter((s) => s.mr).map((s) => `${s.mr.project}!${s.mr.iid}`));
+  let items = (view.queue || []).filter((it) => !open.has(`${it.project}!${it.iid}`));
   if (!items.length) {
     box.appendChild(empty("your review queue is empty here — paste an MR reference in the top bar (URL or group/proj!iid)."));
     return;
@@ -590,23 +629,17 @@ async function loadRef(ref) {
   const btn = $("load");
   btn.disabled = true; btn.textContent = "Loading…"; setStatus("resolving " + ref + "…");
   try {
-    const r = await fetch("/api/sessions", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ref }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
+    const res = await cmd("session.open", { ref });
+    if (!res.ok) {
       setStatus("");
       // 400 = the reference didn't parse → fall back to flexible search suggestions.
       // Anything else (e.g. 502, a GitLab/auth failure) is a real error — surface it
       // instead of masking it as "no match".
-      if (r.status === 400 && ref) renderSuggestions(ref);
-      else setStatus("✕ " + (data.error || `load failed (${r.status})`));
+      if (res.status === 400 && ref) renderSuggestions(ref);
+      else setStatus("✕ " + res.reason);
       return;
     }
-    location.search = `?s=${data.id}`;  // reload cleanly into the loaded session
-  } catch (e) {
-    setStatus("✕ " + e);
+    location.search = `?s=${res.session}`;  // reload cleanly into the loaded session
   } finally {
     btn.disabled = false; btn.textContent = "Load";
   }

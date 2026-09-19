@@ -105,31 +105,6 @@ class _FakeSource:
         )
 
 
-class _FakeQueueProvider(_FakeSource):
-    async def review_queue_items(self):
-        return [{"host": "gl", "project": "g/p", "iid": 7, "title": "first", "url": "u1"},
-                {"host": "gl", "project": "g/q", "iid": 9, "title": "second", "url": "u2"}]
-
-
-async def test_queue_endpoint_lists_review_queue(tmp_path):
-    manager = SessionManager(root=tmp_path / "sessions")
-    app = create_app(manager=manager, provider=_FakeQueueProvider())
-    from httpx import ASGITransport
-    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        items = (await c.get("/api/queue")).json()
-        assert [i["iid"] for i in items] == [7, 9]
-    await manager.shutdown()
-
-
-async def test_queue_endpoint_empty_without_provider(tmp_path):
-    manager = SessionManager(root=tmp_path / "sessions")
-    app = create_app(manager=manager)
-    from httpx import ASGITransport
-    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        assert (await c.get("/api/queue")).json() == []
-    await manager.shutdown()
-
-
 class _TreeProvider(_FakeSource):
     async def get_repo_tree(self, project, ref):
         return ["a.py", "pkg/b.py", "pkg/c.py"]
