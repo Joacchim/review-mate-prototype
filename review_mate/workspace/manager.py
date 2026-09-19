@@ -66,6 +66,44 @@ class WorkspaceManager:
         return await self._git("-C", str(mirror), "range-diff",
                                f"{old_base}..{old_head}", f"{new_base}..{new_head}")
 
+    async def _patch_ids(self, mirror: Path, a: str, b: str) -> list[str] | None:
+        """The ordered patch-id list for `a..b`, or None when the range holds a merge.
+
+        `git patch-id` has nothing to hash for a merge, so a range containing one cannot be
+        compared this way — the caller must fall back rather than read a short list as a match.
+        """
+        if (await self._git("-C", str(mirror), "rev-list", "--merges", f"{a}..{b}")).strip():
+            return None
+        revs = await self._git("-C", str(mirror), "rev-list", "--reverse", f"{a}..{b}")
+        if not revs.strip():
+            return []
+        patches = await self._git("-C", str(mirror), "diff-tree", "-p", "--stdin", stdin=revs)
+        ids = await self._git("-C", str(mirror), "patch-id", "--stable", stdin=patches)
+        return [line.split()[0] for line in ids.splitlines() if line.strip()]
+
+    async def _is_pure_rebase(self, mirror: Path, old_base: str, old_head: str,
+                              new_base: str, new_head: str) -> bool:
+        """Whether the branch carries the same patches on both sides, in the same order.
+
+        When it does, replaying the reviewed commits onto the current base must reproduce
+        new_head's tree — new_head is already that base plus those patches — so the since-diff is
+        empty and the reviewer has nothing new to read. Answering from the packfile costs tens of
+        milliseconds against roughly a second for the worktree replay, and the replay's whole
+        result in that case is "nothing changed".
+
+        Conservative in both directions that matter: a merge in either range, or any difference in
+        the patch sets, declines and leaves the real replay to decide. A conflict resolved
+        differently during the rebase changes that commit's patch, so it declines too.
+        """
+        try:
+            old = await self._patch_ids(mirror, old_base, old_head)
+            new = await self._patch_ids(mirror, new_base, new_head)
+        except RuntimeError:
+            return False          # any git failure here is not worth failing the diff over
+        if old is None or new is None or not old:
+            return False
+        return old == new
+
     async def since_diff(self, repo: RepoRef, old_base: str, old_head: str,
                          new_base: str, new_head: str) -> dict:
         """A *normal* unified diff of the author's changes since the reviewed version, so the reviewer
@@ -86,6 +124,8 @@ class WorkspaceManager:
         plain = lambda: self._git("-C", str(mirror), "diff", old_head, new_head)
         if not old_base or not new_base or old_base == new_base:   # no rebase (or base unknown) → clean
             return {"diff": await plain(), "clean": True}
+        if await self._is_pure_rebase(mirror, old_base, old_head, new_base, new_head):
+            return {"diff": "", "clean": True}   # same patches on both sides — nothing new to read
         # The base moved (a rebase). To exclude that target-branch noise *while keeping the diff's new
         # side at new_head* — so its line numbers match the MR head blob, exactly like the full diff —
         # replay the *reviewed* commits onto the *current* base, then diff that replay against new_head.
@@ -161,7 +201,7 @@ class WorkspaceManager:
         except RuntimeError:
             return False
 
-    async def _git(self, *args: str, timeout: float = 120.0) -> str:
+    async def _git(self, *args: str, timeout: float = 120.0, stdin: str | None = None) -> str:
         # Never let git block on an interactive credential prompt (no ambient creds → the request
         # would hang forever). Fail fast and bounded: prompts off, stdin closed, hard timeout.
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
@@ -173,12 +213,13 @@ class WorkspaceManager:
         env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")   # SSH clones fail fast, never prompt
         proc = await asyncio.create_subprocess_exec(
             "git", *args,
-            stdin=asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             env=env,
         )
         try:
-            out, err = await asyncio.wait_for(proc.communicate(), timeout)
+            out, err = await asyncio.wait_for(
+                proc.communicate(stdin.encode() if stdin is not None else None), timeout)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
