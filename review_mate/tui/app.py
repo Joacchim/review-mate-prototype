@@ -18,6 +18,7 @@ from prompt_toolkit.layout.containers import HSplit
 from prompt_toolkit.styles import Style
 
 from review_mate.tui.client import ViewClient
+from review_mate.tui.diff import DiffScreen
 
 STATE_BADGE = {
     "merged": ("merged", "class:merged"),
@@ -39,6 +40,7 @@ STYLE = Style.from_dict({
     "merged": "#8b5cf6",
     "error": "#c04040",
     "footer": "#808080",
+    "hunk": "#5c6370",
 })
 
 
@@ -151,8 +153,106 @@ class HubScreen:
 
     # --- interaction ------------------------------------------------------
 
+    def selected_session(self) -> str | None:
+        row = self.selected()
+        return row.data.get("id") if row is not None and row.kind == "session" else None
+
+    def selected_ref(self) -> dict | None:
+        row = self.selected()
+        if row is None or row.kind != "queue":
+            return None
+        return {"host": row.data.get("host"), "project": row.data.get("project"),
+                "iid": row.data.get("iid")}
+
+    def move(self, delta: int) -> None:
+        self.cursor = max(0, min(self.cursor + delta, max(len(self.rows()) - 1, 0)))
+
+
+class Shell:
+    """Holds the screens and the subscription set.
+
+    Navigating is subscribing: opening a review watches its scopes and leaving drops them, so the
+    server only builds what someone is looking at. The shell owns that because it is the only part
+    that knows which screen is in front.
+    """
+
+    def __init__(self, client: ViewClient) -> None:
+        self.client = client
+        self.hub = HubScreen(client)
+        self.diff: DiffScreen | None = None
+        self._app: Application | None = None
+
+    @property
+    def screen(self):
+        return self.diff or self.hub
+
+    def fragments(self) -> list[tuple[str, Any]]:
+        screen = self.screen
+        if isinstance(screen, DiffScreen):
+            screen.rows = self._rows()
+        return screen.fragments()
+
+    def _rows(self) -> int:
+        app = self._app
+        try:
+            return app.output.get_size().rows if app is not None else 24
+        except Exception:
+            return 24
+
+    def invalidate(self) -> None:
+        if self._app is not None:
+            self._app.invalidate()
+
+    def on_change(self) -> None:
+        """Every view update: repaint, and pick up any scope the screen can only ask for now.
+
+        A review screen cannot name the file it wants until the file list has arrived, so the
+        subscription set is reconciled whenever a view lands rather than only when the reader
+        navigates.
+        """
+        self.invalidate()
+        if self.diff is None:
+            return
+        missing = [scope for scope in self.diff.wanted() if scope not in self.client.scopes]
+        if missing:
+            asyncio.create_task(self.run_command(self.client.watch(missing)))
+
+    # --- navigation ---------------------------------------------------------
+
+    async def open_review(self, session: str) -> None:
+        self.diff = DiffScreen(self.client, session)
+        await self.client.watch(self.diff.wanted())
+        self.invalidate()
+
+    async def leave_review(self) -> None:
+        if self.diff is None:
+            return
+        await self.client.unwatch(self.diff.wanted())
+        self.diff = None
+        self.invalidate()
+
+    async def resync(self, previous: list[str]) -> None:
+        """Bring the subscription set in line with what the open screen now needs."""
+        if self.diff is None:
+            return
+        wanted = self.diff.wanted()
+        stale = [scope for scope in previous if scope not in wanted]
+        if stale:
+            await self.client.unwatch(stale)
+        await self.client.watch(wanted)
+        self.invalidate()
+
+    async def run_command(self, coroutine) -> None:
+        await coroutine
+        self.invalidate()
+
+    # --- keys ----------------------------------------------------------------
+
     def bindings(self) -> KeyBindings:
         kb = KeyBindings()
+
+        def spawn(coroutine):
+            asyncio.create_task(self.run_command(coroutine))
 
         @kb.add("q")
         @kb.add("c-c")
@@ -162,49 +262,76 @@ class HubScreen:
         @kb.add("j")
         @kb.add("down")
         def _down(event) -> None:
-            self.cursor = min(self.cursor + 1, max(len(self.rows()) - 1, 0))
+            self.screen.move(1)
 
         @kb.add("k")
         @kb.add("up")
         def _up(event) -> None:
-            self.cursor = max(self.cursor - 1, 0)
+            self.screen.move(-1)
 
         @kb.add("enter")
-        def _track(event) -> None:
-            row = self.selected()
-            if row is None or row.kind != "queue":
+        def _enter(event) -> None:
+            if self.diff is not None:
+                self.diff.toggle_focus()
                 return
-            ref = {"host": row.data.get("host"), "project": row.data.get("project"),
-                   "iid": row.data.get("iid")}
-            asyncio.create_task(self._run(self.client.command("session.open", ref=ref)))
+            session = self.hub.selected_session()
+            if session:
+                spawn(self.open_review(session))
+                return
+            ref = self.hub.selected_ref()
+            if ref:
+                spawn(self.client.command("session.open", ref=ref))
+
+        @kb.add("tab")
+        def _tab(event) -> None:
+            if self.diff is not None:
+                self.diff.toggle_focus()
+
+        @kb.add("n")
+        def _next_file(event) -> None:
+            if self.diff is not None:
+                previous = self.diff.wanted()
+                self.diff.next_file(1)
+                spawn(self.resync(previous))
+
+        @kb.add("p")
+        def _prev_file(event) -> None:
+            if self.diff is not None:
+                previous = self.diff.wanted()
+                self.diff.next_file(-1)
+                spawn(self.resync(previous))
+
+        @kb.add("m")
+        def _mode(event) -> None:
+            if self.diff is not None:
+                previous = self.diff.wanted()
+                self.diff.cycle_mode()
+                spawn(self.resync(previous))
+
+        @kb.add("b")
+        @kb.add("escape")
+        def _back(event) -> None:
+            if self.diff is not None:
+                spawn(self.leave_review())
 
         @kb.add("c")
         def _close(event) -> None:
-            row = self.selected()
-            if row is None or row.kind != "session":
+            if self.diff is not None:
                 return
-            asyncio.create_task(self._run(self.client.command("session.close",
-                                                              id=row.data.get("id"))))
+            session = self.hub.selected_session()
+            if session:
+                spawn(self.client.command("session.close", id=session))
 
         @kb.add("r")
         def _refresh(event) -> None:
-            asyncio.create_task(self._run(self.client.command("hub.refresh")))
+            if self.diff is None:
+                spawn(self.client.command("hub.refresh"))
 
         return kb
-
-    async def _run(self, coro) -> None:
-        await coro
-        self.invalidate()
-
-    def invalidate(self) -> None:
-        app = getattr(self, "_app", None)
-        if app is not None:
-            app.invalidate()
 
     def build(self) -> Application:
         control = FormattedTextControl(self.fragments, focusable=True, show_cursor=False)
         layout = Layout(HSplit([Window(control, wrap_lines=False)]))
-        app = Application(layout=layout, key_bindings=self.bindings(), style=STYLE,
-                          full_screen=True, mouse_support=False)
-        self._app = app
-        return app
+        self._app = Application(layout=layout, key_bindings=self.bindings(), style=STYLE,
+                                full_screen=True, mouse_support=False)
+        return self._app

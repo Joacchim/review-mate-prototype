@@ -43,10 +43,13 @@ class Watcher:
 
     def __init__(self, client: ViewClient):
         self.client = client
+        self.also = None            # the shell, once a test has one — wired as __main__ does
         self._predicate = None
         self._event = asyncio.Event()
 
     def notify(self) -> None:
+        if self.also is not None:
+            self.also()
         view = self.client.views.get("hub")
         if self._predicate is not None and view is not None and self._predicate(view):
             self._event.set()
@@ -72,6 +75,16 @@ async def connected(base_url):
             await stream
         except asyncio.CancelledError:
             pass
+
+
+
+async def wait_for(predicate, timeout=10.0):
+    """Poll a cheap local predicate until it holds — the client's own callback drives the views."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not predicate():
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError("condition never held")
+        await asyncio.sleep(0.01)
 
 
 def build(tmp_path, provider):
@@ -133,3 +146,96 @@ async def test_the_rendered_screen_shows_what_the_server_sent(tmp_path):
             assert "g/p!7  queued" in rendered
             assert "none" in rendered                    # no open reviews yet
             assert "j/k move" in rendered
+
+
+# --- the review screen against a real server --------------------------------
+
+DIFF_A = """@@ -1,2 +1,3 @@ def reserve(self, pu):
+ def reserve(self, pu):
+-    if pu.legacy:
++    if pu.fleet == LEGACY:
++        q = self._legacy
+"""
+DIFF_B = "@@ -10,1 +10,1 @@\n-old = 1\n+new = 2\n"
+
+
+class DiffHost(HostStub):
+    async def load(self, ref):
+        from review_mate.session.state import ChangeType, FileEntry, MRMetadata
+        from review_mate.seams import MRPayload
+        return MRPayload(
+            mr=MRMetadata(host="gitlab", project=ref.project, iid=ref.iid, title="reserve capacity",
+                          source_branch="x", target_branch="main", sha="abc", author="dev",
+                          url="http://x"),
+            files=[FileEntry(path="a.py", change_type=ChangeType.MODIFIED, language="python",
+                             hunks=[{"diff": DIFF_A}]),
+                   FileEntry(path="pkg/b.py", change_type=ChangeType.MODIFIED, language="python",
+                             hunks=[{"diff": DIFF_B}])],
+            threads=[])
+
+
+async def test_the_review_screen_renders_a_real_diff(tmp_path):
+    from review_mate.tui.app import Shell
+
+    async with serving(build(tmp_path, DiffHost())) as base:
+        async with connected(base) as (client, watcher):
+            await watcher.until(lambda v: v.get("queue_state") == "ready")
+            assert await client.command("session.open",
+                                        ref={"host": "gitlab", "project": "g/p", "iid": 1})
+            view = await watcher.until(lambda v: v["sessions"])
+            session = view["sessions"][0]["id"]
+
+            shell = Shell(client)
+            watcher.also = shell.on_change
+            await shell.open_review(session)
+            listing, body = f"diff:{session}:full", f"diff:{session}:full:a.py"
+            await wait_for(lambda: client.views.get(listing) and client.views.get(body))
+
+            rendered = "".join(text for _, text in shell.fragments())
+            assert "g/p!1" in rendered and "reserve capacity" in rendered
+            assert "a.py" in rendered and "pkg/b.py" in rendered          # the file pane
+            assert "if pu.fleet == LEGACY:" in rendered                   # the body
+            assert "q = self._legacy" in rendered
+
+
+async def test_moving_between_files_moves_the_subscription(tmp_path):
+    from review_mate.tui.app import Shell
+
+    async with serving(build(tmp_path, DiffHost())) as base:
+        async with connected(base) as (client, watcher):
+            await watcher.until(lambda v: v.get("queue_state") == "ready")
+            await client.command("session.open", ref={"host": "gitlab", "project": "g/p", "iid": 1})
+            session = (await watcher.until(lambda v: v["sessions"]))["sessions"][0]["id"]
+
+            shell = Shell(client)
+            watcher.also = shell.on_change
+            await shell.open_review(session)
+            first, second = f"diff:{session}:full:a.py", f"diff:{session}:full:pkg/b.py"
+            await wait_for(lambda: client.views.get(first))
+
+            previous = shell.diff.wanted()
+            shell.diff.next_file(1)
+            await shell.resync(previous)
+            await wait_for(lambda: client.views.get(second))
+
+            assert second in client.views
+            assert first not in client.views        # dropped, so the server stops building it
+            rendered = "".join(text for _, text in shell.fragments())
+            assert "new = 2" in rendered
+
+
+async def test_leaving_a_review_drops_its_scopes(tmp_path):
+    from review_mate.tui.app import Shell
+
+    async with serving(build(tmp_path, DiffHost())) as base:
+        async with connected(base) as (client, watcher):
+            await watcher.until(lambda v: v.get("queue_state") == "ready")
+            await client.command("session.open", ref={"host": "gitlab", "project": "g/p", "iid": 1})
+            session = (await watcher.until(lambda v: v["sessions"]))["sessions"][0]["id"]
+            shell = Shell(client)
+            watcher.also = shell.on_change
+            await shell.open_review(session)
+            await wait_for(lambda: client.views.get(f"diff:{session}:full"))
+            await shell.leave_review()
+            assert not [scope for scope in client.views if scope.startswith("diff:")]
+            assert shell.screen is shell.hub

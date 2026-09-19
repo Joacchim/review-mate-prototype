@@ -5,15 +5,15 @@ import argparse
 import asyncio
 from contextlib import suppress
 
-from review_mate.tui.app import HubScreen
+from review_mate.tui.app import Shell
 from review_mate.tui.client import ViewClient
 
 
 async def run(base_url: str) -> None:
     client = ViewClient(base_url)
-    screen = HubScreen(client)
-    app = screen.build()
-    stream = asyncio.create_task(client.run(["hub"], screen.invalidate))
+    shell = Shell(client)
+    app = shell.build()
+    stream = asyncio.create_task(client.run(["hub"], shell.on_change))
     try:
         await app.run_async()
     finally:
