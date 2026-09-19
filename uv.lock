@@ -693,6 +693,7 @@ dependencies = [
     { name = "httpx" },
     { name = "mcp" },
     { name = "pydantic" },
+    { name = "pygments" },
     { name = "starlette" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -717,6 +718,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.28.1" },
     { name = "prompt-toolkit", marker = "extra == 'tui'", specifier = ">=3.0" },
     { name = "pydantic", specifier = ">=2.7" },
+    { name = "pygments", specifier = ">=2.17" },
     { name = "starlette", specifier = ">=0.40" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
     { name = "websockets", marker = "extra == 'tui'", specifier = ">=13" },
