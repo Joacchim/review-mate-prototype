@@ -155,4 +155,6 @@ def create_app(manager: SessionManager | None = None,
     app.state.kb = kb
     app.state.bus = bus
     app.state.hub = hub
+    app.state.diff_scopes = diff_scopes
+    app.state.blob_scopes = blob_scopes
     return app

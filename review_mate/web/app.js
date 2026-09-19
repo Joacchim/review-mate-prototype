@@ -19,7 +19,7 @@ let wantedScopes = [];               // what this page subscribes to, re-sent on
 let refreshing = false;              // a hub.refresh is in flight
 let markHubReady = null;
 const hubReady = new Promise((resolve) => { markHubReady = resolve; });
-const fileContents = {};             // path -> content (cache for non-diff file views + unfold)
+const blobWanted = new Set();        // paths whose whole-file content this page is showing
 const expandedGaps = {};             // path -> Map of gap-start -> {top, bot, all} lines unfolded
 const mdRendered = new Set();        // .md paths currently shown rendered (vs raw diff)
 let viewingPath = null;              // a non-diff file currently shown (plain view)
@@ -83,114 +83,6 @@ function md(src) {
   if (inCode) html += `<pre class="md"><code>${code}</code></pre>`;
   return html;
 }
-
-// --- lightweight, self-contained syntax highlighting ------------------------
-// A conservative tokenizer: strings, line comments (style by file type), numbers, and a union keyword
-// set. Escapes all text (XSS-safe); unknown file types are left plain. Constructs that open on one
-// line and close on a later one — Python triple-quoted blocks, C-style /* */, JS template literals —
-// are carried across lines by a caller-owned state object (see `hlState`), so a docstring reads as one
-// block of prose instead of dissolving into mis-coloured keywords after its first line.
-const SYNTAX_KW = new Set(("if else elif for while do switch case break continue return function " +
-  "func def class struct enum interface type const let var val fn import from export default void " +
-  "int float double bool boolean string char new delete try catch finally throw throws raise with " +
-  "as in is not and or async await yield lambda pass None True False null nil true false undefined " +
-  "this self super extends implements package namespace using module require public private " +
-  "protected static").split(" "));
-
-// A multi-line construct: how it opens, how it closes, how it colours, and whether a backslash
-// escapes its closer. Triple-quoted Python blocks colour as *comments* — formally they're string
-// literals, but a docstring is commentary, and reading it as code is what made diffs hard to scan.
-const BLK_CMT = { open: "/*", close: "*/", cls: "tok-cmt" };
-const PY_DOC = [{ open: '"""', close: '"""', cls: "tok-cmt", esc: true },
-                { open: "'''", close: "'''", cls: "tok-cmt", esc: true }];
-const TEMPLATE = { open: "`", close: "`", cls: "tok-str", esc: true };
-
-function langOf(path) {
-  const ext = (path.split(".").pop() || "").toLowerCase();
-  // backticks only span lines where the language says so (JS template literals, Go raw strings) —
-  // elsewhere a stray one must not paint the rest of the file as a string
-  if (["js", "jsx", "ts", "tsx", "go"].includes(ext)) return { line: "//", blocks: [BLK_CMT, TEMPLATE] };
-  if (["rs", "c", "h", "cc", "cpp", "hpp", "java", "cs", "php", "swift", "kt", "scala"].includes(ext)) return { line: "//", blocks: [BLK_CMT] };
-  if (["py", "pyi"].includes(ext)) return { line: "#", blocks: PY_DOC };
-  if (["rb", "sh", "bash", "zsh", "yml", "yaml", "toml", "pl", "r"].includes(ext)) return { line: "#" };
-  if (["sql", "lua", "hs"].includes(ext)) return { line: "--" };
-  if (["css", "scss", "less"].includes(ext)) return { line: null, blocks: [BLK_CMT] };
-  if (["json"].includes(ext)) return { line: null };
-  return null;   // unknown → no highlighting (stay plain, never mis-colour)
-}
-
-// a fresh carry-state for a contiguous run of lines. Renderers keep one per diff side, since the
-// old and new sides are different versions of the file and their blocks open/close independently.
-function hlState() { return { open: null }; }
-
-const RE_ESC = /[.*+?^${}()|[\]\\]/g;
-
-// the per-language token pattern, built once and cached on the lang descriptor. Group order matters:
-// a line comment wins first, then a block opener (so `"""` beats the `"` string rule), then a
-// single-line string, a number, and finally a bare word.
-function lexer(lang) {
-  if (!lang._re) {
-    const quote = (s) => s.replace(RE_ESC, "\\$&");
-    const cmt = lang.line ? quote(lang.line) + ".*$" : "(?!)";
-    const blocks = (lang.blocks || []).length
-      ? lang.blocks.map((b) => quote(b.open)).join("|") : "(?!)";
-    lang._re = new RegExp("(" + cmt + ")|(" + blocks + ")" +
-      "|(\"(?:\\\\.|[^\"\\\\])*\"?|'(?:\\\\.|[^'\\\\])*'?|`(?:\\\\.|[^`\\\\])*`?)" +
-      "|(\\b\\d[\\w.]*)|([A-Za-z_$][\\w$]*)", "gm");
-  }
-  return lang._re;
-}
-
-// the offset just past `blk`'s closer in `code` at/after `from`, or -1 if it doesn't close here
-function blockEnd(code, from, blk) {
-  for (let i = from; (i = code.indexOf(blk.close, i)) >= 0; i += blk.close.length) {
-    let back = 0;
-    while (blk.esc && i - back - 1 >= from && code[i - back - 1] === "\\") back += 1;
-    if (back % 2 === 0) return i + blk.close.length;   // an odd run of backslashes escapes it
-  }
-  return -1;
-}
-
-// `st` is the multi-line carry-state (from `hlState`), mutated as blocks open and close. Omit it to
-// tokenize one line in isolation — then multi-line constructs only colour to end of line, as before.
-function highlightCode(code, lang, st) {
-  if (!lang) return esc(code);
-  st = st || { open: null };
-  let out = "", i = 0;
-  while (i <= code.length) {
-    if (st.open) {   // inside a multi-line block — everything up to its closer belongs to it
-      const end = blockEnd(code, i, st.open);
-      const stop = end < 0 ? code.length : end;
-      if (stop > i) out += `<span class="${st.open.cls}">${esc(code.slice(i, stop))}</span>`;
-      i = stop;
-      if (end < 0) break;         // still open at end of line — the next line resumes inside it
-      st.open = null;
-      continue;
-    }
-    if (i === code.length) break;
-    const re = lexer(lang);
-    re.lastIndex = i;
-    const m = re.exec(code);
-    if (!m) { out += esc(code.slice(i)); break; }
-    if (m.index > i) out += esc(code.slice(i, m.index));
-    if (m[1]) { out += `<span class="tok-cmt">${esc(m[1])}</span>`; i = re.lastIndex; }
-    else if (m[2]) {   // a block opens here: colour the opener, then let the loop hunt its closer
-      st.open = lang.blocks.find((b) => b.open === m[2]);
-      out += `<span class="${st.open.cls}">${esc(m[2])}</span>`;
-      i = m.index + m[2].length;
-    }
-    else if (m[3]) { out += `<span class="tok-str">${esc(m[3])}</span>`; i = re.lastIndex; }
-    else if (m[4]) { out += `<span class="tok-num">${esc(m[4])}</span>`; i = re.lastIndex; }
-    else { out += SYNTAX_KW.has(m[5]) ? `<span class="tok-kw">${esc(m[5])}</span>` : esc(m[5]); i = re.lastIndex; }
-    if (i === m.index) i += 1;   // guard against a zero-width match looping
-  }
-  return out;
-}
-
-// advance `st` over a line without emitting anything — used to keep the carry-state honest across
-// lines the reader can't see (a collapsed unfold gap), so a block that closes in there doesn't
-// bleed its colour into the next hunk
-function hlSkip(code, lang, st) { if (lang && st) highlightCode(code, lang, st); }
 
 // --- boot -------------------------------------------------------------------
 
@@ -412,13 +304,33 @@ function watchScopes(scopes) {
 // the scopes the review page reads: the file list, and the file being shown
 function diffScopes() {
   const listing = `diff:${SID}:full`;
-  return currentFile ? [listing, `${listing}:${currentFile}`] : [listing];
+  const scopes = currentFile ? [listing, `${listing}:${currentFile}`] : [listing];
+  blobWanted.forEach((path) => scopes.push(`blob:${SID}:full:${path}`));
+  return scopes;
 }
 
 // the hunks for a path, as the server built them — null while the scope has not arrived
 function scopeHunks(path) {
   const view = scopeViews[`diff:${SID}:full:${path}`];
   return view && view.state === "ready" ? view.hunks : null;
+}
+
+// a whole file at the MR head: [{n, text, tokens}], or null until its scope arrives
+function blobLines(path) {
+  const view = scopeViews[`blob:${SID}:full:${path}`];
+  return view && view.state === "ready" ? view.lines : null;
+}
+
+function blobText(path) {
+  const lines = blobLines(path);
+  return lines === null ? undefined : lines.map((l) => l.text).join("\n");
+}
+
+// ask for a file's content — the scope arrives on the stream and the page re-renders
+function wantBlob(path) {
+  if (blobWanted.has(path)) return;
+  blobWanted.add(path);
+  watchScopes(diffScopes());
 }
 
 // the single write path — every landing-page action is one named command. Reports the status
@@ -983,17 +895,10 @@ function selectFile(entry) {
   currentFile = entry.path;
   if (entry.diff) { viewingPath = null; render(); }
   else {
-    viewingPath = entry.path; render();
-    if (!(entry.path in fileContents)) fetchFile(entry.path);
+    viewingPath = entry.path;
+    wantBlob(entry.path);
+    render();
   }
-}
-
-async function fetchFile(path) {
-  try {
-    const d = await fetch(`/api/sessions/${SID}/file?path=${encodeURIComponent(path)}`).then((r) => r.json());
-    fileContents[path] = (d && typeof d.content === "string") ? d.content : `(could not load: ${d.error || "error"})`;
-  } catch (e) { fileContents[path] = "(failed to load)"; }
-  if (viewingPath === path) renderDiff();
 }
 
 // --- diff -------------------------------------------------------------------
@@ -1253,19 +1158,14 @@ function renderFileDiff(el, files, suffix, interactive) {
 
 // a rendered Markdown view of a doc's current version, toggled from the diff (the raw diff stays a
 // click away). Scroll-sync to the changed hunk is a future step — this gives the reading view.
-async function toggleMd(path) {
+function toggleMd(path) {
   if (mdRendered.has(path)) mdRendered.delete(path); else mdRendered.add(path);
-  if (mdRendered.has(path) && fileContents[path] === undefined) {
-    try {
-      const d = await fetch(`/api/sessions/${SID}/file?path=${encodeURIComponent(path)}`).then((r) => r.json());
-      fileContents[path] = (d && typeof d.content === "string") ? d.content : "";
-    } catch (e) { fileContents[path] = ""; }
-  }
+  if (mdRendered.has(path)) wantBlob(path);
   renderDiff();
 }
 
 function renderMarkdownDoc(el, path) {
-  const content = fileContents[path];
+  const content = blobText(path);
   if (content === undefined) { el.appendChild(empty("loading " + path + "…")); return; }
   const box = document.createElement("div");
   box.className = "mdview md";
@@ -1274,15 +1174,11 @@ function renderMarkdownDoc(el, path) {
 }
 
 function renderUnifiedUnfoldable(table, hunks, path, hl) {
-  const lines = fileContents[path] !== undefined ? fileContents[path].split("\n") : null;
+  const lines = blobLines(path);
   const exp = expandedGaps[path] || new Map();
-  const lang = langOf(path);
-  // carry-state for the gap rows only: their text comes from the blob, not from the scope, so it
-  // still needs colouring here
-  const sts = { neu: hlState(), old: hlState() };
   let cursor = 1;   // next not-yet-shown new-side line number
   hunks.forEach((h) => {
-    renderGap(table, path, cursor, h.new_start - 1, lines, exp, hl, lang, sts);
+    renderGap(table, path, cursor, h.new_start - 1, lines, exp, hl);
     // the hunk's own rows are built from the scope — sides, numbers and spans are all fields
     const block = document.createElement("tbody");
     block.innerHTML = unifiedRowsHtml([h], hl);
@@ -1290,7 +1186,7 @@ function renderUnifiedUnfoldable(table, hunks, path, hl) {
     cursor = h.new_start + h.new_count;
   });
   if (lines) {
-    renderGap(table, path, cursor, lines.length, lines, exp, hl, lang, sts);   // trailing gap — exact, length known
+    renderGap(table, path, cursor, lines.length, lines, exp, hl);   // trailing gap — exact, length known
   } else {
     // file length isn't known until the blob is fetched, so a single-hunk file that stops before EOF
     // couldn't reveal its tail. Offer a band that fetches on click; the re-render then shows the exact tail.
@@ -1312,34 +1208,27 @@ const UNFOLD_CHUNK = 20;   // lines revealed per incremental unfold step
 
 // a gap of new-side lines [from..to]: revealed context rows at the edges (grown incrementally) and,
 // for whatever is still collapsed in the middle, a band offering ▼/▲ N-more and "show all".
-function renderGap(table, path, from, to, lines, exp, hl, lang, sts) {
+function renderGap(table, path, from, to, lines, exp, hl) {
   if (to < from) return;
   const size = to - from + 1;
   const g = exp.get(from) || { top: 0, bot: 0, all: false };
-  const lineAt = (n) => (lines && lines[n - 1] !== undefined ? lines[n - 1] : "");
+  const at = (n) => (lines && lines[n - 1] !== undefined ? lines[n - 1] : { text: "", tokens: [] });
+  // A revealed line comes from the blob scope already lexed. The server saw the whole file, so a
+  // docstring that opens above a collapsed run and closes inside it is coloured correctly here —
+  // which is what the old carry-state was approximating without ever being able to see those lines.
   const ctxRow = (n) => {
-    const text = lineAt(n);
+    const line = at(n);
     const tr = document.createElement("tr");
     tr.className = "line ctx" + (hl.has(n) ? " hl" : "");
-    const code = esc(" ") + highlightCode(text, lang, sts && sts.neu);
-    if (sts) hlSkip(text, lang, sts.old);   // gap context is in both versions
+    const code = " " + tokenSpans(line.text, line.tokens);   // align with the +/-/space column
     tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${code}</td>`;
     table.appendChild(tr);
-  };
-  // a collapsed run is still part of the file: walk the carry-state over it so a docstring that
-  // closes out of sight doesn't bleed its colour into the next hunk. Without the blob we can't —
-  // then reset to top-level, the same assumption the tokenizer made before it carried state at all.
-  const skipRun = (lo, hi) => {
-    if (!sts) return;
-    if (!lines) { sts.neu = hlState(); sts.old = hlState(); return; }
-    for (let n = lo; n <= hi; n++) { hlSkip(lineAt(n), lang, sts.neu); hlSkip(lineAt(n), lang, sts.old); }
   };
   if ((g.all || g.top + g.bot >= size) && lines) { for (let n = from; n <= to; n++) ctxRow(n); return; }
   const topN = Math.min(g.top, size);
   const botN = Math.min(g.bot, size - topN);
   if (lines) for (let n = from; n < from + topN; n++) ctxRow(n);          // revealed near the previous hunk
   const mFrom = from + topN, mTo = to - botN, mSize = mTo - mFrom + 1;    // still-collapsed middle
-  skipRun(mFrom, mTo);
   if (mSize > 0) {
     const tr = document.createElement("tr"); tr.className = "expand";
     const ln = document.createElement("td"); ln.className = "ln"; ln.textContent = "⋯";
@@ -1357,19 +1246,14 @@ function renderGap(table, path, from, to, lines, exp, hl, lang, sts) {
   if (lines) for (let n = to - botN + 1; n <= to; n++) ctxRow(n);          // revealed near the next hunk
 }
 
-async function expandGap(path, from, kind) {
+function expandGap(path, from, kind) {
   const m = expandedGaps[path] = expandedGaps[path] || new Map();
   const g = m.get(from) || { top: 0, bot: 0, all: false };
   if (kind === "all") g.all = true;
   else if (kind === "top") g.top += UNFOLD_CHUNK;
   else if (kind === "bot") g.bot += UNFOLD_CHUNK;
   m.set(from, g);
-  if (fileContents[path] === undefined) {   // reveal needs the full blob — fetch once, then re-render
-    try {
-      const d = await fetch(`/api/sessions/${SID}/file?path=${encodeURIComponent(path)}`).then((r) => r.json());
-      fileContents[path] = (d && typeof d.content === "string") ? d.content : "";
-    } catch (e) { fileContents[path] = ""; }
-  }
+  wantBlob(path);   // revealing needs the file — the scope arrives and re-renders
   renderDiff();
 }
 
@@ -1452,24 +1336,21 @@ function renderFileView(el, path) {
   name.className = "fname";
   name.textContent = path + "  ·  related file (not in the diff) · click or drag to ask for context";
   el.appendChild(name);
-  const content = fileContents[path];
-  if (content === undefined) { el.appendChild(empty("loading " + path + "…")); return; }
+  const lines = blobLines(path);
+  if (lines === null) { el.appendChild(empty("loading " + path + "…")); return; }
   const hl = highlightLines(path);
-  const lang = langOf(path);
-  const st = hlState();   // whole file, in order — docstrings and block comments carry across lines
   const table = document.createElement("table");
   table.className = "hunk";
-  content.split("\n").forEach((line, i) => {
-    const n = i + 1;
+  lines.forEach((line) => {
     const tr = document.createElement("tr");
-    tr.className = "line ctx" + (hl.has(n) ? " hl" : "");
-    tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${highlightCode(line, lang, st)}</td>`;
+    tr.className = "line ctx" + (hl.has(line.n) ? " hl" : "");
+    tr.innerHTML = `<td class="ln">${line.n}</td>`
+                 + `<td class="code" data-line="${line.n}">${tokenSpans(line.text, line.tokens)}</td>`;
     table.appendChild(tr);
   });
   wireSelection(table, path);
   el.appendChild(table);
 }
-
 // click a line = toggle its highlight (dedupe + discard-by-reclick); drag = select a block
 function wireSelection(table, path) {
   let dragStart = null;

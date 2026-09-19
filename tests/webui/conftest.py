@@ -78,13 +78,17 @@ def base_url(staged_app) -> str:
 def staged(fake_manager, stub_host, staged_app):
     """Reset the staged state between tests, so a scenario is the only thing a test relies on.
 
-    The hub scope caches what it read from the host for the life of the application, so resetting
-    the manager alone would leak one test's successful queue read into the next one's failure.
+    Every scope caches what it read, for the life of the application — correctly, since content at
+    a sha cannot change and a verdict holds until the host is asked again. Tests reuse one sha with
+    different content, so each cache is dropped here. Resetting the manager alone leaks one test's
+    file into the next test's.
     """
     fake_manager.reset()
     stub_host.queue = list(QUEUE)
+    stub_host.files.clear()
     stub_host.fail_with = None
-    staged_app.state.hub.reset()
+    for scope in (staged_app.state.hub, staged_app.state.diff_scopes, staged_app.state.blob_scopes):
+        scope.reset()
     yield fake_manager
     fake_manager.reset()
 

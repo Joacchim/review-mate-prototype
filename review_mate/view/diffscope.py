@@ -294,6 +294,12 @@ class DiffScopes:
             with suppress(asyncio.CancelledError):
                 await task
 
+    def reset(self) -> None:
+        """Drop every resolved mode, so the next build resolves again."""
+        self._resolved.clear()
+        self._failed.clear()
+        self._aligned.clear()
+
     # --- internals ---------------------------------------------------------
 
     def _snapshot(self, session_id: str):
@@ -411,3 +417,10 @@ class BlobScopes:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+
+    def reset(self) -> None:
+        """Drop every cached blob. Content at a sha cannot change, so nothing invalidates this in
+        use — a caller that reuses a sha for different content has to say so."""
+        self._content.clear()
+        self._failed.clear()
+

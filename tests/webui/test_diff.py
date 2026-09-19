@@ -97,3 +97,24 @@ def test_a_markdown_file_can_be_read_instead_of_diffed(diff, staged, stub_host):
     diff.toggle_markdown()
     expect(diff.markdown_view).to_be_visible()
     expect(diff.markdown_view.locator("em")).to_have_text("emphasis")
+
+
+def test_revealed_context_arrives_already_coloured(diff, staged, stub_host):
+    """Unfolded lines come from the blob scope, lexed server-side against the whole file — so a
+    construct that opens above a collapsed run and closes inside it is still coloured correctly,
+    which a client walking only the lines it can see could not do."""
+    stub_host.files["scheduler/capacity.py"] = (
+        'def head():\n    """a docstring\n'
+        + "\n".join(f"    line {n}" for n in range(1, 40))
+        + '\n    that closes here"""\n'
+        + "    def reserve(self, pu):\n        if pu.fleet == LEGACY:\n"
+        + "            q = self._legacy\n        return q.take(pu.size)\n"
+    )
+    staged.put(two_file_review("s1"))
+    diff.load("s1")
+    diff.unfold_all()
+    expect(diff.table).to_contain_text("a docstring")
+    # the whole run reads as one block of prose rather than dissolving after its first line
+    expect(diff.token("str").or_(diff.token("cmt")).first).to_be_visible()
+    revealed = diff.page.locator('table.hunk td.code[data-line="20"]')
+    expect(revealed.locator("span")).to_have_count(1)
