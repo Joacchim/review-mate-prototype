@@ -84,7 +84,7 @@ def create_app(manager: SessionManager | None = None,
     # render what they carry; none of them re-derive review state.
     from review_mate.server.view_routes import build_view_routes
     from review_mate.view.bus import ViewBus
-    from review_mate.view.diffscope import DiffScopes
+    from review_mate.view.diffscope import BlobScopes, DiffScopes
     from review_mate.view.hub import HubScope
     from review_mate.view.protocol import HUB
     bus = ViewBus()
@@ -92,16 +92,20 @@ def create_app(manager: SessionManager | None = None,
                    user=getattr(provider, "username", "") or "")
     bus.register(HUB, hub.build)
     diff_scopes = DiffScopes(manager)
-    bus.register_family("diff", diff_scopes.build_diff)
-    bus.register_family("file", diff_scopes.build_file)
+    bus.register_family("diff", diff_scopes.build)
+    blob_scopes = BlobScopes(manager, provider=provider, publish=bus.publish)
+    bus.register_family("blob", blob_scopes.build)
 
     async def republish_session(session_id: str) -> None:
         """Rebuild the reading scopes a client currently holds for one session.
 
         Called where a session's files actually change — a host re-sync — rather than on every
         event, and only for scopes someone is watching, so a review nobody has open costs nothing.
+        Blobs are included: a re-sync can move the head, and a blob reads at whatever sha its mode
+        resolves to.
         """
-        for scope in bus.watched(f"diff:{session_id}") | bus.watched(f"file:{session_id}:"):
+        held = bus.watched(f"diff:{session_id}:") | bus.watched(f"blob:{session_id}:")
+        for scope in held:
             await bus.publish(scope)
 
     routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider, broker=broker,
@@ -130,6 +134,7 @@ def create_app(manager: SessionManager | None = None,
         else:
             yield
         await hub.aclose()
+        await blob_scopes.aclose()
         await manager.shutdown()
 
     app = Starlette(routes=routes, lifespan=lifespan, middleware=[Middleware(_NoCacheUI)])

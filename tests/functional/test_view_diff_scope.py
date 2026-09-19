@@ -78,8 +78,8 @@ def test_a_file_scope_carries_numbered_lines_and_tokens(tmp_path):
     with TestClient(build(tmp_path)) as tc:
         sid = open_session(tc)
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": [f"file:{sid}:full:a.py"]})
-            view = read_scope(ws, f"file:{sid}:full:a.py")["view"]
+            ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:full:a.py"]})
+            view = read_scope(ws, f"diff:{sid}:full:a.py")["view"]
             assert view["state"] == "ready" and view["language"] == "python"
             lines = view["hunks"][0]["lines"]
             assert [line["side"] for line in lines] == \
@@ -95,8 +95,8 @@ def test_rereading_one_file_leaves_the_others_untouched(tmp_path):
         sid = open_session(tc)
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "scopes": [
-                f"diff:{sid}:full", f"file:{sid}:full:a.py", f"file:{sid}:full:pkg/b.py"]})
-            for scope in (f"diff:{sid}:full", f"file:{sid}:full:a.py", f"file:{sid}:full:pkg/b.py"):
+                f"diff:{sid}:full", f"diff:{sid}:full:a.py", f"diff:{sid}:full:pkg/b.py"]})
+            for scope in (f"diff:{sid}:full", f"diff:{sid}:full:a.py", f"diff:{sid}:full:pkg/b.py"):
                 assert read_scope(ws, scope)["seq"] == 0
 
             tc.post(f"/api/sessions/{sid}/refresh-threads", json={})
@@ -105,16 +105,16 @@ def test_rereading_one_file_leaves_the_others_untouched(tmp_path):
             for _ in range(3):
                 msg = json.loads(ws.receive_text())
                 seqs[msg["scope"]] = msg["seq"]
-            assert seqs == {f"diff:{sid}:full": 1, f"file:{sid}:full:a.py": 1,
-                            f"file:{sid}:full:pkg/b.py": 1}
+            assert seqs == {f"diff:{sid}:full": 1, f"diff:{sid}:full:a.py": 1,
+                            f"diff:{sid}:full:pkg/b.py": 1}
 
 
 def test_a_path_the_change_does_not_touch_says_so(tmp_path):
     with TestClient(build(tmp_path)) as tc:
         sid = open_session(tc)
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": [f"file:{sid}:full:nope.py"]})
-            view = read_scope(ws, f"file:{sid}:full:nope.py")["view"]
+            ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:full:nope.py"]})
+            view = read_scope(ws, f"diff:{sid}:full:nope.py")["view"]
             assert view["state"] == "unknown-file" and view["hunks"] == []
 
 
@@ -132,3 +132,141 @@ def test_an_unknown_session_is_reported_not_crashed(tmp_path):
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "scopes": ["diff:ghost:full"]})
             assert read_scope(ws, "diff:ghost:full")["view"]["state"] == "unknown-session"
+
+
+def test_a_path_may_contain_a_colon(tmp_path):
+    """Only the session and mode are colon-free, so the split must not claim the path's own."""
+    from review_mate.view.diffscope import parse_address
+    address = parse_address("abc123:full:pkg/odd:name.py")
+    assert address.path == "pkg/odd:name.py" and address.mode == "full"
+
+
+def test_a_malformed_name_is_named_rather_than_mis_split(tmp_path):
+    with TestClient(build(tmp_path)) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            # "bogus" is not a mode, so this is not a session with a file called "a.py"
+            ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:bogus:a.py"]})
+            view = read_scope(ws, f"diff:{sid}:bogus:a.py")["view"]
+            assert view["state"] == "malformed-name"
+
+
+def test_a_file_scope_is_the_list_scope_plus_a_path(tmp_path):
+    """The property that makes one family worth having: a client concatenates, never reassembles."""
+    with TestClient(build(tmp_path)) as tc:
+        sid = open_session(tc)
+        listing = f"diff:{sid}:full"
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [listing]})
+            files = read_scope(ws, listing)["view"]["files"]
+            names = [f"{listing}:{row['path']}" for row in files]      # concatenation, nothing else
+            ws.send_json({"action": "subscribe", "scopes": names})
+            for name in names:
+                assert read_scope(ws, name)["view"]["state"] == "ready"
+
+
+# --- blob:<sid>:<mode>:<path> — the content a reviewer unfolds into ----------
+
+FILE_AT_HEAD = "def reserve(self, pu):\n    if pu.fleet == LEGACY:\n        q = self._legacy\n    return q\n"
+
+
+class BlobHost(TwoFileHost):
+    def __init__(self, fail=None):
+        super().__init__()
+        self.reads = []
+        self._fail = fail
+
+    async def get_file(self, project, path, sha):
+        self.reads.append((project, path, sha))
+        if self._fail is not None:
+            raise self._fail
+        return FILE_AT_HEAD
+
+
+def build_with(tmp_path, provider):
+    manager = SessionManager(root=tmp_path / "sessions", mr_source=provider)
+    return create_app(manager=manager, provider=provider, with_mcp=False,
+                      resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+
+
+def test_a_blob_loads_then_arrives_numbered_and_tokenized(tmp_path):
+    provider = BlobHost()
+    with TestClient(build_with(tmp_path, provider)) as tc:
+        sid = open_session(tc)
+        scope = f"blob:{sid}:full:a.py"
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [scope]})
+            first = read_scope(ws, scope)["view"]
+            assert first["state"] in ("loading", "ready")      # a fast host may beat the first send
+            ready = first if first["state"] == "ready" else read_scope(ws, scope)["view"]
+            assert ready["state"] == "ready" and ready["sha"] == "abc"
+            assert [line["n"] for line in ready["lines"][:3]] == [1, 2, 3]
+            assert ready["lines"][0]["text"] == "def reserve(self, pu):"
+            assert any(kind == "keyword" for _, _, kind in ready["lines"][0]["tokens"])
+
+
+def test_blob_line_numbers_are_the_diffs_new_side(tmp_path):
+    """So a client splices revealed lines into a gap without translating coordinates."""
+    provider = BlobHost()
+    with TestClient(build_with(tmp_path, provider)) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:full:a.py",
+                                                            f"blob:{sid}:full:a.py"]})
+            hunk = read_scope(ws, f"diff:{sid}:full:a.py")["view"]["hunks"][0]
+            view = read_scope(ws, f"blob:{sid}:full:a.py")["view"]
+            if view["state"] != "ready":
+                view = read_scope(ws, f"blob:{sid}:full:a.py")["view"]
+            added = [line for line in hunk["lines"] if line["side"] == "added"][0]
+            blob_line = next(line for line in view["lines"] if line["n"] == added["new"])
+            assert blob_line["text"] == added["text"]
+
+
+def test_one_host_read_serves_repeated_builds(tmp_path):
+    provider = BlobHost()
+    with TestClient(build_with(tmp_path, provider)) as tc:
+        sid = open_session(tc)
+        scope = f"blob:{sid}:full:a.py"
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [scope]})
+            view = read_scope(ws, scope)["view"]
+            if view["state"] != "ready":
+                read_scope(ws, scope)
+            tc.post(f"/api/sessions/{sid}/refresh-threads", json={})   # republishes held scopes
+            read_scope(ws, scope)
+            assert provider.reads.count(("g/p", "a.py", "abc")) == 1   # content at a sha is fixed
+
+
+def test_a_failed_blob_read_is_reported_in_the_view(tmp_path):
+    provider = BlobHost(fail=RuntimeError("gitlab 404"))
+    with TestClient(build_with(tmp_path, provider)) as tc:
+        sid = open_session(tc)
+        scope = f"blob:{sid}:full:a.py"
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [scope]})
+            view = read_scope(ws, scope)["view"]
+            if view["state"] == "loading":
+                view = read_scope(ws, scope)["view"]
+            assert view["state"] == "error" and "gitlab 404" in view["error"]
+
+
+def test_a_commit_mode_reads_at_that_commit(tmp_path):
+    provider = BlobHost()
+    with TestClient(build_with(tmp_path, provider)) as tc:
+        sid = open_session(tc)
+        scope = f"blob:{sid}:commit@deadbee:a.py"
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [scope]})
+            view = read_scope(ws, scope)["view"]
+            if view["state"] == "loading":
+                view = read_scope(ws, scope)["view"]
+            assert view["sha"] == "deadbee"
+            assert provider.reads == [("g/p", "a.py", "deadbee")]
+
+
+def test_a_blob_needs_a_path(tmp_path):
+    with TestClient(build(tmp_path)) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [f"blob:{sid}:full"]})
+            assert read_scope(ws, f"blob:{sid}:full")["view"]["state"] == "malformed-name"
