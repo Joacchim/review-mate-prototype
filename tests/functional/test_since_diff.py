@@ -1,10 +1,11 @@
-"""The diff-versions core correctness: a base-aware interdiff (git range-diff) hides rebase noise —
-a pure rebase yields no patch content, a real author edit does. Drives WorkspaceManager against a
-seeded on-disk git repo (real `git`)."""
+"""since_diff correctness against a seeded on-disk git repo, with real `git`.
+
+A rebase must not read as author work: a pure rebase yields nothing to review, a real edit yields
+the edit, and the patch-id short-circuit must reach the first answer without paying for a replay.
+"""
 import subprocess
 
 from review_mate.seams import RepoRef
-from review_mate.server.routes import _interdiff_empty
 from review_mate.workspace.manager import WorkspaceManager
 
 
@@ -44,23 +45,6 @@ def _seed_repo(root):
     _git(src, "tag", "t_edit")
     return dict(clone_url=str(src), base1=_rev(src, "t_base1"), head1=_rev(src, "t_head1"),
                 base2=_rev(src, "t_base2"), head2_pure=_rev(src, "t_pure"), head2_edit=_rev(src, "t_edit"))
-
-
-async def test_pure_rebase_yields_empty_interdiff(tmp_path):
-    s = _seed_repo(tmp_path)
-    ws = WorkspaceManager(root=tmp_path / "home")
-    repo = RepoRef(host="gitlab", project="g/p", clone_url=s["clone_url"])
-    text = await ws.range_diff(repo, s["base1"], s["head1"], s["base2"], s["head2_pure"])
-    assert _interdiff_empty(text) is True   # the rebase brought no author change → nothing to review
-
-
-async def test_real_edit_yields_nonempty_interdiff(tmp_path):
-    s = _seed_repo(tmp_path)
-    ws = WorkspaceManager(root=tmp_path / "home")
-    repo = RepoRef(host="gitlab", project="g/p", clone_url=s["clone_url"])
-    text = await ws.range_diff(repo, s["base1"], s["head1"], s["base2"], s["head2_edit"])
-    assert _interdiff_empty(text) is False  # the author's edit shows, base movement does not
-    assert "BB" in text                     # the actual evolution is present
 
 
 # --- the pure-rebase short-circuit ------------------------------------------

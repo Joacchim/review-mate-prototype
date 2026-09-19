@@ -46,8 +46,16 @@ FILE_HEADER = "diff --git "
 FILE_HEADER_PATHS = re.compile(r"^diff --git a/(.+) b/\1$")
 
 
-def split_files(diff_text: str) -> list[tuple[str, str]]:
-    """Split a multi-file unified diff into `(path, text)`, one entry per file.
+class SplitFile(BaseModel):
+    """One file's slice of a multi-file diff, with what its headers said about it."""
+    path: str = ""
+    old_path: str | None = None
+    change_type: str = "modified"     # modified | added | deleted | renamed
+    text: str = ""
+
+
+def split_files(diff_text: str) -> list[SplitFile]:
+    """Split a multi-file unified diff into one entry per file.
 
     A `diff --git` line only begins a file when the walk is not inside a hunk body. Diff *content*
     can contain that string — this repository's own tests do — and matching on it blindly cuts a
@@ -55,28 +63,35 @@ def split_files(diff_text: str) -> list[tuple[str, str]]:
     "inside a body" answerable without guessing.
 
     The path is read from the `+++ b/…` line, falling back to `--- a/…` for a deletion and to the
-    `diff --git` header itself for an added or removed empty file, which carries neither.
+    `diff --git` header itself for an added or removed empty file, which carries neither. A rename
+    keeps both ends, because a move is shown as a path divergence and needs them.
     """
-    files: list[tuple[str, list[str]]] = []
+    files: list[tuple[SplitFile, list[str]]] = []
     current: list[str] | None = None
-    path = ""
+    meta = SplitFile()
     taken_old = taken_new = want_old = want_new = 0
     inside = False
 
     def flush() -> None:
         if current is None:
             return
-        name = path
-        if not name and current:
+        if not meta.path and current:
             header_paths = FILE_HEADER_PATHS.match(current[0])
             if header_paths:
-                name = header_paths.group(1)
-        files.append((name, current))
+                meta.path = header_paths.group(1)
+        if not meta.path and meta.old_path:      # a deletion: the new side was /dev/null
+            meta.path = meta.old_path
+        if meta.old_path == meta.path:
+            meta.old_path = None
+        files.append((meta, current))
 
     for raw in (diff_text or "").split("\n"):
         if not inside and raw.startswith(FILE_HEADER):
             flush()
-            current, path = [], ""
+            current, meta = [], SplitFile()
+            header_paths = FILE_HEADER_PATHS.match(raw)
+            if header_paths:
+                meta.old_path = meta.path = header_paths.group(1)
             taken_old = taken_new = want_old = want_new = 0
             current.append(raw)
             continue
@@ -109,13 +124,23 @@ def split_files(diff_text: str) -> list[tuple[str, str]]:
             if taken_old >= want_old and taken_new >= want_new:
                 inside = False
             continue
-        if raw.startswith("+++ ") and not raw.endswith("/dev/null"):
-            path = raw[4:].split("\t")[0].removeprefix("b/")
-        elif raw.startswith("--- ") and not path and not raw.endswith("/dev/null"):
-            path = raw[4:].split("\t")[0].removeprefix("a/")
+        if raw.startswith("new file"):
+            meta.change_type = "added"
+        elif raw.startswith("deleted file"):
+            meta.change_type = "deleted"
+        elif raw.startswith("rename from "):
+            meta.old_path, meta.change_type = raw[len("rename from "):], "renamed"
+        elif raw.startswith("rename to "):
+            meta.path, meta.change_type = raw[len("rename to "):], "renamed"
+        elif raw.startswith("+++ ") and not raw.endswith("/dev/null"):
+            meta.path = raw[4:].split("\t")[0].removeprefix("b/")
+        elif raw.startswith("--- ") and not raw.endswith("/dev/null"):
+            meta.old_path = raw[4:].split("\t")[0].removeprefix("a/")
         current.append(raw)
     flush()
-    return [(name, "\n".join(lines)) for name, lines in files]
+    for entry, body in files:
+        entry.text = "\n".join(body)
+    return [entry for entry, _ in files]
 
 
 def parse(diff_text: str) -> list[Hunk]:

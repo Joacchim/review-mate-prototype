@@ -95,28 +95,28 @@ def test_content_containing_a_file_header_does_not_start_a_file():
         " end\n"
     )
     files = split_files(text)
-    assert [path for path, _ in files] == ["doc.md"]
-    assert "fake.py" in files[0][1]            # it stayed inside doc.md's hunk, as content
+    assert [f.path for f in files] == ["doc.md"]
+    assert "fake.py" in files[0].text            # it stayed inside doc.md's hunk, as content
 
 
 def test_an_added_empty_file_is_named_from_its_header():
     text = ("diff --git a/pkg/__init__.py b/pkg/__init__.py\n"
             "new file mode 100644\nindex 0000000..e69de29\n")
-    assert [path for path, _ in split_files(text)] == ["pkg/__init__.py"]
+    assert [f.path for f in split_files(text)] == ["pkg/__init__.py"]
 
 
 def test_a_deletion_is_named_from_the_old_side():
     text = ("diff --git a/gone.py b/gone.py\ndeleted file mode 100644\n"
             "--- a/gone.py\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-x = 1\n")
-    assert [path for path, _ in split_files(text)] == ["gone.py"]
+    assert [f.path for f in split_files(text)] == ["gone.py"]
 
 
 def test_each_split_file_parses_on_its_own():
     text = ("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,1 +1,1 @@\n-a\n+b\n"
             "diff --git a/c.py b/c.py\n--- a/c.py\n+++ b/c.py\n@@ -5,1 +5,2 @@\n c\n+d\n")
     files = split_files(text)
-    assert [path for path, _ in files] == ["a.py", "c.py"]
-    second = parse(files[1][1])[0]
+    assert [f.path for f in files] == ["a.py", "c.py"]
+    second = parse(files[1].text)[0]
     assert second.new_start == 5 and [line.side for line in second.lines] == [CONTEXT, ADDED]
 
 
@@ -128,4 +128,30 @@ def test_splitting_real_history_matches_git(tmp_path):
                                   capture_output=True, text=True).stdout.split()
         text = subprocess.run(["git", "show", "--format=", "--unified=3", rev],
                               capture_output=True, text=True).stdout
-        assert [path for path, _ in split_files(text)] == expected, rev
+        assert [f.path for f in split_files(text)] == expected, rev
+
+
+def test_a_rename_keeps_both_ends():
+    """A move is shown as a path divergence, so the old path has to survive the split."""
+    text = ("diff --git a/test/a/file.py b/test/b/file.py\nsimilarity index 96%\n"
+            "rename from test/a/file.py\nrename to test/b/file.py\n"
+            "--- a/test/a/file.py\n+++ b/test/b/file.py\n@@ -1,2 +1,2 @@\n a\n-b\n+c\n")
+    entry = split_files(text)[0]
+    assert entry.path == "test/b/file.py" and entry.old_path == "test/a/file.py"
+    assert entry.change_type == "renamed"
+
+
+def test_an_addition_and_a_deletion_are_named_as_such():
+    text = ("diff --git a/new.txt b/new.txt\nnew file mode 100644\n--- /dev/null\n+++ b/new.txt\n"
+            "@@ -0,0 +1 @@\n+hello\n"
+            "diff --git a/old.txt b/old.txt\ndeleted file mode 100644\n--- a/old.txt\n+++ /dev/null\n"
+            "@@ -1 +0,0 @@\n-bye\n")
+    files = split_files(text)
+    assert [(f.path, f.change_type) for f in files] == [("new.txt", "added"), ("old.txt", "deleted")]
+    assert all(f.old_path is None for f in files)
+
+
+def test_an_ordinary_edit_is_modified_with_no_old_path():
+    text = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,1 +1,1 @@\n-a\n+b\n"
+    entry = split_files(text)[0]
+    assert (entry.path, entry.old_path, entry.change_type) == ("x.py", None, "modified")

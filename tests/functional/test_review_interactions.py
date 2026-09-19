@@ -311,91 +311,13 @@ async def test_highlight_records_created_sha(tmp_path):
     await manager.shutdown()
 
 
-async def test_since_last_greyed_without_capability(tmp_path):
-    # MR advertises no diff_versions capability (and no workspace) → the toggle is greyed
-    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
-    async with client:
-        assert (await client.get(f"/api/sessions/{sid}/since-last")).json() == {"available": False}
-    await manager.shutdown()
-
-
-async def test_since_last_prefers_a_normal_diff(tmp_path):
-    from review_mate.kb.store import ReviewKB
-
-    class VProvider(StubProvider):
-        async def mr_versions(self, ref):   # latest version head == the session head → head-aligned
-            return [{"base_sha": "nb", "head_sha": "head-now", "start_sha": "", "created_at": ""},
-                    {"base_sha": "ob", "head_sha": "oldwm", "start_sha": "", "created_at": ""}]
-
-    class Ws:  # exposes since_diff → the route must prefer it and never fall back
-        async def since_diff(self, repo, ob, oh, nb, nh):
-            self.args = (ob, oh, nb, nh)
-            return {"clean": True, "diff": ("diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n"
-                                            "@@ -1 +1,2 @@\n ctx\n+new line\n")}
-
-        async def range_diff(self, *a):
-            raise AssertionError("should not fall back to range-diff when since_diff succeeds")
-
-    mr = MRMetadata(host="gitlab", project="g/p", iid=42, title="T", source_branch="x",
-                    target_branch="m", sha="head-now", author="a", url="u", clone_url="cu",
-                    capabilities={"diff_versions": True})
-    manager = SessionManager(root=tmp_path / "s"); manager._workspace = Ws()
-    kb = ReviewKB(root=tmp_path / "kb"); kb.set_watermark("gitlab", "g/p", 42, "oldwm")
-    app = create_app(manager=manager, with_mcp=False, provider=VProvider(), kb=kb)
-    sid = await manager.create()
-    await manager.get(sid).submit(ApplyMRMetadata(mr=mr), Origin.SYSTEM)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-        r = (await c.get(f"/api/sessions/{sid}/since-last")).json()
-    assert r["mode"] == "diff" and r["empty"] is False                       # per-file, like the full diff
-    assert [f["path"] for f in r["files"]] == ["f.txt"]
-    assert "+new line" in r["files"][0]["hunks"][0]["diff"]
-    assert r["head_aligned"] is True         # latest version head == session head → interactive
-    assert manager._workspace.args == ("ob", "oldwm", "nb", "head-now")
-    await manager.shutdown()
-
-
-async def test_since_last_not_head_aligned_when_session_head_stale(tmp_path):
-    """The since-last view is only interactive (highlight/comment/unfold) when its new side matches the
-    head blob the browser fetches — i.e. when the latest version head is the session's head. If the MR
-    advanced past a stale session, the route reports head_aligned=False so the view stays read-only
-    until a refresh re-syncs the session head."""
-    from review_mate.kb.store import ReviewKB
-
-    class VProvider(StubProvider):
-        async def mr_versions(self, ref):   # latest head "fresh" ≠ the session's stale head → not aligned
-            return [{"base_sha": "nb", "head_sha": "fresh", "start_sha": "", "created_at": ""},
-                    {"base_sha": "ob", "head_sha": "oldwm", "start_sha": "", "created_at": ""}]
-
-    class Ws:
-        async def since_diff(self, repo, ob, oh, nb, nh):
-            return {"clean": True,
-                    "diff": "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\n ctx\n+x\n"}
-
-    mr = MRMetadata(host="gitlab", project="g/p", iid=42, title="T", source_branch="x",
-                    target_branch="m", sha="stale-head", author="a", url="u", clone_url="cu",
-                    capabilities={"diff_versions": True})
-    manager = SessionManager(root=tmp_path / "s"); manager._workspace = Ws()
-    kb = ReviewKB(root=tmp_path / "kb"); kb.set_watermark("gitlab", "g/p", 42, "oldwm")
-    app = create_app(manager=manager, with_mcp=False, provider=VProvider(), kb=kb)
-    sid = await manager.create()
-    await manager.get(sid).submit(ApplyMRMetadata(mr=mr), Origin.SYSTEM)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-        r = (await c.get(f"/api/sessions/{sid}/since-last")).json()
-    assert r["mode"] == "diff" and r["head_aligned"] is False
-    await manager.shutdown()
-
-
-async def test_commits_and_commit_diff_routes(tmp_path):
-    from review_mate.session.state import FileEntry, ChangeType
+async def test_commits_route_lists_the_mrs_commits(tmp_path):
+    """The commit *list* still comes from here — per-commit review reads the diff from its scope,
+    but the list of commits to step through has no scope of its own."""
 
     class CProvider(StubProvider):
         async def commits(self, ref):
             return [{"sha": "s1", "short_id": "s1sh", "title": "first", "message": "m"}]
-
-        async def commit_diff(self, project, sha):
-            self.seen = (project, sha)
-            return [FileEntry(path="a.py", change_type=ChangeType.MODIFIED,
-                              hunks=[{"diff": "@@ -1 +1 @@\n+z\n"}])]
 
     mr = MRMetadata(host="gitlab", project="g/p", iid=42, title="T", source_branch="x",
                     target_branch="m", sha="h", author="a", url="u", capabilities={"commits": True})
@@ -405,10 +327,7 @@ async def test_commits_and_commit_diff_routes(tmp_path):
     await manager.get(sid).submit(ApplyMRMetadata(mr=mr), Origin.SYSTEM)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         cs = (await c.get(f"/api/sessions/{sid}/commits")).json()
-        assert cs["available"] is True and [x["sha"] for x in cs["commits"]] == ["s1"]
-        dd = (await c.get(f"/api/sessions/{sid}/commit/s1")).json()
-    assert [f["path"] for f in dd["files"]] == ["a.py"]
-    assert dd["files"][0]["change_type"] == "modified" and "+z" in dd["files"][0]["hunks"][0]["diff"]
+    assert cs["available"] is True and [x["sha"] for x in cs["commits"]] == ["s1"]
     await manager.shutdown()
 
 
@@ -418,63 +337,6 @@ async def test_commits_greyed_without_capability(tmp_path):
     async with client:
         r = (await client.get(f"/api/sessions/{sid}/commits")).json()
     assert r == {"available": False, "commits": []}
-    await manager.shutdown()
-
-
-def test_split_unified_diff_into_files():
-    from review_mate.server.routes import _split_unified_diff
-    text = ("diff --git a/x.py b/x.py\nindex 111..222 100644\n--- a/x.py\n+++ b/x.py\n"
-            "@@ -1,2 +1,3 @@\n a\n b\n+c\n"
-            "diff --git a/new.txt b/new.txt\nnew file mode 100644\n--- /dev/null\n+++ b/new.txt\n"
-            "@@ -0,0 +1 @@\n+hello\n"
-            "diff --git a/old.txt b/old.txt\ndeleted file mode 100644\n--- a/old.txt\n+++ /dev/null\n"
-            "@@ -1 +0,0 @@\n-bye\n")
-    files = _split_unified_diff(text)
-    assert [f["path"] for f in files] == ["x.py", "new.txt", "old.txt"]
-    assert [f["change_type"] for f in files] == ["modified", "added", "deleted"]
-    hunk = files[0]["hunks"][0]["diff"]
-    assert hunk.startswith("@@") and "+c" in hunk and "index 111" not in hunk   # header stripped
-
-
-def test_split_unified_diff_keeps_the_old_path_of_a_rename():
-    """The browser needs both ends of a move to show it as a path divergence (test/{a,b}/file.py),
-    so the old path has to survive the split — in the since-last and per-commit views too."""
-    from review_mate.server.routes import _split_unified_diff
-    text = ("diff --git a/test/a/file.py b/test/b/file.py\nsimilarity index 96%\n"
-            "rename from test/a/file.py\nrename to test/b/file.py\n"
-            "--- a/test/a/file.py\n+++ b/test/b/file.py\n@@ -1,2 +1,2 @@\n a\n-b\n+c\n")
-    files = _split_unified_diff(text)
-    assert len(files) == 1
-    assert files[0]["path"] == "test/b/file.py" and files[0]["old_path"] == "test/a/file.py"
-    assert files[0]["change_type"] == "renamed"
-
-
-async def test_since_last_falls_back_to_range_diff(tmp_path):
-    from review_mate.kb.store import ReviewKB
-
-    class VProvider(StubProvider):
-        async def mr_versions(self, ref):
-            return [{"base_sha": "nb", "head_sha": "nh", "start_sha": "", "created_at": ""},
-                    {"base_sha": "ob", "head_sha": "oldwm", "start_sha": "", "created_at": ""}]
-
-    class Ws:  # no since_diff (or a conflicting replay) → the route uses the range-diff
-        async def range_diff(self, repo, ob, oh, nb, nh):
-            self.args = (ob, oh, nb, nh)
-            return "1:  x ! 1:  y feat\n    @@ f.txt\n    +new line\n"
-
-    mr = MRMetadata(host="gitlab", project="g/p", iid=42, title="T", source_branch="x",
-                    target_branch="m", sha="head-now", author="a", url="u", clone_url="cu",
-                    capabilities={"diff_versions": True})
-    manager = SessionManager(root=tmp_path / "s"); manager._workspace = Ws()
-    kb = ReviewKB(root=tmp_path / "kb"); kb.set_watermark("gitlab", "g/p", 42, "oldwm")
-    app = create_app(manager=manager, with_mcp=False, provider=VProvider(), kb=kb)
-    sid = await manager.create()
-    await manager.get(sid).submit(ApplyMRMetadata(mr=mr), Origin.SYSTEM)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-        r = (await c.get(f"/api/sessions/{sid}/since-last")).json()
-    assert r["available"] is True and r["empty"] is False and "new line" in r["interdiff"]
-    # the interdiff compares the watermark version (old) against the current version (new)
-    assert manager._workspace.args == ("ob", "oldwm", "nb", "nh")
     await manager.shutdown()
 
 

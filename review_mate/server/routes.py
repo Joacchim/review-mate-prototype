@@ -141,19 +141,6 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
 
-    async def get_file(request: Request) -> JSONResponse:
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        mr = actor.snapshot().mr
-        path = request.query_params.get("path", "")
-        if provider is None or mr is None or not path or not hasattr(provider, "get_file"):
-            return JSONResponse({"error": "unavailable"}, status_code=400)
-        try:
-            return JSONResponse({"path": path, "content": await provider.get_file(mr.project, path, mr.sha)})
-        except Exception as exc:
-            return JSONResponse({"error": str(exc)}, status_code=502)
-
     async def list_sessions(request: Request) -> JSONResponse:
         return JSONResponse([s.model_dump(mode="json") for s in manager.list()])
 
@@ -256,63 +243,6 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         return JSONResponse({"head": snap.mr.sha, "watermark": wm,
                              "behind": bool(wm and wm != snap.mr.sha)})
 
-    async def since_last(request: Request) -> JSONResponse:
-        """The delta since the reviewer's watermark, with target-branch (rebase) noise excluded.
-        Preferred form is a *normal* unified diff against the reviewed version (mode "diff"); it
-        falls back to the raw git range-diff (mode "rangediff") only when a replay conflicts.
-        Greyed (available:False) where unsupported."""
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        snap = actor.snapshot()
-        if snap.mr is None:
-            return JSONResponse({"error": "no MR loaded"}, status_code=400)
-        workspace = getattr(manager, "_workspace", None)
-        cap = (snap.mr.capabilities or {}).get("diff_versions", False)
-        if provider is None or not hasattr(provider, "mr_versions") or workspace is None or not cap:
-            return JSONResponse({"available": False})   # the UI greys the "Since last review" toggle
-        wm = kb.get_watermark(snap.mr.host, snap.mr.project, snap.mr.iid) if kb is not None else None
-        if not wm or wm == snap.mr.sha:
-            return JSONResponse({"available": True, "empty": True, "mode": "diff", "diff": ""})  # nothing new
-        ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
-        versions = await provider.mr_versions(ref)
-        new = versions[0] if versions else None
-        if new is None:
-            return JSONResponse({"available": True, "empty": True, "mode": "diff", "diff": "",
-                                 "note": "no diff versions on this MR"})
-        old = next((v for v in versions if v["head_sha"] == wm), None)
-        old_base = old["base_sha"] if old else None   # unknown → since_diff does a plain wm..head diff
-        repo = RepoRef(host=snap.mr.host, project=snap.mr.project, clone_url=snap.mr.clone_url)
-        bases = (old_base, wm, new["base_sha"], new["head_sha"])
-        # since_diff's new side is always new["head_sha"]; the browser's file-blob fetch and comment
-        # anchoring both work in snap.mr.sha coordinates. So the since-last view is head-aligned — safe
-        # to unfold context and anchor highlights — exactly when the latest version head is the
-        # session's head. They diverge only when the MR advanced past a stale session (a refresh
-        # re-syncs snap.mr.sha); until then the view stays read-only.
-        head_aligned = bool(new.get("head_sha") and new["head_sha"] == snap.mr.sha)
-        # preferred: a normal per-file diff against the reviewed version (never a diff-of-diffs)
-        if hasattr(workspace, "since_diff"):
-            res, err = None, "since-last unavailable"
-            try:
-                res = await workspace.since_diff(repo, *bases)
-            except Exception as exc:
-                err = str(exc)
-            if res is not None:
-                payload = {"available": True, "mode": "diff", "empty": not res["diff"].strip(),
-                           "files": _split_unified_diff(res["diff"]), "head_aligned": head_aligned}
-                if not res.get("clean", True):
-                    payload["note"] = ("the reviewed version was rebased — showing the raw diff, "
-                                       "which may include target-branch changes")
-                return JSONResponse(payload)
-            return JSONResponse({"available": True, "error": err})
-        # workspace without since_diff → the raw range-diff
-        try:
-            text = await workspace.range_diff(repo, old_base, wm, new["base_sha"], new["head_sha"])
-        except Exception as exc:
-            return JSONResponse({"available": True, "error": str(exc)})
-        return JSONResponse({"available": True, "mode": "rangediff",
-                             "empty": _interdiff_empty(text), "interdiff": text})
-
     async def approval_status(request: Request) -> JSONResponse:
         """Whether the reviewer (and who else) has approved this MR. Greyed where unsupported."""
         actor = manager.get(request.path_params["id"])
@@ -336,18 +266,6 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             return JSONResponse({"available": False, "commits": []})
         ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
         return JSONResponse({"available": True, "commits": await provider.commits(ref)})
-
-    async def commit_diff(request: Request) -> JSONResponse:
-        """One commit's per-file diff (files shaped like the full diff, so the browser reuses its
-        per-file renderer)."""
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        snap = actor.snapshot()
-        if snap.mr is None or provider is None or not hasattr(provider, "commit_diff"):
-            return JSONResponse({"error": "unavailable"}, status_code=400)
-        files = await provider.commit_diff(snap.mr.project, request.path_params["sha"])
-        return JSONResponse({"files": [f.model_dump(mode="json") for f in files]})
 
     async def _remirror_threads(actor, ref) -> list:
         """Re-pull the MR's discussions from the host and re-mirror them into session state
@@ -526,7 +444,6 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/agent-status", agent_status, methods=["GET"]),
         Route("/api/outstanding", outstanding, methods=["GET"]),
         Route("/api/sessions/{id}/repo-tree", repo_tree, methods=["GET"]),
-        Route("/api/sessions/{id}/file", get_file, methods=["GET"]),
         Route("/api/sessions", create_session, methods=["POST"]),
         Route("/api/sessions", list_sessions, methods=["GET"]),
         Route("/api/sessions/{id}", get_session, methods=["GET"]),
@@ -540,69 +457,12 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/sessions/{id}/refresh-threads", refresh_threads, methods=["POST"]),
         Route("/api/sessions/{id}/mark-reviewed", mark_reviewed, methods=["POST"]),
         Route("/api/sessions/{id}/review-status", review_status, methods=["GET"]),
-        Route("/api/sessions/{id}/since-last", since_last, methods=["GET"]),
         Route("/api/sessions/{id}/approval-status", approval_status, methods=["GET"]),
         Route("/api/sessions/{id}/commits", commits, methods=["GET"]),
-        Route("/api/sessions/{id}/commit/{sha}", commit_diff, methods=["GET"]),
         Route("/api/me", whoami, methods=["GET"]),
         Route("/api/sessions/{id}/context", context, methods=["GET"]),
         WebSocketRoute("/api/sessions/{id}/stream", stream),
     ]
-
-
-def _split_unified_diff(text: str) -> list:
-    """Split `git diff` output into per-file entries shaped like FileEntry (path, old_path,
-    change_type, hunks:[{diff}]) so the browser renders the since-last diff file-by-file, exactly
-    like the full diff. The hunk `diff` is the text from the first @@ onward (what the row renderer
-    consumes); the file-header lines are parsed for metadata, not shown."""
-    files: list = []
-    cur = None
-    inhunk = False
-    for line in (text or "").splitlines():
-        if line.startswith("diff --git "):
-            cur = {"path": "", "old_path": None, "change_type": "modified", "hunks": [{"diff": ""}]}
-            rest = line[len("diff --git "):]
-            if rest.startswith("a/"):
-                idx = rest.find(" b/")
-                if idx != -1:
-                    cur["old_path"], cur["path"] = rest[2:idx], rest[idx + 3:]
-            files.append(cur)
-            inhunk = False
-        elif cur is None:
-            continue
-        elif inhunk:
-            cur["hunks"][0]["diff"] += line + "\n"
-        elif line.startswith("@@"):
-            inhunk = True
-            cur["hunks"][0]["diff"] += line + "\n"
-        elif line.startswith("new file"):
-            cur["change_type"] = "added"
-        elif line.startswith("deleted file"):
-            cur["change_type"] = "deleted"
-        elif line.startswith("rename from "):
-            cur["old_path"] = line[len("rename from "):]; cur["change_type"] = "renamed"
-        elif line.startswith("rename to "):
-            cur["path"] = line[len("rename to "):]; cur["change_type"] = "renamed"
-        elif line.startswith("--- ") and not line.endswith("/dev/null"):
-            cur["old_path"] = line[6:] if line.startswith("--- a/") else line[4:]
-        elif line.startswith("+++ ") and not line.endswith("/dev/null"):
-            cur["path"] = line[6:] if line.startswith("+++ b/") else line[4:]
-    for f in files:
-        if not f["path"] and f["old_path"]:      # deletion: +++ was /dev/null
-            f["path"] = f["old_path"]
-        if f["old_path"] == f["path"]:
-            f["old_path"] = None
-    return files
-
-
-def _interdiff_empty(text: str) -> bool:
-    """A range-diff always prints a per-commit summary line, so 'empty' means no actual patch
-    content evolved — a pure rebase (all commits unchanged) rather than a real edit."""
-    for raw in text.splitlines():
-        s = raw.lstrip()
-        if s.startswith(("@@ ", "+", "-")) or " ! " in raw or " < " in raw:
-            return False
-    return True
 
 
 async def _maybe_json(request: Request):

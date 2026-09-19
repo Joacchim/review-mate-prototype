@@ -289,12 +289,19 @@ index 0000000..e69de29
 
 
 class VersionHost(TwoFileHost):
-    """A host that knows its MR versions and can diff a single commit."""
+    """A host that knows its MR versions and can diff a single commit, on an MR that says so."""
 
-    def __init__(self, newest_head="abc"):
+    def __init__(self, newest_head="abc", capabilities=None):
         super().__init__()
         self.newest_head = newest_head
         self.commit_calls = []
+        self.capabilities = ({"diff_versions": True, "commits": True}
+                             if capabilities is None else capabilities)
+
+    async def load(self, ref: MRRef) -> MRPayload:
+        payload = await super().load(ref)
+        payload.mr.capabilities = dict(self.capabilities)
+        return payload
 
     async def mr_versions(self, ref):
         return [{"head_sha": self.newest_head, "base_sha": "base2"},
@@ -447,3 +454,49 @@ def test_a_clean_replay_says_so(tmp_path):
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:since"]})
             assert settled(ws, f"diff:{sid}:since")["clean"] is True
+
+
+def test_a_mode_the_mr_does_not_advertise_is_unavailable(tmp_path):
+    """The host implements it, but this MR says the forge cannot list its versions. Asking anyway
+    produces an error where the honest answer is that the mode is not available here."""
+    provider = VersionHost(capabilities={})
+    app, _ = build_versioned(tmp_path, provider=provider)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:since",
+                                                            f"diff:{sid}:commit@abc1234"]})
+            assert settled(ws, f"diff:{sid}:since")["state"] == "unavailable"
+            assert settled(ws, f"diff:{sid}:commit@abc1234")["state"] == "unavailable"
+
+
+def test_each_capability_gates_only_its_own_mode(tmp_path):
+    provider = VersionHost(capabilities={"commits": True})
+    app, _ = build_versioned(tmp_path, provider=provider)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:since",
+                                                            f"diff:{sid}:commit@deadbee"]})
+            assert settled(ws, f"diff:{sid}:since")["state"] == "unavailable"
+            assert settled(ws, f"diff:{sid}:commit@deadbee")["state"] == "ready"
+
+
+def test_since_reports_what_happened_to_each_file(tmp_path):
+    """A move must reach the client as a move: the view is what the file tree renders from."""
+    renamed = ("diff --git a/test/a/f.py b/test/b/f.py\nsimilarity index 96%\n"
+               "rename from test/a/f.py\nrename to test/b/f.py\n"
+               "--- a/test/a/f.py\n+++ b/test/b/f.py\n@@ -1,1 +1,1 @@\n-a\n+c\n"
+               "diff --git a/added.py b/added.py\nnew file mode 100644\n--- /dev/null\n"
+               "+++ b/added.py\n@@ -0,0 +1 @@\n+fresh\n")
+    app, _ = build_versioned(tmp_path, workspace=StubWorkspace(diff=renamed))
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:since"]})
+            view = settled(ws, f"diff:{sid}:since")
+            by_path = {f["path"]: f for f in view["files"]}
+            assert by_path["test/b/f.py"]["change_type"] == "renamed"
+            assert by_path["test/b/f.py"]["old_path"] == "test/a/f.py"
+            assert by_path["added.py"]["change_type"] == "added"
+            assert by_path["added.py"]["old_path"] is None

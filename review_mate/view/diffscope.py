@@ -221,16 +221,25 @@ class DiffScopes:
             return "error", [], self._failed[key]
         if key in self._resolved:
             return "ready", self._resolved[key], ""
-        if not self._can_resolve(mode):
+        if not self._can_resolve(mode, snapshot):
             return "unavailable", [], ""
         self._start(key, mode, snapshot)
         return "loading", [], ""
 
-    def _can_resolve(self, mode: str) -> bool:
+    def _can_resolve(self, mode: str, snapshot) -> bool:
+        """Whether this mode can be answered at all.
+
+        The host has to implement it, and the MR has to advertise it: a forge that cannot list an
+        MR's versions or its commits says so through the capabilities on the metadata, and asking
+        anyway produces an error where the honest answer is that the mode is unavailable here.
+        """
+        capabilities = (snapshot.mr.capabilities or {}) if snapshot.mr else {}
         if mode.startswith(COMMIT_PREFIX):
-            return self._provider is not None and hasattr(self._provider, "commit_diff")
+            return (bool(capabilities.get("commits"))
+                    and self._provider is not None and hasattr(self._provider, "commit_diff"))
         if mode == SINCE:
-            return (self._provider is not None and hasattr(self._provider, "mr_versions")
+            return (bool(capabilities.get("diff_versions"))
+                    and self._provider is not None and hasattr(self._provider, "mr_versions")
                     and self._workspace is not None and hasattr(self._workspace, "since_diff"))
         return False
 
@@ -288,9 +297,10 @@ class DiffScopes:
         # anchoring is only safe when the diff's new side is the head this session holds
         aligned = bool(newest.get("head_sha") and newest["head_sha"] == mr.sha)
         known = {f.path: f.language for f in (snapshot.files or [])}
-        files = [FileEntry(path=path, change_type=ChangeType.MODIFIED, language=known.get(path),
-                           hunks=[{"diff": text}])
-                 for path, text in split_files(result.get("diff", ""))]
+        files = [FileEntry(path=entry.path, old_path=entry.old_path,
+                           change_type=ChangeType(entry.change_type),
+                           language=known.get(entry.path), hunks=[{"diff": entry.text}])
+                 for entry in split_files(result.get("diff", ""))]
         return files, aligned, bool(result.get("clean", True))
 
     async def aclose(self) -> None:

@@ -122,8 +122,6 @@ async def test_repo_tree_and_file_endpoints(tmp_path):
         sid = (await c.post("/api/sessions", json={"ref": "g/p!7"})).json()["id"]
         tree = (await c.get(f"/api/sessions/{sid}/repo-tree")).json()
         assert tree == ["a.py", "pkg/b.py", "pkg/c.py"]
-        f = (await c.get(f"/api/sessions/{sid}/file", params={"path": "pkg/b.py"})).json()
-        assert f["path"] == "pkg/b.py" and "line1" in f["content"]
     await manager.shutdown()
 
 
