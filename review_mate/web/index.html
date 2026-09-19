@@ -110,6 +110,10 @@
   tr.hl.thl td.code{box-shadow:inset 3px 0 0 var(--accent), inset -3px 0 0 var(--purple)}   /* both */
   tr.flash td.code{background:var(--purplebg)}                    /* jumped-to discussion line */
   .tok-cmt{color:var(--tokcmt);font-style:italic} .tok-str{color:var(--tokstr)} .tok-num{color:var(--toknum)} .tok-kw{color:var(--purple)}
+  /* the rest of the kinds the server lexes; an unmapped kind renders plain */
+  .tok-fn{color:#78b7f0} .tok-type{color:#e0c38a} .tok-builtin{color:#63c4c9}
+  .tok-tag{color:#e58a8a} .tok-attr{color:#e0b892} .tok-op{color:#63c4c9}
+  .tok-del{color:#e58a8a} .tok-ins{color:#8fdcb0}
   td.gap{background:var(--bg)}
   /* split-mode cell colouring (cells carry their own classes) */
   td.code.delc{background:var(--del);color:var(--delfg)} td.ln.delln{background:var(--delln)}
@@ -286,6 +290,7 @@
   <div class="rail" id="rail"></div>
 </div>
 <div class="detail" id="detail" hidden></div>
+<script src="diffrows.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
