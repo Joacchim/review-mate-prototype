@@ -38,6 +38,7 @@ SIDE_MARK = {"added": "+", "removed": "-", "context": " "}
 
 MODES = ("full", "since")
 FILE_PANE_ROWS = 8
+RAIL_PANE_ROWS = 5
 
 
 def line_fragments(text: str, spans, base: str) -> list[tuple[str, str]]:
@@ -68,7 +69,10 @@ class DiffScreen:
         self.mode = mode
         self.file_index = 0
         self.scroll = 0
-        self.focus = "files"          # files | body
+        self.body_cursor = 0          # index into the rendered body rows
+        self.rail_index = 0
+        self.anchor: int | None = None   # a selection in progress, at this new-side line
+        self.focus = "files"          # files | body | rail
         self.rows = 24
 
     # --- what it watches --------------------------------------------------
@@ -95,8 +99,27 @@ class DiffScreen:
         # a file's scope name is the list's name with the path appended — nothing to assemble
         return f"{self.listing}:{row['path']}" if row else None
 
+    @property
+    def rail(self) -> dict:
+        return self.client.views.get(f"rail:{self.session}") or {}
+
+    @property
+    def highlights(self) -> list[dict]:
+        """This session's highlights, newest last. The rail is session-wide; the overlay selects."""
+        return self.rail.get("highlights", [])
+
+    def highlights_here(self) -> list[dict]:
+        row = self.current
+        return [h for h in self.highlights if row and h["file"] == row["path"]]
+
+    def marked_lines(self) -> set[int]:
+        lines: set[int] = set()
+        for highlight in self.highlights_here():
+            lines.update(range(highlight["start"], highlight["end"] + 1))
+        return lines
+
     def wanted(self) -> list[str]:
-        scopes = [self.listing]
+        scopes = [self.listing, f"rail:{self.session}"]
         body = self.body_scope
         if body:
             scopes.append(body)
@@ -108,25 +131,32 @@ class DiffScreen:
         view = self.client.views.get(self.listing)
         out: list[tuple[str, str]] = []
         if view is None:
-            return [("class:muted", " loading the change…\n")]
+            return [("class:muted", " loading the change\u2026\n")]
         mr = view.get("mr") or {}
         title = f"{mr.get('project', '')}!{mr.get('iid', '')}  {mr.get('title', '')}"
         out.append(("class:header", f" {title}\n"))
         out.append(("class:muted", f"  mode {self.mode}   [{self.client.status}]"))
         if not view.get("head_aligned", True):
             out.append(("class:attention", "   read-only: the MR moved past this session"))
+        if view.get("clean") is False:
+            out.append(("class:attention", "   replay conflicted: may include target-branch changes"))
         out.append(("", "\n"))
         state = view.get("state", "ready")
         if state != "ready":
-            note = {"loading": "resolving…", "unavailable": "this host cannot serve that mode",
+            note = {"loading": "resolving\u2026", "unavailable": "this host cannot serve that mode",
                     "error": view.get("error", ""), "unsupported-mode": "mode not supported",
-                    "unknown-session": "this review is not open"}.get(state, state)
+                    "malformed-name": "bad scope name", "unknown-session": "this review is not open",
+                    }.get(state, state)
             out.append(("class:error" if state == "error" else "class:muted", f"\n  {note}\n"))
             out.append(("class:footer", self._footer()))
             return out
         out.extend(self._file_pane())
         out.append(("", "\n"))
         out.extend(self._body_pane())
+        out.extend(self._rail_pane())
+        error = self.client.errors.get(f"rail:{self.session}") or self.client.last_command_error
+        if error:
+            out.append(("class:error", f"\n {error}\n"))
         out.append(("class:footer", self._footer()))
         return out
 
@@ -139,14 +169,44 @@ class DiffScreen:
         for index in range(top, min(top + FILE_PANE_ROWS, len(rows))):
             row = rows[index]
             selected = index == self.file_index
-            marker = "›" if selected else " "
+            marker = "\u203a" if selected else " "
             counts = f"+{row.get('additions', 0)} -{row.get('deletions', 0)}"
             style = "class:selected" if selected and self.focus == "files" else ""
+            asked = sum(1 for h in self.highlights if h["file"] == row.get("path"))
             out.append(("class:muted", f" {marker} {counts:>9}  "))
-            out.append((style, f"{row.get('path', '')}\n"))
+            out.append((style, f"{row.get('path', '')}"))
+            out.append(("class:info", f"  {asked} asked\n" if asked else "\n"))
         if len(rows) > FILE_PANE_ROWS:
-            out.append(("class:muted", f"   … {len(rows)} files\n"))
+            out.append(("class:muted", f"   \u2026 {len(rows)} files\n"))
         return out
+
+    def body_rows(self) -> list[dict]:
+        """Every rendered body row, each carrying the new-side line it stands for (or None)."""
+        scope = self.body_scope
+        view = self.client.views.get(scope) if scope else None
+        if view is None or view.get("state") != "ready":
+            return []
+        marked = self.marked_lines()
+        rows: list[dict] = []
+        for hunk in view.get("hunks", []):
+            if hunk.get("gap_before"):
+                rows.append({"line": None, "pieces": [
+                    ("class:muted", f"  \u22ef {hunk['gap_before']} unchanged lines \u22ef\n")]})
+            rows.append({"line": None, "pieces": [
+                ("class:hunk", f"  @@ {hunk.get('heading', '')}\n")]})
+            for line in hunk.get("lines", []):
+                side = line.get("side", "context")
+                base = SIDE_BASE.get(side, "")
+                number = line.get("new")
+                mark = "\u258c" if number in marked else " "
+                gutter = f"{str(line.get('old') or ''):>5}{str(number or ''):>6} "
+                pieces = [("class:info" if mark.strip() else "class:muted", mark),
+                          ("class:muted", gutter),
+                          (base, SIDE_MARK.get(side, " "))]
+                pieces.extend(line_fragments(line.get("text", ""), line.get("tokens", []), base))
+                pieces.append((base, "\n"))
+                rows.append({"line": number, "pieces": pieces})
+        return rows
 
     def _body_pane(self) -> list[tuple[str, str]]:
         scope = self.body_scope
@@ -154,61 +214,148 @@ class DiffScreen:
             return []
         view = self.client.views.get(scope)
         if view is None:
-            return [("class:muted", "  loading the file…\n")]
-        state = view.get("state", "ready")
-        if state != "ready":
-            return [("class:muted", f"  {view.get('error') or state}\n")]
-        lines = list(self._body_lines(view))
-        height = max(self.rows - FILE_PANE_ROWS - 7, 4)
-        self.scroll = max(0, min(self.scroll, max(len(lines) - height, 0)))
+            return [("class:muted", "  loading the file\u2026\n")]
+        if view.get("state") != "ready":
+            return [("class:muted", f"  {view.get('error') or view.get('state')}\n")]
+        rows = self.body_rows()
+        height = max(self.rows - FILE_PANE_ROWS - RAIL_PANE_ROWS - 8, 4)
+        self.body_cursor = max(0, min(self.body_cursor, max(len(rows) - 1, 0)))
+        if self.body_cursor < self.scroll:
+            self.scroll = self.body_cursor
+        elif self.body_cursor >= self.scroll + height:
+            self.scroll = self.body_cursor - height + 1
+        self.scroll = max(0, min(self.scroll, max(len(rows) - height, 0)))
+        selecting = self.selected_range()
         out: list[tuple[str, str]] = []
-        for fragment_line in lines[self.scroll:self.scroll + height]:
-            out.extend(fragment_line)
+        for index in range(self.scroll, min(self.scroll + height, len(rows))):
+            row = rows[index]
+            on_cursor = index == self.body_cursor and self.focus == "body"
+            in_selection = selecting and row["line"] is not None and \
+                selecting[0] <= row["line"] <= selecting[1]
+            if on_cursor or in_selection:
+                style = "class:selected" if on_cursor else "class:selecting"
+                out.append((style, "".join(text for _, text in row["pieces"]).rstrip("\n")))
+                out.append(("", "\n"))
+            else:
+                out.extend(row["pieces"])
         return out
 
-    def _body_lines(self, view):
-        for hunk in view.get("hunks", []):
-            if hunk.get("gap_before"):
-                yield [("class:muted", f"  ⋯ {hunk['gap_before']} unchanged lines ⋯\n")]
-            heading = f"  @@ {hunk.get('heading', '')}\n"
-            yield [("class:hunk", heading)]
-            for line in hunk.get("lines", []):
-                side = line.get("side", "context")
-                base = SIDE_BASE.get(side, "")
-                gutter = f"{str(line.get('old') or ''):>5}{str(line.get('new') or ''):>6} "
-                pieces = [("class:muted", gutter), (base, SIDE_MARK.get(side, " "))]
-                pieces.extend(line_fragments(line.get("text", ""), line.get("tokens", []), base))
-                pieces.append((base, "\n"))
-                yield pieces
+    def _rail_pane(self) -> list[tuple[str, str]]:
+        rows = self.highlights
+        out: list[tuple[str, str]] = [("class:header", "\n Asked\n")]
+        if not rows:
+            out.append(("class:muted", "   nothing yet \u2014 v selects lines, v again asks\n"))
+            return out
+        self.rail_index = max(0, min(self.rail_index, len(rows) - 1))
+        top = max(0, min(self.rail_index - RAIL_PANE_ROWS // 2, len(rows) - RAIL_PANE_ROWS))
+        for index in range(top, min(top + RAIL_PANE_ROWS, len(rows))):
+            highlight = rows[index]
+            selected = index == self.rail_index and self.focus == "rail"
+            card = highlight.get("card")
+            context = highlight.get("context") or {}
+            if card:
+                answer = card["body"].splitlines()[0][:60]
+                style = "class:ok"
+            elif context.get("state") == "ready" and context.get("blame"):
+                answer = f"last touched by {context['blame'][0].get('author', '?')}"
+                style = "class:muted"
+            elif context.get("state") == "loading":
+                answer = "looking\u2026"
+                style = "class:muted"
+            else:
+                answer = "not asked"
+                style = "class:muted"
+            where = f"{highlight['file'].split('/')[-1]}:{highlight['start']}-{highlight['end']}"
+            out.append(("class:selected" if selected else "class:info",
+                        f" #{highlight['n']:<3}"))
+            out.append(("class:muted", f"{where:<22} "))
+            out.append((style, answer + ("  (stale)" if highlight.get("stale") else "") + "\n"))
+        return out
 
     def _footer(self) -> str:
-        return ("\n tab pane   j/k move   n/p file   m mode   b back   q quit\n"
-                if self.focus == "files"
-                else "\n tab pane   j/k scroll   n/p file   m mode   b back   q quit\n")
+        if self.anchor is not None:
+            return "\n j/k extend   v ask about the selection   esc cancel\n"
+        if self.focus == "body":
+            return "\n tab pane   j/k line   v select   n/p file   m mode   b back   q quit\n"
+        if self.focus == "rail":
+            return "\n tab pane   j/k move   a ask Claude   n/p file   b back   q quit\n"
+        return "\n tab pane   j/k move   n/p file   m mode   b back   q quit\n"
 
     # --- interaction ---------------------------------------------------------
+
+    def selected_range(self) -> tuple[int, int] | None:
+        if self.anchor is None:
+            return None
+        here = self.cursor_line()
+        if here is None:
+            return (self.anchor, self.anchor)
+        return (min(self.anchor, here), max(self.anchor, here))
+
+    def cursor_line(self) -> int | None:
+        rows = self.body_rows()
+        if not rows:
+            return None
+        index = max(0, min(self.body_cursor, len(rows) - 1))
+        return rows[index]["line"]
 
     def move(self, delta: int) -> None:
         if self.focus == "files":
             rows = self.files
             if rows:
                 self.file_index = max(0, min(self.file_index + delta, len(rows) - 1))
-                self.scroll = 0
+                self.scroll = self.body_cursor = 0
+        elif self.focus == "rail":
+            rows = self.highlights
+            if rows:
+                self.rail_index = max(0, min(self.rail_index + delta, len(rows) - 1))
         else:
-            self.scroll = max(0, self.scroll + delta)
+            rows = self.body_rows()
+            self.body_cursor = max(0, min(self.body_cursor + delta, max(len(rows) - 1, 0)))
 
     def next_file(self, delta: int) -> None:
         rows = self.files
         if rows:
             self.file_index = max(0, min(self.file_index + delta, len(rows) - 1))
-            self.scroll = 0
+            self.scroll = self.body_cursor = 0
+            self.anchor = None
 
     def toggle_focus(self) -> None:
-        self.focus = "body" if self.focus == "files" else "files"
+        order = ("files", "body", "rail")
+        self.focus = order[(order.index(self.focus) + 1) % len(order)]
 
     def cycle_mode(self) -> str:
-        """Switching mode is a subscription, not a command — the name changes and the server
+        """Switching mode is a subscription, not a command \u2014 the name changes and the server
         answers for the new one."""
         self.mode = MODES[(MODES.index(self.mode) + 1) % len(MODES)] if self.mode in MODES else "full"
-        self.scroll = 0
+        self.scroll = self.body_cursor = 0
+        self.anchor = None
         return self.mode
+
+    def start_or_commit_selection(self) -> dict | None:
+        """First press anchors, second returns the add_highlight command for the range."""
+        here = self.cursor_line()
+        if here is None:
+            return None
+        if self.anchor is None:
+            self.anchor = here
+            return None
+        low, high = self.selected_range()
+        self.anchor = None
+        return {"type": "add_highlight", "file": self.current["path"], "side": "new",
+                "line_range": {"start": low, "end": high}}
+
+    def cancel_selection(self) -> None:
+        self.anchor = None
+
+    def ask_command(self) -> dict | None:
+        """Escalate the highlight in focus from the cheap tier to the agent."""
+        rows = self.highlights
+        if self.focus == "rail" and rows:
+            target = rows[max(0, min(self.rail_index, len(rows) - 1))]
+        else:
+            line = self.cursor_line()
+            target = next((h for h in self.highlights_here()
+                           if line is not None and h["start"] <= line <= h["end"]), None)
+        if target is None:
+            return None
+        return {"type": "request_context", "highlight_id": target["id"]}

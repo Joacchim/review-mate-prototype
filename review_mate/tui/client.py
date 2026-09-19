@@ -107,6 +107,28 @@ class ViewClient:
         elif kind == "error":
             self.errors[scope or ""] = message.get("reason", "unknown error")
 
+    async def session_command(self, session: str, command: dict) -> bool:
+        """A command about the contents of one review — a highlight, a draft, a message.
+
+        Separate from `command` because the two write paths address different things: that one
+        addresses the set of reviews and the host, this one addresses what is inside one.
+        """
+        try:
+            async with httpx.AsyncClient(base_url=self.base_url, timeout=30.0) as http:
+                response = await http.post(f"/api/sessions/{session}/commands", json=command)
+        except Exception as exc:
+            self.last_command_error = f"{command.get('type')}: {type(exc).__name__}: {exc}"
+            return False
+        if response.status_code == 200 and response.json().get("ok"):
+            self.last_command_error = ""
+            return True
+        try:
+            reason = response.json().get("reason", response.text)
+        except ValueError:
+            reason = response.text
+        self.last_command_error = f"{command.get('type')}: {reason}"
+        return False
+
     async def command(self, cmd: str, **args: Any) -> bool:
         """Send one command. Returns whether it was accepted, and records why if it was not."""
         try:

@@ -195,7 +195,12 @@ async def test_the_review_screen_renders_a_real_diff(tmp_path):
             assert "g/p!1" in rendered and "reserve capacity" in rendered
             assert "a.py" in rendered and "pkg/b.py" in rendered          # the file pane
             assert "if pu.fleet == LEGACY:" in rendered                   # the body
-            assert "q = self._legacy" in rendered
+
+            # the panes share a 24-row terminal, so the rest of the file is a scroll away
+            shell.diff.focus = "body"
+            for _ in range(6):
+                shell.diff.move(1)
+            assert "q = self._legacy" in "".join(text for _, text in shell.fragments())
 
 
 async def test_moving_between_files_moves_the_subscription(tmp_path):
@@ -239,3 +244,65 @@ async def test_leaving_a_review_drops_its_scopes(tmp_path):
             await shell.leave_review()
             assert not [scope for scope in client.views if scope.startswith("diff:")]
             assert shell.screen is shell.hub
+
+
+async def test_highlighting_in_the_terminal_reaches_the_rail(tmp_path):
+    """The write path and the read path meet: a selection becomes a command, the session changes,
+    the tail republishes, and the rail the screen renders comes back with it."""
+    from review_mate.tui.app import Shell
+
+    async with serving(build(tmp_path, DiffHost())) as base:
+        async with connected(base) as (client, watcher):
+            await watcher.until(lambda v: v.get("queue_state") == "ready")
+            await client.command("session.open", ref={"host": "gitlab", "project": "g/p", "iid": 1})
+            session = (await watcher.until(lambda v: v["sessions"]))["sessions"][0]["id"]
+
+            shell = Shell(client)
+            watcher.also = shell.on_change
+            await shell.open_review(session)
+            await wait_for(lambda: client.views.get(f"diff:{session}:full:a.py"))
+            await wait_for(lambda: client.views.get(f"rail:{session}") is not None)
+
+            screen = shell.diff
+            assert screen.highlights == []
+            screen.focus = "body"
+            screen.body_cursor = next(i for i, row in enumerate(screen.body_rows())
+                                      if row["line"] == 2)
+            assert screen.start_or_commit_selection() is None        # anchor
+            command = screen.start_or_commit_selection()
+            assert await client.session_command(session, command), client.last_command_error
+
+            await wait_for(lambda: screen.highlights)
+            highlight = screen.highlights[0]
+            assert (highlight["n"], highlight["file"]) == (1, "a.py")
+            assert (highlight["start"], highlight["end"]) == (2, 2)
+            rendered = "".join(text for _, text in shell.fragments())
+            assert "#1" in rendered and "a.py:2-2" in rendered
+            assert "▌" in rendered                                    # marked in the body too
+
+
+async def test_escalating_a_highlight_is_accepted_by_the_session(tmp_path):
+    from review_mate.tui.app import Shell
+
+    async with serving(build(tmp_path, DiffHost())) as base:
+        async with connected(base) as (client, watcher):
+            await watcher.until(lambda v: v.get("queue_state") == "ready")
+            await client.command("session.open", ref={"host": "gitlab", "project": "g/p", "iid": 1})
+            session = (await watcher.until(lambda v: v["sessions"]))["sessions"][0]["id"]
+            shell = Shell(client)
+            watcher.also = shell.on_change
+            await shell.open_review(session)
+            await wait_for(lambda: client.views.get(f"diff:{session}:full:a.py"))
+
+            screen = shell.diff
+            screen.focus = "body"
+            screen.body_cursor = next(i for i, row in enumerate(screen.body_rows())
+                                      if row["line"] == 2)
+            screen.start_or_commit_selection()
+            await client.session_command(session, screen.start_or_commit_selection())
+            await wait_for(lambda: screen.highlights)
+
+            screen.focus = "rail"
+            ask = screen.ask_command()
+            assert ask["type"] == "request_context"
+            assert await client.session_command(session, ask), client.last_command_error

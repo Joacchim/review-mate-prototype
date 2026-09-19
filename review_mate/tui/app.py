@@ -41,6 +41,7 @@ STYLE = Style.from_dict({
     "error": "#c04040",
     "footer": "#808080",
     "hunk": "#5c6370",
+    "selecting": "bg:#2b3a4a",
 })
 
 
@@ -287,6 +288,34 @@ class Shell:
             if self.diff is not None:
                 self.diff.toggle_focus()
 
+        @kb.add("v")
+        def _select(event) -> None:
+            """First press anchors a range, second asks about it."""
+            if self.diff is None:
+                return
+            command = self.diff.start_or_commit_selection()
+            if command is not None:
+                spawn(self.client.session_command(self.diff.session, command))
+            self.invalidate()
+
+        @kb.add("escape", eager=True)
+        def _cancel(event) -> None:
+            if self.diff is not None and self.diff.anchor is not None:
+                self.diff.cancel_selection()
+                self.invalidate()
+                return
+            if self.diff is not None:
+                spawn(self.leave_review())
+
+        @kb.add("a")
+        def _ask(event) -> None:
+            if self.diff is None:
+                return
+            command = self.diff.ask_command()
+            if command is None:
+                return
+            spawn(self.client.session_command(self.diff.session, command))
+
         @kb.add("n")
         def _next_file(event) -> None:
             if self.diff is not None:
@@ -309,7 +338,6 @@ class Shell:
                 spawn(self.resync(previous))
 
         @kb.add("b")
-        @kb.add("escape")
         def _back(event) -> None:
             if self.diff is not None:
                 spawn(self.leave_review())
