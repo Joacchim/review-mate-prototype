@@ -68,3 +68,26 @@ class DiffPage:
     @property
     def markdown_view(self):
         return self.page.locator(".mdview")
+
+    # --- diff modes ---------------------------------------------------------
+
+    @property
+    def version_banner(self):
+        return self.page.locator(".verbanner")
+
+    def show_since_last(self) -> None:
+        self.version_banner.get_by_role("button", name="Since last review").click()
+
+    def show_full_diff(self) -> None:
+        self.version_banner.get_by_role("button", name="Full diff").click()
+
+    def toggle_per_commit(self) -> None:
+        self.page.locator("#t-commits").click()
+
+    @property
+    def commit_bar(self):
+        return self.page.locator(".commitbar")
+
+    @property
+    def notice(self):
+        return self.page.locator("#diff .empty")

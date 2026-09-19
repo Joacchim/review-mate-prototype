@@ -19,7 +19,7 @@ from review_mate.seams import MRRef
 from review_mate.server.app import create_app
 from webui.fixtures.host import StubHost
 from webui.fixtures.manager import FakeManager
-from webui.fixtures.scenarios import QUEUE
+from webui.fixtures.scenarios import QUEUE, StubWorkspace
 
 ARTIFACTS = Path(__file__).resolve().parents[2] / ".webui-artifacts"
 
@@ -58,9 +58,21 @@ def stub_host() -> StubHost:
 
 
 @pytest.fixture(scope="session")
-def staged_app(fake_manager, stub_host):
-    """The production application over a manager and a host a test can set."""
-    return create_app(manager=fake_manager, provider=stub_host, with_mcp=False,
+def stub_workspace() -> StubWorkspace:
+    return StubWorkspace()
+
+
+@pytest.fixture(scope="session")
+def review_kb(tmp_path_factory):
+    from review_mate.kb.store import ReviewKB
+    return ReviewKB(root=tmp_path_factory.mktemp("kb"))
+
+
+@pytest.fixture(scope="session")
+def staged_app(fake_manager, stub_host, stub_workspace, review_kb):
+    """The production application over a manager, a host and a workspace a test can set."""
+    fake_manager._workspace = stub_workspace
+    return create_app(manager=fake_manager, provider=stub_host, with_mcp=False, kb=review_kb,
                       resolve_ref=lambda raw: MRRef(host="gitlab",
                                                     project="platform/virtu/control-plane",
                                                     iid=137))
@@ -75,7 +87,7 @@ def base_url(staged_app) -> str:
 
 
 @pytest.fixture(autouse=True)
-def staged(fake_manager, stub_host, staged_app):
+def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app):
     """Reset the staged state between tests, so a scenario is the only thing a test relies on.
 
     Every scope caches what it read, for the life of the application — correctly, since content at
@@ -87,6 +99,12 @@ def staged(fake_manager, stub_host, staged_app):
     stub_host.queue = list(QUEUE)
     stub_host.files.clear()
     stub_host.fail_with = None
+    stub_host.versions = []
+    stub_host.commit_list = []
+    stub_host.commit_files = {}
+    stub_workspace.calls = []
+    stub_workspace.clean = True
+    review_kb._data.watermarks = {}
     for scope in (staged_app.state.hub, staged_app.state.diff_scopes, staged_app.state.blob_scopes):
         scope.reset()
     yield fake_manager

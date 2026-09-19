@@ -44,11 +44,7 @@ let approvalStatus = null;           // {available, you_approved, approved_by} �
 let commitsMode = false;             // per-commit review: the diff pane shows one commit at a time
 let commitList = null;               // [{sha, short_id, title, message, …}] oldest→newest, or null
 let currentCommit = null;            // sha of the commit being reviewed
-const commitFiles = {};              // sha -> that commit's files (shaped like state.files)
 let sinceLast = false;               // showing the rebase-aware "since last review" interdiff
-let sinceLastData = null;            // fetched {available, empty, mode, files|interdiff, error}
-let sinceLastHead = null;            // the head sinceLastData was computed for (invalidate when it moves)
-let sinceLastPrefetching = false;    // a background warm of the interdiff is in flight
 let agentWatch = null;               // {attached, parked, last_seen} — is an agent on the activity stream?
 
 const $ = (id) => document.getElementById(id);
@@ -119,7 +115,7 @@ async function syncFromHost() {
 
 // the new-side content of a highlighted line range, pulled from the diff hunks (for suggestion pre-fill)
 function newSideLines(path, lo, hi) {
-  const file = state.files.find((f) => f.path === path);
+  const file = activeFiles().find((f) => f.path === path);
   if (!file) return "";
   const out = [];
   (file.hunks || []).forEach((h) => {
@@ -278,8 +274,10 @@ function connectViews(scopes) {
       if (msg.scope === "hub") {
         markHubReady();
         if (!SID) showLanding();
-      } else if (SID) {
-        renderDiff();
+      } else if (SID && state) {
+        // a full render, not just the diff: the mode's file list drives the tree and decides
+        // which file is selected, and a frame can arrive before either has caught up
+        render();
       }
     } else if (msg.type === "error") {
       setStatus("✕ " + (msg.reason || "stream error"));
@@ -301,23 +299,36 @@ function watchScopes(scopes) {
   }
 }
 
-// the scopes the review page reads: the file list, and the file being shown
+// which version of the change is being read. It lives in the scope name, so switching is a
+// subscription rather than a fetch — and there is no second place for it to be recorded.
+function diffMode() {
+  if (commitsMode && currentCommit) return `commit@${currentCommit}`;
+  return sinceLast ? "since" : "full";
+}
+
+// the scopes the review page reads: the file list, the file being shown, and any whole file it needs
 function diffScopes() {
-  const listing = `diff:${SID}:full`;
+  const mode = diffMode();
+  const listing = `diff:${SID}:${mode}`;
   const scopes = currentFile ? [listing, `${listing}:${currentFile}`] : [listing];
-  blobWanted.forEach((path) => scopes.push(`blob:${SID}:full:${path}`));
+  blobWanted.forEach((path) => scopes.push(`blob:${SID}:${mode}:${path}`));
   return scopes;
+}
+
+// the view behind the current mode's file list, or null until it arrives
+function listingView() {
+  return scopeViews[`diff:${SID}:${diffMode()}`] || null;
 }
 
 // the hunks for a path, as the server built them — null while the scope has not arrived
 function scopeHunks(path) {
-  const view = scopeViews[`diff:${SID}:full:${path}`];
+  const view = scopeViews[`diff:${SID}:${diffMode()}:${path}`];
   return view && view.state === "ready" ? view.hunks : null;
 }
 
 // a whole file at the MR head: [{n, text, tokens}], or null until its scope arrives
 function blobLines(path) {
-  const view = scopeViews[`blob:${SID}:full:${path}`];
+  const view = scopeViews[`blob:${SID}:${diffMode()}:${path}`];
   return view && view.state === "ready" ? view.lines : null;
 }
 
@@ -590,36 +601,20 @@ async function loadRef(ref) {
 
 async function load() {
   state = await fetch(`/api/sessions/${SID}`).then((r) => r.json());
-  if (!currentFile && state.files.length) currentFile = state.files[0].path;
+  if (!currentFile && state.files.length) currentFile = state.files[0].path;   // the session's own list seeds it
   try { reviewStatus = await fetch(`/api/sessions/${SID}/review-status`).then((r) => r.json()); }
   catch (e) { reviewStatus = null; }
   try { approvalStatus = await fetch(`/api/sessions/${SID}/approval-status`).then((r) => r.json()); }
   catch (e) { approvalStatus = null; }
-  const head = reviewStatus ? reviewStatus.head : null;
-  if (head !== sinceLastHead) { sinceLastData = null; sinceLastHead = head; }   // invalidate only when the head moved
-  // warm the interdiff in the background once the MR is behind, so the first toggle is instant
-  if (reviewStatus && reviewStatus.behind && sinceLastData === null && !sinceLastPrefetching) {
-    sinceLastPrefetching = true;
-    fetch(`/api/sessions/${SID}/since-last`).then((r) => r.json())
-      .then((d) => { sinceLastData = d; })
-      .catch(() => {})
-      .finally(() => { sinceLastPrefetching = false; if (sinceLast) render(); });
-  }
   render();
 }
 
-async function toggleSinceLast() {
+function toggleSinceLast() {
   sinceLast = !sinceLast;
   viewingPath = null;   // both views are diff views — drop any non-diff repo file being shown
   if (sinceLast) { commitsMode = false; $("t-commits").classList.toggle("on", false); }  // one diff mode at a time
-  render();   // swap to the panel now — it shows "computing…" while the (cold: clone + fetch) work runs
-  // usually the background warm (in load) already has it; only fetch here if it didn't, and never
-  // race that in-flight warm — its .finally re-renders when it lands
-  if (sinceLast && sinceLastData === null && !sinceLastPrefetching) {
-    try { sinceLastData = await fetch(`/api/sessions/${SID}/since-last`).then((r) => r.json()); }
-    catch (e) { sinceLastData = { error: String(e) }; }
-    render();
-  }
+  currentFile = null;   // the mode has its own file list; pick its first
+  render();             // the new mode's scope is subscribed on render and arrives on the stream
 }
 
 // a highlight made against an earlier MR head — its lines may have moved since (diff-versions)
@@ -820,7 +815,7 @@ function renderTree() {
   const el = $("files");
   el.innerHTML = "";
   const inCommits = commitsMode && commitList && currentCommit;
-  const inSince = sinceFilesReady();
+  const inSince = sinceLast;
   if (inCommits) {   // the tree lists the current commit's files
     const hdr = document.createElement("label");
     hdr.className = "treehdr"; hdr.textContent = "files in this commit";
@@ -981,13 +976,11 @@ function highlightExact(path, lo, hi) {
 
 // the per-file diffs currently in play: the since-last delta when that mode is on and parsed, else
 // the full MR diff. Lets the file tree and the diff pane share one path for both views.
-function sinceFilesReady() {
-  return sinceLast && sinceLastData && sinceLastData.mode === "diff" && Array.isArray(sinceLastData.files);
-}
 function activeFiles() {
-  if (commitsMode && currentCommit && commitFiles[currentCommit]) return commitFiles[currentCommit];
-  if (sinceFilesReady()) return sinceLastData.files;
-  return state.files;
+  const view = listingView();
+  if (!view || view.state !== "ready") return [];
+  // `diff` is the tree's "this file has changes" flag; the scope calls the same thing has_diff
+  return view.files.map((f) => Object.assign({}, f, { diff: f.has_diff }));
 }
 
 function renderDiff() {
@@ -997,7 +990,7 @@ function renderDiff() {
   if (commitsMode) { renderCommitView(el); return; }
   if (sinceLast) { renderSinceLast(el); return; }
   if (viewingPath) { renderFileView(el, viewingPath); return; }
-  renderFileDiff(el, state.files, "  ·  click a line, or drag to select a block", true);
+  renderFileDiff(el, activeFiles(), "  ·  click a line, or drag to select a block", true);
 }
 
 // --- per-commit review ------------------------------------------------------
@@ -1015,22 +1008,14 @@ async function toggleCommits() {
       } catch (e) { commitList = []; }
       if (commitList.length && !currentCommit) currentCommit = commitList[0].sha;
     }
-    if (currentCommit && !commitFiles[currentCommit]) await loadCommit(currentCommit);
   }
+  currentFile = null;
   render();
 }
 
-async function loadCommit(sha) {
-  try {
-    const d = await fetch(`/api/sessions/${SID}/commit/${encodeURIComponent(sha)}`).then((r) => r.json());
-    commitFiles[sha] = Array.isArray(d.files) ? d.files : [];
-  } catch (e) { commitFiles[sha] = []; }
-}
-
-async function selectCommit(sha) {
+function selectCommit(sha) {
   currentCommit = sha; currentFile = null;   // reset to the new commit's first file
-  if (!commitFiles[sha]) { render(); await loadCommit(sha); }
-  render();
+  render();   // a different commit is a different scope — subscribed on render, arrives on the stream
 }
 
 function stepCommit(delta) {
@@ -1081,8 +1066,11 @@ function renderCommitView(el) {
     (body && body !== (c.title || "").trim() ? `<div class="cb">${esc(body)}</div>` : "");
   el.appendChild(msg);
 
-  const files = commitFiles[c.sha];
-  if (!files) { el.appendChild(empty("loading commit…")); return; }
+  const view = listingView();
+  if (!view || view.state === "loading") { el.appendChild(empty("loading commit…")); return; }
+  if (view.state === "unavailable") { el.appendChild(empty("unavailable on this host")); return; }
+  if (view.state === "error") { el.appendChild(empty("couldn't load: " + (view.error || ""))); return; }
+  const files = activeFiles();
   if (!files.length) { el.appendChild(empty("this commit changed no files")); return; }
   // The tip commit's new-side lines ARE the MR head's, so highlighting there is coordinate-correct —
   // make it interactive (highlight → card, drafts). Earlier commits stay read-only: their line numbers
@@ -1260,75 +1248,26 @@ function expandGap(path, from, kind) {
 // "since last review" — a normal diff of the author's net changes, rendered per-file like the full
 // diff (falls back to the flat range-diff only when a conflicting replay forced that mode)
 function renderSinceLast(el) {
-  const d = sinceLastData;
-  if (d && !d.error && d.available !== false && !d.empty) {
-    if (d.mode === "rangediff") {
-      const name = document.createElement("div");
-      name.className = "fname"; name.textContent = "Changes since your last review · rebase noise excluded";
-      el.appendChild(name);
-      el.appendChild(rangeDiffView(d.interdiff));
-      return;
-    }
-    if (d.note) { const n = document.createElement("div"); n.className = "sincenote"; n.textContent = "⚠ " + d.note; el.appendChild(n); }
-    // fully interactive (highlight, comment, unfold) when head-aligned — the diff's new side is then
-    // the head blob, so its line numbers anchor exactly like the full diff. A stale session (head
-    // moved past the session) is read-only until a refresh re-syncs the head.
-    renderFileDiff(el, d.files || [], "  ·  since your last review", d.head_aligned !== false);
-    return;
+  const view = listingView();
+  const note = (text) => { const box = document.createElement("div"); box.className = "empty";
+                           box.style.padding = "12px 16px"; box.textContent = text;
+                           el.appendChild(box); };
+  if (!view || view.state === "loading") return note("computing the diff…");
+  if (view.state === "unavailable") return note("unavailable on this host");
+  if (view.state === "error") return note("couldn't compute: " + (view.error || "unknown error"));
+  const files = activeFiles();
+  if (!files.length) {
+    return note("No author changes since your last review (a rebase brought no new work).");
   }
-  const box = document.createElement("div");
-  box.style.padding = "12px 16px";
-  if (!d) { box.className = "empty"; box.textContent = "computing the diff…"; }
-  else if (d.available === false) { box.className = "empty"; box.textContent = "unavailable on this host"; }
-  else if (d.error) { box.className = "empty"; box.textContent = "couldn't compute: " + d.error; }
-  else { box.className = "empty"; box.textContent = d.note || "No author changes since your last review (a rebase brought no new work)."; }
-  el.appendChild(box);
-}
-
-// git range-diff is a diff-of-diffs — dense as raw text. Render it as a proper dual-column split.
-// The format is deterministic: cols 0-3 are indent, col 4 is the OUTER marker (was the line in the
-// reviewed patch / is it in the current one: ' '=both, '-'=old-only, '+'=new-only, '@'=section),
-// col 5+ is the INNER patch line with its own +/-. Two gutters show old|new presence, the row is
-// tinted by the since-review delta, and the code cell keeps the patch-level +/- coloring.
-function rangeDiffView(text) {
-  const wrap = document.createElement("div");
-  wrap.className = "rdiff";
-  const commitRe = /^\s*(?:\d+|-):\s+\S+\s+([=!<>])\s+(?:\d+|-):\s+\S+/;
-  const opClass = { "!": "rd-cmod", ">": "rd-cnew", "<": "rd-cdrop", "=": "rd-csame" };
-  const legend = document.createElement("div");
-  legend.className = "rdlegend";
-  legend.textContent = "old = in the version you reviewed · new = in the current version · tinted row = changed since your review";
-  wrap.appendChild(legend);
-
-  let table = null;
-  const header = (cls, txt) => {
-    table = null;
-    const h = document.createElement("div");
-    h.className = "rdln " + cls;
-    h.textContent = txt;
-    wrap.appendChild(h);
-  };
-  const cell = (cls, txt) => { const c = document.createElement("td"); c.className = cls; c.textContent = txt; return c; };
-
-  (text || "").split("\n").forEach((line) => {
-    const cm = line.match(commitRe);
-    if (cm) { header("rdcommit " + (opClass[cm[1]] || "rd-csame"), line); return; }
-    if (/^\s{0,4}@@ /.test(line) && line[4] === "@") { header("rd-file", line.replace(/^\s+/, "")); return; }
-
-    const outer = line[4] || " ";                 // present-in-old / present-in-new marker
-    const inner = line.slice(5);                  // the underlying patch line (keeps its own +/-)
-    const im = inner[0];                          // patch-level add / del / hunk
-    if (!table) { table = document.createElement("table"); table.className = "rdtable"; wrap.appendChild(table); }
-    const tr = document.createElement("tr");
-    tr.className = outer === "+" ? "rd-add" : outer === "-" ? "rd-del" : "rd-ctx";
-    const oldPresent = outer === " " || outer === "-";
-    const newPresent = outer === " " || outer === "+";
-    tr.appendChild(cell("rg" + (outer === "-" ? " g-del" : ""), outer === "-" ? "−" : oldPresent ? "·" : ""));
-    tr.appendChild(cell("rg" + (outer === "+" ? " g-add" : ""), outer === "+" ? "+" : newPresent ? "·" : ""));
-    tr.appendChild(cell("rc" + (im === "+" ? " i-add" : im === "-" ? " i-del" : im === "@" ? " i-hunk" : ""), inner));
-    table.appendChild(tr);
-  });
-  return wrap;
+  if (view.clean === false) {
+    const warn = document.createElement("div"); warn.className = "sincenote";
+    warn.textContent = "⚠ the replay conflicted — this diff may include target-branch changes";
+    el.appendChild(warn);
+  }
+  // fully interactive (highlight, comment, unfold) when head-aligned — the diff's new side is then
+  // the head blob, so its line numbers anchor exactly like the full diff. A stale session (head
+  // moved past the session) is read-only until a refresh re-syncs the head.
+  renderFileDiff(el, files, "  ·  since your last review", view.head_aligned !== false);
 }
 
 function renderFileView(el, path) {

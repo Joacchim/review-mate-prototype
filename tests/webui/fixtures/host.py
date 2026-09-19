@@ -8,6 +8,9 @@ class StubHost:
     def __init__(self, queue=None) -> None:
         self.queue = list(queue or [])
         self.files: dict[str, str] = {}
+        self.versions: list[dict] = []
+        self.commit_list: list[dict] = []
+        self.commit_files: dict[str, list] = {}
         self.fail_with: Exception | None = None
         self.calls = 0
 
@@ -19,6 +22,15 @@ class StubHost:
 
     async def search(self, query: str):
         return []
+
+    async def mr_versions(self, ref):
+        return list(self.versions)
+
+    async def commits(self, ref):
+        return list(self.commit_list)
+
+    async def commit_diff(self, project: str, sha: str):
+        return list(self.commit_files.get(sha, []))
 
     async def get_file(self, project: str, path: str, ref: str) -> str:
         """Whole-file content, which unfolding context and the markdown view both read."""

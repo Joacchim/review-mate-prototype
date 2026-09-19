@@ -93,6 +93,8 @@ class DiffView(BaseModel):
     error: str = ""
     head_aligned: bool = True  # false when a since view is computed against a head the session
                                # has not re-synced to, so its lines cannot anchor a comment
+    clean: bool = True         # false when a since view's replay conflicted, so the diff may carry
+                               # target-branch changes the author did not write
     mr: dict = Field(default_factory=dict)
     files: list[FileRow] = Field(default_factory=list)
 
@@ -138,6 +140,7 @@ class DiffScopes:
         self._resolved: dict[tuple, list] = {}
         self._failed: dict[tuple, str] = {}
         self._aligned: dict[tuple, bool] = {}
+        self._clean: dict[tuple, bool] = {}
         self._tasks: dict[tuple, asyncio.Task] = {}
 
     # --- diff:<sid>:<mode>[:<path>] ---------------------------------------
@@ -169,9 +172,10 @@ class DiffScopes:
                                 language=entry.language, additions=additions, deletions=deletions,
                                 has_diff=bool(_diff_text(entry).strip())))
         mr = snapshot.mr.model_dump(mode="json") if snapshot.mr else {}
+        key = (session_id, mode, self._head(snapshot))
         return DiffView(session=session_id, mode=mode, mr=mr, files=rows,
-                        head_aligned=self._aligned.get((session_id, mode, self._head(snapshot)), True),
-                        ).model_dump(mode="json")
+                        head_aligned=self._aligned.get(key, True),
+                        clean=self._clean.get(key, True)).model_dump(mode="json")
 
     async def _build_file(self, address: Address) -> dict:
         session_id, mode, path = address.session, address.mode, address.path
@@ -250,7 +254,8 @@ class DiffScopes:
                                                          mode[len(COMMIT_PREFIX):])
                 self._resolved[key] = list(files)
             else:
-                self._resolved[key], self._aligned[key] = await self._since(snapshot)
+                (self._resolved[key], self._aligned[key],
+                 self._clean[key]) = await self._since(snapshot)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -258,7 +263,7 @@ class DiffScopes:
         if self._publish is not None:
             await self._publish(session_id, mode)
 
-    async def _since(self, snapshot) -> tuple[list, bool]:
+    async def _since(self, snapshot) -> tuple[list, bool, bool]:
         """The author's work since the reviewer's watermark, as ordinary per-file diffs.
 
         Mirrors the host/workspace resolution the since-last surface already performs: the
@@ -269,12 +274,12 @@ class DiffScopes:
         watermark = (self._kb.get_watermark(mr.host, mr.project, mr.iid)
                      if self._kb is not None else None)
         if not watermark or watermark == mr.sha:
-            return [], True                        # never reviewed, or reviewed at this very head
+            return [], True, True                  # never reviewed, or reviewed at this very head
         ref = MRRef(host=mr.host, project=mr.project, iid=mr.iid)
         versions = await self._provider.mr_versions(ref)
         newest = versions[0] if versions else None
         if newest is None:
-            return [], True
+            return [], True, True
         reviewed = next((v for v in versions if v["head_sha"] == watermark), None)
         repo = RepoRef(host=mr.host, project=mr.project, clone_url=mr.clone_url)
         result = await self._workspace.since_diff(
@@ -286,7 +291,7 @@ class DiffScopes:
         files = [FileEntry(path=path, change_type=ChangeType.MODIFIED, language=known.get(path),
                            hunks=[{"diff": text}])
                  for path, text in split_files(result.get("diff", ""))]
-        return files, aligned
+        return files, aligned, bool(result.get("clean", True))
 
     async def aclose(self) -> None:
         for task in list(self._tasks.values()):
@@ -299,6 +304,7 @@ class DiffScopes:
         self._resolved.clear()
         self._failed.clear()
         self._aligned.clear()
+        self._clean.clear()
 
     # --- internals ---------------------------------------------------------
 

@@ -421,3 +421,29 @@ def test_a_failed_resolution_is_reported(tmp_path):
             ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:since"]})
             view = settled(ws, f"diff:{sid}:since")
             assert view["state"] == "error" and "git exploded" in view["error"]
+
+
+def test_a_conflicted_replay_is_flagged_not_hidden(tmp_path):
+    """since_diff falls back to a noisier diff when the replay conflicts, and says so. The view
+    carries that, because a reviewer reading target-branch changes as the author's is the failure."""
+    class Conflicted(StubWorkspace):
+        async def since_diff(self, repo, old_base, old_head, new_base, new_head):
+            await super().since_diff(repo, old_base, old_head, new_base, new_head)
+            return {"diff": SINCE_DIFF, "clean": False}
+
+    app, _ = build_versioned(tmp_path, workspace=Conflicted())
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:since"]})
+            view = settled(ws, f"diff:{sid}:since")
+            assert view["state"] == "ready" and view["clean"] is False
+
+
+def test_a_clean_replay_says_so(tmp_path):
+    app, _ = build_versioned(tmp_path)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:since"]})
+            assert settled(ws, f"diff:{sid}:since")["clean"] is True

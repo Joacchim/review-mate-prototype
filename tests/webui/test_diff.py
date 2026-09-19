@@ -118,3 +118,71 @@ def test_revealed_context_arrives_already_coloured(diff, staged, stub_host):
     expect(diff.token("str").or_(diff.token("cmt")).first).to_be_visible()
     revealed = diff.page.locator('table.hunk td.code[data-line="20"]')
     expect(revealed.locator("span")).to_have_count(1)
+
+
+# --- the diff modes ---------------------------------------------------------
+
+def stage_advanced_review(staged, stub_host, review_kb, workspace_clean=True):
+    """A review whose watermark is an older head, so the since-last surface engages."""
+    from webui.fixtures.scenarios import COMMITS, reviewed_then_advanced
+    staged.put(reviewed_then_advanced("s1"))
+    review_kb.set_watermark("gitlab", "platform/virtu/control-plane", 137, "reviewed-head")
+    stub_host.versions = [{"head_sha": "abc123", "base_sha": "base2"},
+                          {"head_sha": "reviewed-head", "base_sha": "base1"}]
+    stub_host.commit_list = list(COMMITS)
+    return "s1"
+
+
+def test_an_advanced_mr_offers_the_since_last_view(diff, staged, stub_host, review_kb):
+    stage_advanced_review(staged, stub_host, review_kb)
+    diff.load("s1")
+    expect(diff.version_banner).to_contain_text("Updated since your last review")
+
+
+def test_since_last_shows_only_what_arrived_after_the_watermark(diff, staged, stub_host, review_kb):
+    stage_advanced_review(staged, stub_host, review_kb)
+    diff.load("s1")
+    expect(diff.table).to_contain_text("q = self._legacy")     # the full diff
+    diff.show_since_last()
+    expect(diff.table).to_contain_text("added since you last looked")
+    expect(diff.table).not_to_contain_text("q = self._legacy")
+
+
+def test_switching_back_restores_the_full_diff(diff, staged, stub_host, review_kb):
+    stage_advanced_review(staged, stub_host, review_kb)
+    diff.load("s1")
+    diff.show_since_last()
+    expect(diff.table).to_contain_text("added since you last looked")
+    diff.show_full_diff()
+    expect(diff.table).to_contain_text("q = self._legacy")
+
+
+def test_per_commit_review_steps_through_the_commits(diff, staged, stub_host, review_kb):
+    from review_mate.session.state import ChangeType, FileEntry
+    from webui.fixtures.scenarios import COMMIT_DIFF
+    stage_advanced_review(staged, stub_host, review_kb)
+    stub_host.commit_files = {
+        "aaaa111": [FileEntry(path="first.py", change_type=ChangeType.MODIFIED, language="python",
+                              hunks=[{"diff": COMMIT_DIFF}])],
+    }
+    diff.load("s1")
+    diff.toggle_per_commit()
+    expect(diff.commit_bar).to_contain_text("commit 1/2")
+    expect(diff.table).to_contain_text("second")
+
+
+def test_a_conflicted_replay_warns_the_reviewer(diff, staged, stub_host, review_kb, stub_workspace):
+    """The reviewer must not read target-branch changes as the author's work."""
+    stage_advanced_review(staged, stub_host, review_kb)
+    stub_workspace.clean = False
+    diff.load("s1")
+    diff.show_since_last()
+    expect(diff.page.locator(".sincenote")).to_contain_text("may include target-branch changes")
+
+
+def test_a_clean_replay_carries_no_warning(diff, staged, stub_host, review_kb):
+    stage_advanced_review(staged, stub_host, review_kb)
+    diff.load("s1")
+    diff.show_since_last()
+    expect(diff.table).to_contain_text("added since you last looked")
+    expect(diff.page.locator(".sincenote")).to_have_count(0)
