@@ -59,6 +59,10 @@ with one, that file's hunks, lines and token spans.
 **blob** — the scope family carrying a whole file at a resolved sha, which is what a client splices
 from when a reader unfolds the context between hunks.
 
+**rail** — the scope family carrying a session's highlights with their cards, and the MR-level
+insights. One scope per session rather than per file: the numbering a reviewer references is
+session-wide, and a card arriving would otherwise republish a whole tokenized file.
+
 **Token kind** — a semantic label on a span of source text (`keyword`, `string`, `comment`). The
 server lexes and sends kinds; each client maps them to its own palette. An unknown kind renders
 plain.

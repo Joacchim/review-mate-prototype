@@ -57,11 +57,27 @@ class Subscription:
 
 
 class ViewBus:
-    def __init__(self) -> None:
+    def __init__(self, on_first_watch=None, on_last_watch=None) -> None:
         self._builders: dict[str, Builder] = {}
         self._families: dict[str, FamilyBuilder] = {}
         self._seq: dict[str, int] = {}
         self._subs: set[Subscription] = set()
+        # Called as a scope gains its first watcher and loses its last. Work that only makes sense
+        # while someone is looking — tailing a session's events to know when to republish — starts
+        # and stops here rather than running for every session the server holds.
+        self._on_first_watch = on_first_watch
+        self._on_last_watch = on_last_watch
+
+    def watchers(self, scope: str) -> int:
+        return sum(1 for sub in self._subs if scope in sub.scopes)
+
+    def _note_watched(self, scope: str) -> None:
+        if self._on_first_watch is not None and self.watchers(scope) == 1:
+            self._on_first_watch(scope)
+
+    def _note_unwatched(self, scope: str) -> None:
+        if self._on_last_watch is not None and self.watchers(scope) == 0:
+            self._on_last_watch(scope)
 
     def register(self, scope: str, builder: Builder) -> None:
         """A singleton scope, addressed by its exact name."""
@@ -101,6 +117,8 @@ class ViewBus:
         finally:
             sub.close()
             self._subs.discard(sub)
+            for scope in sub.scopes:     # a dropped connection releases its watches too
+                self._note_unwatched(scope)
 
     async def subscribe(self, sub: Subscription, scopes: list[str]) -> None:
         """Add scopes to a subscription and send each one's current view immediately.
@@ -113,11 +131,14 @@ class ViewBus:
                 continue
             sub.scopes.add(scope)
             self._seq.setdefault(scope, 0)
+            self._note_watched(scope)
             sub.offer(await self._render(scope))
 
     def unsubscribe(self, sub: Subscription, scopes: list[str]) -> None:
         for scope in scopes:
-            sub.scopes.discard(scope)
+            if scope in sub.scopes:
+                sub.scopes.discard(scope)
+                self._note_unwatched(scope)
 
     def forget(self, scope: str) -> None:
         """Drop a family member's sequence once its subject is gone, so a reused name starts clean."""

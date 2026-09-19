@@ -5,6 +5,7 @@ static UI is mounted last so it never shadows the `/api` routes.
 """
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -85,9 +86,51 @@ def create_app(manager: SessionManager | None = None,
     from review_mate.server.view_routes import build_view_routes
     from review_mate.view.bus import ViewBus
     from review_mate.view.diffscope import BlobScopes, DiffScopes
+    from review_mate.view.rail import RailScope
     from review_mate.view.hub import HubScope
     from review_mate.view.protocol import HUB
-    bus = ViewBus()
+    # a session's reading scopes are rebuilt when its state changes, but only while a client is
+    # looking: the bus says when a scope gains its first watcher and loses its last, and the tail
+    # on that session's events runs exactly between those two moments.
+    session_pumps: dict[str, asyncio.Task] = {}
+
+    def _session_of(scope: str) -> str | None:
+        kind, sep, rest = scope.partition(":")
+        return rest.partition(":")[0] if sep and kind in ("diff", "blob", "rail") else None
+
+    def _still_watched(session_id: str) -> bool:
+        return bool(bus.watched(f"diff:{session_id}:") or bus.watched(f"blob:{session_id}:")
+                    or bus.watched(f"rail:{session_id}"))
+
+    async def _tail(session_id: str) -> None:
+        actor = manager.get(session_id)
+        if actor is None:
+            return
+        async for _event in actor.subscribe(since=actor.snapshot().seq):
+            await republish_session(session_id)
+
+    def _on_first_watch(scope: str) -> None:
+        session_id = _session_of(scope)
+        if session_id is None or session_id in session_pumps:
+            return
+        task = asyncio.create_task(_tail(session_id))
+        session_pumps[session_id] = task
+        task.add_done_callback(lambda finished: _pump_done(session_id, finished))
+
+    def _pump_done(session_id: str, task: asyncio.Task) -> None:
+        session_pumps.pop(session_id, None)
+        if not task.cancelled():
+            task.exception()   # a dead tail must not darken the session silently
+
+    def _on_last_watch(scope: str) -> None:
+        session_id = _session_of(scope)
+        if session_id is None or _still_watched(session_id):
+            return
+        task = session_pumps.pop(session_id, None)
+        if task is not None:
+            task.cancel()
+
+    bus = ViewBus(on_first_watch=_on_first_watch, on_last_watch=_on_last_watch)
     hub = HubScope(manager, provider=provider, kb=kb,
                    user=getattr(provider, "username", "") or "")
     bus.register(HUB, hub.build)
@@ -105,6 +148,9 @@ def create_app(manager: SessionManager | None = None,
     bus.register_family("diff", diff_scopes.build)
     blob_scopes = BlobScopes(manager, provider=provider, publish=bus.publish)
     bus.register_family("blob", blob_scopes.build)
+    rail_scope = RailScope(manager, provider=provider,
+                           publish=lambda session_id: bus.publish(f"rail:{session_id}"))
+    bus.register_family("rail", rail_scope.build)
 
     async def republish_session(session_id: str) -> None:
         """Rebuild the reading scopes a client currently holds for one session.
@@ -114,13 +160,18 @@ def create_app(manager: SessionManager | None = None,
         Blobs are included: a re-sync can move the head, and a blob reads at whatever sha its mode
         resolves to.
         """
-        held = bus.watched(f"diff:{session_id}:") | bus.watched(f"blob:{session_id}:")
+        held = (bus.watched(f"diff:{session_id}:") | bus.watched(f"blob:{session_id}:")
+                | bus.watched(f"rail:{session_id}"))
         for scope in held:
             await bus.publish(scope)
 
+    async def _stop_pumps() -> None:
+        for task in list(session_pumps.values()):
+            task.cancel()
+        session_pumps.clear()
+
     routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider, broker=broker,
-                          writeback=writeback, activity_broker=activity_broker, kb=kb,
-                          republish_session=republish_session)
+                          writeback=writeback, activity_broker=activity_broker, kb=kb)
     # registered before the static mount so `/api/stream` and `/api/cmd` are never shadowed by the UI
     routes.extend(build_view_routes(manager, bus, hub, resolve_ref=resolve_ref))
 
@@ -146,6 +197,8 @@ def create_app(manager: SessionManager | None = None,
         await hub.aclose()
         await diff_scopes.aclose()
         await blob_scopes.aclose()
+        await rail_scope.aclose()
+        await _stop_pumps()
         await manager.shutdown()
 
     app = Starlette(routes=routes, lifespan=lifespan, middleware=[Middleware(_NoCacheUI)])
@@ -157,4 +210,5 @@ def create_app(manager: SessionManager | None = None,
     app.state.hub = hub
     app.state.diff_scopes = diff_scopes
     app.state.blob_scopes = blob_scopes
+    app.state.rail_scope = rail_scope
     return app

@@ -100,6 +100,7 @@ Writes go to `POST /api/cmd` as `{"cmd": …, "args": {…}}` — `session.open`
 | `diff:<sid>:<mode>` | the file list and the MR |
 | `diff:<sid>:<mode>:<path>` | one file's hunks, lines and token spans |
 | `blob:<sid>:<mode>:<path>` | a whole file at the resolved sha, for unfolding |
+| `rail:<sid>` | the session's highlights with their cards, and MR-level insights |
 
 A file's scope name is the list's name with a path appended, so a client concatenates rather than
 assembling a second name. Names are validated: a path may contain a colon, a session id and a mode
@@ -120,6 +121,10 @@ may not, and a malformed name reports `malformed-name` instead of being read as 
   survives, and a later publish can succeed.
 - **Nothing is built for a scope nobody watches**, though `seq` still advances, so a late subscriber
   learns how current its first view is.
+- **Work that only makes sense while someone is looking starts and stops with the watching.** The
+  bus reports when a scope gains its first watcher and loses its last, and the tail on a session's
+  events — which is what republishes its reading scopes when its state changes — runs exactly
+  between those two moments.
 
 ### Reading a change
 
@@ -155,6 +160,11 @@ Switching mode is a subscription, not a command — which is why no mode command
 step with what a client is showing.
 
 ## Session documents
+
+There are two write paths, and the line between them is deliberate: **`/api/cmd` addresses the set
+of reviews and the host; `/api/sessions/{id}/commands` addresses the contents of one review.**
+Opening, closing and refreshing are about which reviews exist; highlights, cards, drafts and
+messages are about what is inside one.
 
 Alongside the view protocol, the session document is served directly: `GET /api/sessions/{id}`
 returns the folded state, `POST /api/sessions/{id}/commands` submits a session command, and a

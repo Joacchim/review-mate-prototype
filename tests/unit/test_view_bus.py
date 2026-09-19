@@ -216,3 +216,48 @@ async def test_forget_resets_a_members_sequence():
         bus.forget("file:s1:a.py")
         await bus.subscribe(sub, ["file:s1:a.py"])
         assert (await take(gen)).seq == 0
+
+
+# --- watch lifecycle ---------------------------------------------------------
+
+def hooked_bus():
+    events = []
+    bus = ViewBus(on_first_watch=lambda s: events.append(("first", s)),
+                  on_last_watch=lambda s: events.append(("last", s)))
+    bus.register("demo", lambda: _ready({}))
+    return bus, events
+
+
+async def test_the_first_watcher_and_the_last_are_announced():
+    bus, events = hooked_bus()
+    async with bus.connect() as sub:
+        await bus.subscribe(sub, ["demo"])
+        assert events == [("first", "demo")]
+        bus.unsubscribe(sub, ["demo"])
+        assert events == [("first", "demo"), ("last", "demo")]
+
+
+async def test_a_second_watcher_does_not_re_announce():
+    bus, events = hooked_bus()
+    async with bus.connect() as one, bus.connect() as two:
+        await bus.subscribe(one, ["demo"])
+        await bus.subscribe(two, ["demo"])
+        assert events == [("first", "demo")]          # one announcement, not two
+        bus.unsubscribe(one, ["demo"])
+        assert events == [("first", "demo")]          # still watched by the other
+        bus.unsubscribe(two, ["demo"])
+        assert events[-1] == ("last", "demo")
+
+
+async def test_a_dropped_connection_releases_its_watches():
+    bus, events = hooked_bus()
+    async with bus.connect() as sub:
+        await bus.subscribe(sub, ["demo"])
+    assert events[-1] == ("last", "demo")
+
+
+async def test_unsubscribing_something_not_watched_announces_nothing():
+    bus, events = hooked_bus()
+    async with bus.connect() as sub:
+        bus.unsubscribe(sub, ["demo"])
+        assert events == []
