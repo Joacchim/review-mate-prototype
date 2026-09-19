@@ -48,3 +48,14 @@ class HostStub:
 def host_stub():
     """The stub class itself, so a test can construct it with the host behaviour it needs."""
     return HostStub
+
+
+def pytest_configure(config):
+    """Default the browser suite to every browser it claims to cover.
+
+    pytest-playwright runs chromium alone unless told otherwise, so a bare `pytest` would quietly
+    cover half of what docs/testing/web-ui.md promises. `--browser` still narrows it.
+    """
+    option = getattr(config.option, "browser", None)
+    if option is not None and not option:
+        config.option.browser = ["chromium", "firefox"]

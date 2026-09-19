@@ -238,3 +238,11 @@ class HubScope:
 
     def forget(self, session_id: str) -> None:
         self._host.pop(session_id, None)
+
+    def reset(self) -> None:
+        """Drop every cached host fact, so the next build reports nothing as checked."""
+        self._host.clear()
+        self._queue = []
+        self._queue_state = "idle"
+        self._queue_error = ""
+        self._checked_at = ""

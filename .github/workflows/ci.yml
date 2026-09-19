@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    name: suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync
+        run: uv sync --all-extras
+      - name: Run the suite
+        # the browser suite has its own job; node runs the browser row-builder checks
+        run: uv run pytest --ignore=tests/webui -q
+
+  web-ui:
+    name: web-ui (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync
+        run: uv sync --all-extras
+      - name: Install ${{ matrix.browser }}
+        run: uv run playwright install --with-deps ${{ matrix.browser }}
+      - name: Run the browser suite
+        run: uv run pytest tests/webui -q --browser ${{ matrix.browser }}
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-ui-${{ matrix.browser }}
+          path: .webui-artifacts/
+          if-no-files-found: ignore

@@ -21,6 +21,11 @@ tui = [
     "prompt_toolkit>=3.0",
     "websockets>=13",
 ]
+# The browser suite. Kept out of the default install because it pulls browser binaries;
+# see docs/testing/web-ui.md.
+webtest = [
+    "pytest-playwright>=0.5",
+]
 
 [project.scripts]
 review-mate = "review_mate.__main__:main"

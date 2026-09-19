@@ -11,15 +11,15 @@ fits together is in [the architecture](../architecture.md).
 
 - **Playwright** through `pytest-playwright`, so the browser suite is part of `uv run pytest` and
   there is one gate.
-- **Chromium and Firefox**, both on every run. `--browser` is repeatable; with none given the suite
-  runs both.
+- **Chromium and Firefox**, both on every run. pytest-playwright runs chromium alone unless told
+  otherwise, so `tests/conftest.py` defaults the list to both; `--browser` still narrows it.
 - Browsers install with `playwright install --with-deps chromium firefox`.
 
 ```bash
 uv sync --extra webtest
 uv run playwright install chromium firefox
 uv run pytest tests/webui                       # both browsers
-uv run pytest tests/webui --browser chromium    # one
+uv run pytest tests/webui --browser firefox     # one
 uv run pytest tests/webui --headed --slowmo 300 # watch it
 ```
 
@@ -55,10 +55,16 @@ is those two methods over a dict of `SessionState`. Scenarios are built from the
 Most tests use `staged_app`, because staging a state beats choreographing a host into producing it.
 The `live_app` set stays small and covers one path per surface, end to end.
 
-### The drift guard
+### What can still drift
 
-`staged_app` must register a builder for every scope kind `create_app` registers. A new scope that
-the fixture does not serve fails that test, so the fixture cannot silently fall behind the app.
+Protocol conformance needs no test: `staged_app` *is* `create_app`, so the scope builders, the bus
+and the routes are the production objects and a fixture cannot serve a different protocol from the
+application. What can drift is the manager beneath them — a method renamed on one side only, which
+would surface as a broken page rather than a failing test.
+
+`MANAGER_SURFACE` names what the application reaches for on a manager, and
+`test_fixture_conformance.py` asserts both `FakeManager` and `SessionManager` carry all of it.
+Renaming a method on either side turns it red.
 
 ### Page objects
 
@@ -126,8 +132,9 @@ The rule: if an assertion would hold with no browser, it belongs in a cheaper su
 
 ## CI
 
-GitHub Actions, one workflow. The Python suite runs once; the browser suite runs as a matrix over
-chromium and firefox, on every push. Failure artifacts upload on red.
+`.github/workflows/ci.yml`. The `tests` job runs everything but `tests/webui`; the `web-ui` job is a
+matrix over chromium and firefox, `fail-fast: false` so one browser's failure does not hide the
+other's. Failure artifacts upload on red.
 
 Browser jobs are the slowest thing in the repo — if the matrix stops being tolerable, shard before
 dropping a browser. A Firefox-only regression found a day later costs more than the minutes saved.

@@ -84,7 +84,13 @@ class ViewBus:
 
     @property
     def scopes(self) -> set[str]:
+        """The singleton scopes."""
         return set(self._builders)
+
+    @property
+    def families(self) -> set[str]:
+        """The registered family kinds — the part of the surface a scope name's prefix selects."""
+        return set(self._families)
 
     @asynccontextmanager
     async def connect(self) -> AsyncIterator[Subscription]:
