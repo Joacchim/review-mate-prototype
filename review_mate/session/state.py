@@ -82,6 +82,7 @@ class FileEntry(BaseModel):
 
 class Highlight(BaseModel):
     id: str
+    ordinal: int = 0                   # the "#N" a reviewer refers to it by, fixed at creation
     file: str
     side: Side
     line_range: LineRange
@@ -166,6 +167,10 @@ class SessionState(BaseModel):
     checkout_path: str | None = None   # on-disk worktree of the MR (for code-graph / LSP / grep)
     files: list[FileEntry] = Field(default_factory=list)
     highlights: list[Highlight] = Field(default_factory=list)
+    # Highlight numbering is a reference a reviewer uses in conversation, so it must not move when
+    # one is removed. This counts every highlight ever added, and never goes down: removing #2
+    # leaves #1 and #3, the way issue numbers behave.
+    highlights_created: int = 0
     cards: list[Card] = Field(default_factory=list)
     access_requests: list[AccessRequest] = Field(default_factory=list)
     threads: list[ReviewThread] = Field(default_factory=list)

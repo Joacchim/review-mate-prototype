@@ -198,3 +198,85 @@ async def test_a_highlight_made_against_an_older_head_is_marked_stale(tmp_path):
     await actor.submit(ApplyMRMetadata(mr=moved), Origin.SYSTEM)
     assert (await rail.build(sid))["highlights"][0]["stale"] is True
     await manager.shutdown()
+
+
+async def test_a_number_survives_the_removal_of_an_earlier_highlight(session):
+    """#N is a reference a reviewer uses in conversation and an agent cites in a card. If removing
+    one renumbered the rest, a written "#3" would quietly point at a different piece of code."""
+    from review_mate.session.commands import RemoveHighlight
+
+    manager, sid, provider = session
+    actor = manager.get(sid)
+    for n in range(3):
+        await actor.submit(highlight(f"f{n}.py", n + 1, n + 1), Origin.BROWSER)
+    rail = rail_for(manager, provider)
+    assert [(h["n"], h["file"]) for h in (await rail.build(sid))["highlights"]] == \
+        [(1, "f0.py"), (2, "f1.py"), (3, "f2.py")]
+
+    second = actor.snapshot().highlights[1]
+    await actor.submit(RemoveHighlight(highlight_id=second.id), Origin.BROWSER)
+    assert [(h["n"], h["file"]) for h in (await rail.build(sid))["highlights"]] == \
+        [(1, "f0.py"), (3, "f2.py")]        # a gap, not a renumber
+
+
+async def test_a_number_is_never_reused_after_the_newest_is_removed(session):
+    """The trap in the cheap fix: max(existing) + 1 would hand #3 to a different highlight, so a
+    stale reference would retarget instead of dangling."""
+    from review_mate.session.commands import RemoveHighlight
+
+    manager, sid, provider = session
+    actor = manager.get(sid)
+    await actor.submit(highlight("a.py", 1, 1), Origin.BROWSER)
+    await actor.submit(highlight("b.py", 2, 2), Origin.BROWSER)
+    newest = actor.snapshot().highlights[-1]
+    await actor.submit(RemoveHighlight(highlight_id=newest.id), Origin.BROWSER)
+    await actor.submit(highlight("c.py", 3, 3), Origin.BROWSER)
+    rail = rail_for(manager, provider)
+    assert [(h["n"], h["file"]) for h in (await rail.build(sid))["highlights"]] == \
+        [(1, "a.py"), (3, "c.py")]
+
+
+async def test_removing_a_card_leaves_the_numbering_alone(session):
+    """Cards are not what is numbered — only a reviewer dismissing an insight should change."""
+    from review_mate.session.commands import EmitCard, RemoveCard
+
+    manager, sid, provider = session
+    actor = manager.get(sid)
+    await actor.submit(highlight("a.py", 1, 1), Origin.BROWSER)
+    await actor.submit(highlight("b.py", 2, 2), Origin.BROWSER)
+    first = actor.snapshot().highlights[0]
+    await actor.submit(EmitCard(highlight_id=first.id, body="an answer"), Origin.AGENT)
+    card = actor.snapshot().cards[0]
+    # the agent may not retract a card; the reviewer dismisses it
+    assert not (await actor.submit(RemoveCard(card_id=card.id), Origin.AGENT)).ok
+    assert (await actor.submit(RemoveCard(card_id=card.id), Origin.BROWSER)).ok
+    rail = rail_for(manager, provider)
+    view = await rail.build(sid)
+    assert [h["n"] for h in view["highlights"]] == [1, 2]
+    assert view["highlights"][0]["card"] is None
+
+
+async def test_numbering_survives_a_restart(tmp_path):
+    """The counter is state, so replay must reproduce it — otherwise a restart renumbers."""
+    from review_mate.session.commands import RemoveHighlight
+
+    provider = BlameHost()
+    root = tmp_path / "sessions"
+    manager = SessionManager(root=root, mr_source=provider)
+    sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
+    actor = manager.get(sid)
+    for n in range(3):
+        await actor.submit(highlight(f"f{n}.py", n + 1, n + 1), Origin.BROWSER)
+    await actor.submit(RemoveHighlight(highlight_id=actor.snapshot().highlights[1].id),
+                       Origin.BROWSER)
+    await manager.shutdown()
+
+    restored = SessionManager(root=root, mr_source=provider)
+    await restored.restore_all()
+    view = await RailScope(restored, provider=provider).build(sid)
+    assert [h["n"] for h in view["highlights"]] == [1, 3]
+    # and the next highlight continues past the gap rather than filling it
+    await restored.get(sid).submit(highlight("new.py", 9, 9), Origin.BROWSER)
+    view = await RailScope(restored, provider=provider).build(sid)
+    assert [h["n"] for h in view["highlights"]] == [1, 3, 4]
+    await restored.shutdown()

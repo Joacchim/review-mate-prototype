@@ -21,7 +21,13 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
     elif isinstance(event, ev.FilesApplied):
         s.files = list(event.files)
     elif isinstance(event, ev.HighlightAdded):
-        s.highlights.append(event.highlight)
+        # a log written before highlights were numbered carries ordinal 0: number it on replay, in
+        # the order it was added, which is the numbering it had at the time
+        highlight = event.highlight
+        if not highlight.ordinal:
+            highlight = highlight.model_copy(update={"ordinal": s.highlights_created + 1})
+        s.highlights.append(highlight)
+        s.highlights_created = max(s.highlights_created, highlight.ordinal)
     elif isinstance(event, ev.HighlightRemoved):
         s.highlights = [h for h in s.highlights if h.id != event.highlight_id]
         s.drafts = [d for d in s.drafts if d.highlight_id != event.highlight_id]  # no orphan drafts

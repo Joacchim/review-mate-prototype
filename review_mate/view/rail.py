@@ -82,10 +82,10 @@ class RailScope:
         by_highlight = {c.highlight_id: c for c in snapshot.cards if c.highlight_id}
         drafts = {d.highlight_id: d for d in snapshot.drafts if d.highlight_id}
         rows = []
-        for index, highlight in enumerate(snapshot.highlights):
+        for highlight in snapshot.highlights:
             draft = drafts.get(highlight.id)
             rows.append(RailHighlight(
-                id=highlight.id, n=index + 1, file=highlight.file,
+                id=highlight.id, n=highlight.ordinal, file=highlight.file,
                 side=getattr(highlight.side, "value", "new"),
                 start=highlight.line_range.start, end=highlight.line_range.end,
                 question=highlight.question,
