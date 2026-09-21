@@ -33,6 +33,10 @@ from review_mate.writeback.service import Writeback
 
 _WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
+# How often a presence-bearing scope is rebuilt while watched. The watcher TTL is 90s, so
+# this bounds how long a view can claim an agent is attached after it stopped listening.
+PRESENCE_TICK = 5.0
+
 
 def build_manager_from_env(activity_broker=None):
     """Wire a live SessionManager when a host is configured; else the self-contained baseline.
@@ -85,6 +89,7 @@ def create_app(manager: SessionManager | None = None,
     # render what they carry; none of them re-derive review state.
     from review_mate.server.view_routes import build_view_routes
     from review_mate.view.bus import ViewBus
+    from review_mate.view.chat import ChatScopes
     from review_mate.view.diffscope import BlobScopes, DiffScopes
     from review_mate.view.rail import RailScope
     from review_mate.view.hub import HubScope
@@ -93,14 +98,15 @@ def create_app(manager: SessionManager | None = None,
     # looking: the bus says when a scope gains its first watcher and loses its last, and the tail
     # on that session's events runs exactly between those two moments.
     session_pumps: dict[str, asyncio.Task] = {}
+    presence_task: asyncio.Task | None = None
 
     def _session_of(scope: str) -> str | None:
         kind, sep, rest = scope.partition(":")
-        return rest.partition(":")[0] if sep and kind in ("diff", "blob", "rail") else None
+        return rest.partition(":")[0] if sep and kind in ("diff", "blob", "rail", "chat") else None
 
     def _still_watched(session_id: str) -> bool:
         return bool(bus.watched(f"diff:{session_id}:") or bus.watched(f"blob:{session_id}:")
-                    or bus.watched(f"rail:{session_id}"))
+                    or bus.watched(f"rail:{session_id}") or bus.watched(f"chat:{session_id}"))
 
     async def _tail(session_id: str) -> None:
         actor = manager.get(session_id)
@@ -109,7 +115,41 @@ def create_app(manager: SessionManager | None = None,
         async for _event in actor.subscribe(since=actor.snapshot().seq):
             await republish_session(session_id)
 
+    def _carries_presence(scope: str) -> bool:
+        """The scopes whose view can change with no event behind it — see `_presence_tick`."""
+        return scope == HUB or (scope.startswith("chat:") and scope.count(":") == 1)
+
+    async def _presence_tick() -> None:
+        """Republish what presence rides on, while someone is watching it.
+
+        `attached` lapses by clock: a watcher that stops long-polling leaves no event, so a view
+        stating "Claude is working" would keep saying it. Rebuilding on a timer is what makes the
+        answer current; the bus sends nothing when the rebuilt view is the same, which is what
+        makes rebuilding it this often affordable.
+        """
+        while True:
+            await asyncio.sleep(PRESENCE_TICK)
+            for scope in bus.watched("chat:") | ({HUB} if bus.watchers(HUB) else set()):
+                if _carries_presence(scope):
+                    await bus.publish(scope)
+
+    def _ensure_ticker() -> None:
+        nonlocal presence_task
+        if presence_task is None or presence_task.done():
+            presence_task = asyncio.create_task(_presence_tick())
+
+    def _stop_ticker_if_idle() -> None:
+        nonlocal presence_task
+        if presence_task is None:
+            return
+        if bus.watchers(HUB) or any(_carries_presence(s) for s in bus.watched("chat:")):
+            return
+        presence_task.cancel()
+        presence_task = None
+
     def _on_first_watch(scope: str) -> None:
+        if _carries_presence(scope):
+            _ensure_ticker()
         session_id = _session_of(scope)
         if session_id is None or session_id in session_pumps:
             return
@@ -123,6 +163,8 @@ def create_app(manager: SessionManager | None = None,
             task.exception()   # a dead tail must not darken the session silently
 
     def _on_last_watch(scope: str) -> None:
+        if _carries_presence(scope):
+            _stop_ticker_if_idle()
         session_id = _session_of(scope)
         if session_id is None or _still_watched(session_id):
             return
@@ -131,8 +173,12 @@ def create_app(manager: SessionManager | None = None,
             task.cancel()
 
     bus = ViewBus(on_first_watch=_on_first_watch, on_last_watch=_on_last_watch)
+    def watcher() -> dict:
+        """Who is listening, read when a scope is built rather than captured when it is wired."""
+        return activity_broker.watcher() if activity_broker is not None else {}
+
     hub = HubScope(manager, provider=provider, kb=kb,
-                   user=getattr(provider, "username", "") or "")
+                   user=getattr(provider, "username", "") or "", watcher=watcher)
     bus.register(HUB, hub.build)
     async def publish_mode(session_id: str, mode: str) -> None:
         """Republish the scopes of one session-and-mode — the list and whatever files are open —
@@ -151,17 +197,24 @@ def create_app(manager: SessionManager | None = None,
     rail_scope = RailScope(manager, provider=provider,
                            publish=lambda session_id: bus.publish(f"rail:{session_id}"))
     bus.register_family("rail", rail_scope.build)
+    chat_scopes = ChatScopes(manager, watcher=watcher)
+    bus.register_family("chat", chat_scopes.build)
 
     async def republish_session(session_id: str) -> None:
         """Rebuild the reading scopes a client currently holds for one session.
 
         Called where a session's files actually change — a host re-sync — rather than on every
         event, and only for scopes someone is watching, so a review nobody has open costs nothing.
+        A client watching only the hub sees a session's counts move on the presence tick instead,
+        since no tail runs for a review nobody has open.
         Blobs are included: a re-sync can move the head, and a blob reads at whatever sha its mode
         resolves to.
         """
         held = (bus.watched(f"diff:{session_id}:") | bus.watched(f"blob:{session_id}:")
-                | bus.watched(f"rail:{session_id}"))
+                | bus.watched(f"rail:{session_id}") | bus.watched(f"chat:{session_id}"))
+        if bus.watchers(HUB):
+            # the hub folds per-session facts too — counts, and what each review is waiting on
+            held = held | {HUB}
         for scope in held:
             await bus.publish(scope)
 
@@ -169,6 +222,10 @@ def create_app(manager: SessionManager | None = None,
         for task in list(session_pumps.values()):
             task.cancel()
         session_pumps.clear()
+        nonlocal presence_task
+        if presence_task is not None:
+            presence_task.cancel()
+            presence_task = None
 
     routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider, broker=broker,
                           writeback=writeback, activity_broker=activity_broker, kb=kb)
@@ -211,4 +268,8 @@ def create_app(manager: SessionManager | None = None,
     app.state.diff_scopes = diff_scopes
     app.state.blob_scopes = blob_scopes
     app.state.rail_scope = rail_scope
+    app.state.chat_scopes = chat_scopes
+    # whether the presence ticker is running — a test asserts it starts and stops with the
+    # watching, which is otherwise invisible from outside
+    app.state.presence_running = lambda: presence_task is not None and not presence_task.done()
     return app

@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from review_mate.seams import MRRef
 from review_mate.session.state import DraftStatus, SessionStatus
+from review_mate.view.asks import outstanding
 
 
 def _now() -> str:
@@ -68,11 +69,20 @@ class HubSession(BaseModel):
     posted: int = 0
     highlights: int = 0
     cards: int = 0
+    asks: int = 0                  # what this review is waiting on the agent for
     host_checked: bool = False
+
+
+class HubWatcher(BaseModel):
+    """Is an agent listening at all — a property of the activity stream, so one fact for the fleet."""
+    attached: bool = False
+    parked: bool = False
+    last_seen: str | None = None
 
 
 class HubView(BaseModel):
     user: str = ""
+    agent: HubWatcher = Field(default_factory=HubWatcher)
     sessions: list[HubSession] = Field(default_factory=list)
     queue: list[dict] = Field(default_factory=list)
     queue_state: str = "idle"          # idle | loading | ready | error
@@ -88,8 +98,9 @@ class HubScope:
     fan-out of network calls.
     """
 
-    def __init__(self, manager, provider=None, kb=None, user: str = "") -> None:
+    def __init__(self, manager, provider=None, kb=None, user: str = "", watcher=None) -> None:
         self._manager = manager
+        self._watcher = watcher              # callable returning the activity stream's watcher dict
         self._provider = provider
         self._kb = kb
         self._user = user
@@ -111,15 +122,17 @@ class HubScope:
             sessions.append(self._fold(summ.id, actor.snapshot()))
         # newest first — row order is a view decision, so both clients get the same one
         sessions.sort(key=lambda s: s.created_at, reverse=True)
-        return HubView(user=self._user, sessions=sessions, queue=list(self._queue),
-                       queue_state=self._queue_state, queue_error=self._queue_error,
+        watcher = self._watcher() if self._watcher is not None else {}
+        return HubView(user=self._user, agent=HubWatcher(**(watcher or {})), sessions=sessions,
+                       queue=list(self._queue), queue_state=self._queue_state,
+                       queue_error=self._queue_error,
                        host_checked_at=self._checked_at).model_dump(mode="json")
 
     def _fold(self, sid: str, snap) -> HubSession:
         pending = sum(1 for d in snap.drafts if d.status is DraftStatus.DRAFT)
         posted = sum(1 for d in snap.drafts if d.status is DraftStatus.POSTED)
         counts = dict(highlights=len(snap.highlights), cards=len(snap.cards),
-                      pending=pending, posted=posted)
+                      pending=pending, posted=posted, asks=len(outstanding(snap)))
         if snap.mr is None:
             return HubSession(id=sid, status="active", created_at=snap.created_at, **counts,
                               state=derive_state(mr_state="", pending=pending, posted=posted,

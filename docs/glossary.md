@@ -63,6 +63,18 @@ from when a reader unfolds the context between hunks.
 context tier, plus the MR-level insights. One scope per session rather than per file: the numbering
 is session-wide, and a card arriving would otherwise republish a whole tokenized file.
 
+**conversation** — an exchange between the reviewer and the agent about one **subject**, or about
+the review as a whole. Distinct from a **thread**, which is the host's own discussion that other
+participants see: they differ in who can read them and in how a message reaches them.
+
+**subject** — what a conversation is about: a highlight, an MR-level insight, or a host thread,
+addressed by kind and id. The set is exactly what a client can open a detail panel on.
+
+**presence** — whether an agent is consuming the activity stream at all (`attached`, `parked`,
+`last_seen`). A property of the stream, so one fact for the whole fleet, and it decays by clock
+rather than by event. It says nothing about whether an answer is being worked on — that is the join
+with what is outstanding, which the chat scope publishes as the **agent state**.
+
 **#N** — a highlight's number, fixed when it is created and never reassigned. It is a reference a
 reviewer uses in conversation and an agent cites in a card, so removing a highlight leaves a gap
 rather than renumbering the rest — the way issue numbers behave.

@@ -15,7 +15,7 @@ from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
 from review_mate.view.hub import HubScope
 
-from conftest import HostStub
+from conftest import HostStub, next_frame
 
 
 def build(tmp_path, provider):
@@ -266,3 +266,37 @@ def test_a_merged_mr_reads_as_merged(tmp_path):
             view = hub_view(ws, lambda v: v["sessions"] and v["sessions"][0]["host_checked"])
             assert view["sessions"][0]["state"] == "merged"
             assert view["sessions"][0]["mr_state"] == "merged"
+
+
+def test_the_hub_says_which_reviews_are_waiting_on_the_agent(tmp_path):
+    """The review list is where a reviewer decides what to open next, so it carries the count —
+    the same predicate the chat scope publishes per session."""
+    app = build(tmp_path, HostStub())
+    with TestClient(app) as tc:
+        sid = tc.post("/api/cmd", json={"cmd": "session.open",
+                                        "args": {"ref": "g/p!1"}}).json()["session"]
+        with tc.websocket_connect("/api/stream") as ws:
+            # a reviewer with the review open: the tail on its events is what refreshes the hub
+            ws.send_json({"action": "subscribe", "scopes": ["hub", f"chat:{sid}"]})
+            assert hub_view(ws, lambda v: bool(v["sessions"]))["sessions"][0]["asks"] == 0
+            tc.post(f"/api/sessions/{sid}/commands",
+                    json={"type": "post_message", "body": "what is this for?"})
+            counts = []
+            while (frame := next_frame(ws)) is not None:
+                if frame.get("scope") == "hub":
+                    counts.append(frame["view"]["sessions"][0]["asks"])
+            assert counts and counts[-1] == 1
+
+
+def test_the_hub_carries_whether_an_agent_is_listening_at_all(tmp_path):
+    """Presence is a property of the activity stream, so the fleet-wide surface states it once."""
+    from datetime import datetime, timezone
+    app = build(tmp_path, HostStub())
+    with TestClient(app) as tc:
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            assert hub_view(ws)["agent"]["attached"] is False
+            # the hub does not tick on its own here: the subscribe below is what re-reads presence
+            app.state.activity_broker._last_wait_at = datetime.now(timezone.utc)
+            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            assert hub_view(ws, lambda v: v["agent"]["attached"] is True)["agent"]["parked"] is False

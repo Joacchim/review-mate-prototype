@@ -59,3 +59,24 @@ def pytest_configure(config):
     option = getattr(config.option, "browser", None)
     if option is not None and not option:
         config.option.browser = ["chromium", "firefox"]
+
+
+def next_frame(ws, timeout: float = 2.0):
+    """The next frame on a TestClient websocket, or None if none arrives in time.
+
+    `ws.receive_text()` blocks forever, so a test asserting that something arrives hangs rather
+    than fails when it does not — and since the bus withholds a view that did not change, "nothing
+    arrives" is a real outcome to assert on. This is `receive()` with a deadline, run on the portal
+    the session already uses.
+    """
+    import json
+
+    import anyio
+
+    async def _read():
+        with anyio.move_on_after(timeout):
+            return await ws._send_rx.receive()
+        return None
+
+    message = ws.portal.call(_read)
+    return json.loads(message["text"]) if message else None

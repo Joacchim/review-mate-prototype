@@ -101,10 +101,42 @@ Writes go to `POST /api/cmd` as `{"cmd": …, "args": {…}}` — `session.open`
 | `diff:<sid>:<mode>:<path>` | one file's hunks, lines and token spans |
 | `blob:<sid>:<mode>:<path>` | a whole file at the resolved sha, for unfolding |
 | `rail:<sid>` | the session's highlights with their cards and cheap context, and MR-level insights |
+| `chat:<sid>` | an index of the review's conversations, and the agent state it is in |
+| `chat:<sid>:review` | the conversation about the change as a whole |
+| `chat:<sid>:<kind>:<id>` | one subject's conversation — kind is highlight, insight or thread |
 
 A file's scope name is the list's name with a path appended, so a client concatenates rather than
 assembling a second name. Names are validated: a path may contain a colon, a session id and a mode
 may not, and a malformed name reports `malformed-name` instead of being read as a plausible path.
+
+### Conversations
+
+A message carries a **subject**: a highlight, an MR-level insight, or a host thread — or nothing,
+which is the review's own conversation. The kinds are exactly what a client can open a detail panel
+on, so a conversation renders where its subject already does.
+
+Each subject therefore has two channels, and they are never one list: the **agent** channel (its
+card and the conversation about it) and the **review** channel (the host thread other participants
+see). They differ in authorship, durability and write path — a session command against host
+write-back — so a client composes them, and an internal message can never become a posted one by
+accident.
+
+`view.asks` owns what the review is waiting for, and `chat:<sid>` publishes the join of that with
+presence. Presence answers only "is anyone listening"; a watcher parked in `wait()` is idle by
+definition. "Is my ask being worked on" is the join, and no client performs it:
+
+| | an ask is outstanding | nothing outstanding |
+|---|---|---|
+| **an agent is attached** | `working` | `watching` |
+| **none is** | `stalled` | `off` |
+
+`stale` qualifies `working`: an agent is attached, but the ask has sat long enough that "being
+worked on" is no longer the likely explanation — the case a restart strands, since the activity
+stream is ephemeral.
+
+An agent's own question back to the reviewer is not an ask. Nothing distinguishes a question from a
+statement in a message body, and inventing the distinction would report the reviewer's silence as
+the agent's debt.
 
 ### Rules a scope holds to
 

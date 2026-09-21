@@ -1,0 +1,268 @@
+"""The chat scopes: an index of a review's conversations, and each conversation's messages.
+
+Split for the reason the diff is: a client subscribes to the conversation it has open. The index is
+also where presence stops being a raw fact and becomes an answer — "is my ask being worked on" is
+the join of who is listening with what is outstanding, and no client performs it.
+
+Most of this drives ChatScopes directly; the ticker and the republish path go through the real
+stream, because the transport is the thing being checked there.
+"""
+import json
+import time
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from starlette.testclient import TestClient
+
+from conftest import HostStub, next_frame
+from review_mate.seams import MRRef
+from review_mate.server.app import create_app
+from review_mate.session.commands import (
+    AddHighlight, EmitCard, PostMessage, RequestContext, RequestInsights,
+)
+from review_mate.session.manager import SessionManager
+from review_mate.session.state import LineRange, Origin, Side, Subject, SubjectKind
+from review_mate.view.asks import STALE_AFTER, agent_state, outstanding
+from review_mate.view.chat import ChatScopes
+
+ATTACHED = {"attached": True, "parked": True, "last_seen": "2026-01-01T00:00:00+00:00"}
+ALONE = {"attached": False, "parked": False, "last_seen": None}
+
+
+@pytest.fixture
+async def session(tmp_path):
+    manager = SessionManager(root=tmp_path / "sessions", mr_source=HostStub())
+    sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
+    yield manager, sid
+    await manager.shutdown()
+
+
+def chat_for(manager, watcher=None):
+    return ChatScopes(manager, watcher=None if watcher is None else (lambda: watcher))
+
+
+async def mark(actor, file="a.py", line=1):
+    await actor.submit(AddHighlight(file=file, side=Side.NEW,
+                                    line_range=LineRange(start=line, end=line)), Origin.BROWSER)
+    return actor.snapshot().highlights[-1]
+
+
+def rows(view):
+    return {(r["kind"], r["id"]): r for r in view["conversations"]}
+
+
+# --- the index ---------------------------------------------------------------
+
+
+async def test_a_review_with_nothing_said_still_has_its_own_conversation(session):
+    manager, sid = session
+    view = await chat_for(manager).build(sid)
+    assert [r["kind"] for r in view["conversations"]] == ["review"]
+    assert view["conversations"][0]["scope"] == f"chat:{sid}:review"
+    assert view["conversations"][0]["count"] == 0
+
+
+async def test_each_conversation_is_listed_with_where_to_read_it(session):
+    manager, sid = session
+    actor = manager.get(sid)
+    highlight = await mark(actor)
+    await actor.submit(EmitCard(highlight_id=None, body="an insight"), Origin.AGENT)
+    insight = actor.snapshot().cards[-1]
+    await actor.submit(PostMessage(body="about the change"), Origin.BROWSER)
+    await actor.submit(PostMessage(body="about this line",
+                                   anchor=Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)),
+                       Origin.BROWSER)
+    await actor.submit(PostMessage(body="about that finding",
+                                   anchor=Subject(kind=SubjectKind.INSIGHT, id=insight.id)),
+                       Origin.AGENT)
+
+    listed = rows(await chat_for(manager).build(sid))
+    assert set(listed) == {("review", ""), ("highlight", highlight.id), ("insight", insight.id)}
+    assert listed[("highlight", highlight.id)]["scope"] == f"chat:{sid}:highlight:{highlight.id}"
+    assert listed[("insight", insight.id)]["preview"] == "about that finding"
+
+
+async def test_the_index_says_which_conversations_are_waiting_on_an_answer(session):
+    manager, sid = session
+    actor = manager.get(sid)
+    highlight = await mark(actor)
+    anchor = Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)
+    await actor.submit(PostMessage(body="does anything read this?", anchor=anchor), Origin.BROWSER)
+    await actor.submit(PostMessage(body="what is this for?"), Origin.BROWSER)
+    await actor.submit(PostMessage(body="the fleet selector", anchor=None), Origin.AGENT)
+
+    listed = rows(await chat_for(manager).build(sid))
+    assert listed[("highlight", highlight.id)]["owed"] is True     # the reviewer spoke last
+    assert listed[("review", "")]["owed"] is False                 # the agent answered
+
+
+async def test_an_unknown_session_is_reported(session):
+    manager, _ = session
+    view = await chat_for(manager).build("nope")
+    assert view["state"] == "unknown-session"
+
+
+# --- one conversation --------------------------------------------------------
+
+
+async def test_a_conversation_carries_only_its_own_messages(session):
+    manager, sid = session
+    actor = manager.get(sid)
+    highlight = await mark(actor)
+    anchor = Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)
+    await actor.submit(PostMessage(body="about the change"), Origin.BROWSER)
+    await actor.submit(PostMessage(body="about this line", anchor=anchor), Origin.BROWSER)
+    await actor.submit(PostMessage(body="two call sites", anchor=anchor), Origin.AGENT)
+
+    view = await chat_for(manager).build(f"{sid}:highlight:{highlight.id}")
+    assert [(m["role"], m["body"]) for m in view["messages"]] == [
+        ("user", "about this line"), ("agent", "two call sites")]
+    assert view["owed"] is False
+
+    review = await chat_for(manager).build(f"{sid}:review")
+    assert [m["body"] for m in review["messages"]] == ["about the change"]
+    assert review["owed"] is True
+
+
+async def test_a_name_that_is_not_a_conversation_is_named_rather_than_guessed(session):
+    manager, sid = session
+    for bad in (f"{sid}:nonsense:x", f"{sid}:highlight", f"{sid}:review:x"):
+        assert (await chat_for(manager).build(bad))["state"] == "malformed-name"
+
+
+# --- the agent state ---------------------------------------------------------
+
+
+async def test_nothing_outstanding_reads_as_watching_or_off(session):
+    manager, sid = session
+    assert (await chat_for(manager, ATTACHED).build(sid))["agent"]["state"] == "watching"
+    assert (await chat_for(manager, ALONE).build(sid))["agent"]["state"] == "off"
+
+
+async def test_an_ask_with_nobody_listening_is_stalled_not_slow(session):
+    manager, sid = session
+    await manager.get(sid).submit(PostMessage(body="look?"), Origin.BROWSER)
+    assert (await chat_for(manager, ATTACHED).build(sid))["agent"]["state"] == "working"
+    view = await chat_for(manager, ALONE).build(sid)
+    assert view["agent"]["state"] == "stalled" and view["agent"]["since"]
+
+
+async def test_an_escalation_and_a_request_for_insights_are_asks_too(session):
+    manager, sid = session
+    actor = manager.get(sid)
+    highlight = await mark(actor)
+    await actor.submit(RequestContext(highlight_id=highlight.id), Origin.BROWSER)
+    await actor.submit(RequestInsights(), Origin.BROWSER)
+    kinds = [a["kind"] for a in (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"]]
+    assert sorted(kinds) == ["context", "insights"]
+
+
+async def test_a_bare_highlight_owes_nothing(session):
+    """D21: the cheap tier serves it, so only an explicit escalation is an ask."""
+    manager, sid = session
+    await mark(manager.get(sid))
+    assert (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"] == []
+
+
+async def test_an_answer_closes_the_ask_it_answers(session):
+    manager, sid = session
+    actor = manager.get(sid)
+    highlight = await mark(actor)
+    await actor.submit(RequestContext(highlight_id=highlight.id), Origin.BROWSER)
+    assert (await chat_for(manager, ATTACHED).build(sid))["agent"]["state"] == "working"
+    await actor.submit(EmitCard(highlight_id=highlight.id, body="here"), Origin.AGENT)
+    assert (await chat_for(manager, ATTACHED).build(sid))["agent"]["state"] == "watching"
+
+
+def test_an_old_ask_with_an_agent_attached_is_flagged_stale():
+    """An agent is there and the ask has sat: "being worked on" stops being the likely story."""
+    from review_mate.view.asks import Ask
+    old = (datetime.now(timezone.utc) - timedelta(seconds=STALE_AFTER + 60)).isoformat()
+    fresh = datetime.now(timezone.utc).isoformat()
+    assert agent_state([Ask(kind="conversation", since=old)], ATTACHED).stale is True
+    assert agent_state([Ask(kind="conversation", since=fresh)], ATTACHED).stale is False
+    assert agent_state([Ask(kind="conversation", since=old)], ALONE).stale is False
+
+
+def test_an_agents_own_question_is_not_the_reviewers_debt():
+    """Nothing tells a question from a statement in a body, so the agent speaking last owes nothing
+    and is owed nothing — inventing the distinction would report silence as work."""
+    from review_mate.session.state import ChatMessage, SessionState
+    state = SessionState(id="s", created_at="t", messages=[
+        ChatMessage(id="m1", role="user", body="why?", created_at="2026-01-01T00:00:00+00:00"),
+        ChatMessage(id="m2", role="agent", body="which case did you mean?",
+                    created_at="2026-01-01T00:01:00+00:00")])
+    assert outstanding(state) == []
+
+
+# --- over the transport ------------------------------------------------------
+
+
+def test_a_message_republishes_its_own_conversation_and_the_index(tmp_path):
+    manager = SessionManager(root=tmp_path / "sessions", mr_source=HostStub())
+    app = create_app(manager=manager, provider=HostStub(), with_mcp=False,
+                     resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+    with TestClient(app) as client:
+        sid = client.post("/api/cmd", json={"cmd": "session.open",
+                                            "args": {"ref": "g/p!1"}}).json()["session"]
+        with client.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe",
+                          "scopes": [f"chat:{sid}", f"chat:{sid}:review"]})
+            for _ in range(2):
+                json.loads(ws.receive_text())
+            client.post(f"/api/sessions/{sid}/commands",
+                        json={"type": "post_message", "body": "what is this for?"})
+            seen = {}
+            for _ in range(2):
+                msg = json.loads(ws.receive_text())
+                seen[msg["scope"]] = msg["view"]
+            assert set(seen) == {f"chat:{sid}", f"chat:{sid}:review"}
+            assert seen[f"chat:{sid}:review"]["messages"][0]["body"] == "what is this for?"
+            assert seen[f"chat:{sid}"]["agent"]["state"] in {"stalled", "working"}
+
+
+def test_presence_reaches_a_client_with_no_event_behind_it(tmp_path, monkeypatch):
+    """`attached` lapses by clock. Nothing in the session changes when a watcher walks away, so a
+    view that said "Claude is working" would keep saying it until something unrelated happened."""
+    import review_mate.server.app as app_module
+    monkeypatch.setattr(app_module, "PRESENCE_TICK", 0.05)
+    manager = SessionManager(root=tmp_path / "sessions", mr_source=HostStub())
+    app = create_app(manager=manager, provider=HostStub(), with_mcp=False,
+                     resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+    broker = manager._activity_broker
+    with TestClient(app) as client:
+        sid = client.post("/api/cmd", json={"cmd": "session.open",
+                                            "args": {"ref": "g/p!1"}}).json()["session"]
+        client.post(f"/api/sessions/{sid}/commands",
+                    json={"type": "post_message", "body": "look?"})
+        with client.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [f"chat:{sid}"]})
+            first = json.loads(ws.receive_text())["view"]
+            assert first["agent"]["state"] == "stalled"      # asked, and nobody is listening
+
+            broker._last_wait_at = datetime.now(timezone.utc)   # an agent starts long-polling
+            arrived = next_frame(ws)                            # ... on the ticker, not an event
+            assert arrived is not None, "presence never reached the client"
+            assert arrived["view"]["agent"]["state"] == "working"
+            assert arrived["view"]["agent"]["attached"] is True
+
+
+def test_the_ticker_stops_with_the_last_watcher(tmp_path, monkeypatch):
+    """Work that only makes sense while someone is looking starts and stops with the watching."""
+    import review_mate.server.app as app_module
+    monkeypatch.setattr(app_module, "PRESENCE_TICK", 0.05)
+    manager = SessionManager(root=tmp_path / "sessions", mr_source=HostStub())
+    app = create_app(manager=manager, provider=HostStub(), with_mcp=False,
+                     resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+    with TestClient(app) as client:
+        sid = client.post("/api/cmd", json={"cmd": "session.open",
+                                            "args": {"ref": "g/p!1"}}).json()["session"]
+        with client.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [f"chat:{sid}"]})
+            json.loads(ws.receive_text())
+            assert app.state.presence_running() is True
+            ws.send_json({"action": "unsubscribe", "scopes": [f"chat:{sid}"]})
+            deadline = time.time() + 2
+            while app.state.presence_running() and time.time() < deadline:
+                time.sleep(0.05)
+            assert app.state.presence_running() is False

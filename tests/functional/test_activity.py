@@ -148,13 +148,14 @@ def test_outstanding_surfaces_a_trailing_user_message(tmp_path):
         data = client.get("/api/outstanding").json()
         assert data["total"] == 1
         assert [s["session_id"] for s in data["sessions"]] == [sid]
-        assert data["sessions"][0]["asks"][0]["kind"] == "message"
+        assert data["sessions"][0]["asks"][0]["kind"] == "conversation"
         assert data["sessions"][0]["asks"][0]["since"]
 
 
 def test_outstanding_ignores_a_bare_highlight_but_counts_an_escalation(tmp_path):
     """D21: a bare highlight is served by the cheap tier and owes the agent nothing; only an explicit
-    request_context is an ask. Mirrors the browser's `outstandingAsks()` so both agree."""
+    request_context is an ask. One predicate serves this route and the chat scope, so the agent and
+    the reviewer cannot disagree about what is outstanding."""
     app = create_app(manager=SessionManager(root=tmp_path / "s"), with_mcp=False)
     with TestClient(app) as client:
         sid = client.post("/api/sessions", json={}).json()["id"]
@@ -184,7 +185,7 @@ async def test_outstanding_clears_once_the_agent_answers(tmp_path):
 
         await actor.submit(EmitCard(highlight_id=hid, body="here"), Origin.AGENT)
         assert [a["kind"] for a in (await c.get("/api/outstanding")).json()["sessions"][0]["asks"]] \
-            == ["message"]
+            == ["conversation"]
         await actor.submit(PostMessage(body="had a look"), Origin.AGENT)   # trailing role → agent
         assert (await c.get("/api/outstanding")).json() == {"sessions": [], "total": 0}
     await mgr.shutdown()

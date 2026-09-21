@@ -13,6 +13,7 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from review_mate.seams import MRRef, RepoRef
+from review_mate.view.asks import outstanding as outstanding_asks
 from review_mate.session.commands import (
     ApplyFiles, ApplyMRMetadata, MarkDraftPosted, ReplaceThreads, parse_command,
 )
@@ -88,12 +89,11 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         The activity stream is deliberately ephemeral (see `ActivityBroker`): a restart drops
         in-flight notifications, and the safety argument for that rests on the agent re-deriving
         outstanding work from durable state rather than only reacting to events. This route is that
-        derivation — without it, work whose notification vanished has no path back.
+        derivation, over the same predicate the chat scope publishes — `view.asks` owns it, so an
+        agent re-finding its work and a reviewer watching for an answer cannot disagree.
 
         Snapshot reads only, no host I/O, so it stays cheap enough to poll — unlike the hub's
-        `hub.refresh`, which fans out host calls per session by design (D19). The predicate
-        matches the browser's `outstandingAsks()`; the server still tracks no ownership of its own,
-        it just reports what durable state already implies.
+        `hub.refresh`, which fans out host calls per session by design (D19).
         """
         sessions = []
         for summ in manager.list():
@@ -103,18 +103,20 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             if actor is None:
                 continue
             snap = actor.snapshot()
+            by_id = {h.id: h for h in snap.highlights}
             asks = []
-            last = snap.messages[-1] if snap.messages else None
-            if last is not None and last.role == "user":   # a chat turn the agent never answered
-                asks.append({"kind": "message", "since": last.created_at})
-            carded = {c.highlight_id for c in snap.cards if c.highlight_id}
-            for h in snap.highlights:
-                if h.context_requested and h.id not in carded:   # escalated (D21), still no card
-                    asks.append({"kind": "context", "highlight_id": h.id, "file": h.file,
-                                 "since": h.context_requested_at or h.created_at})
+            for ask in outstanding_asks(snap):
+                row: dict = {"kind": ask.kind, "since": ask.since}
+                if ask.subject is not None:
+                    row["subject"] = ask.subject.model_dump(mode="json")
+                    highlight = by_id.get(ask.subject.id)
+                    if highlight is not None:
+                        # the file is what an agent needs to open the thing being asked about
+                        row["highlight_id"] = highlight.id
+                        row["file"] = highlight.file
+                asks.append(row)
             if not asks:
                 continue   # only sessions needing attention — this is a work list, not a census
-            asks.sort(key=lambda a: a.get("since") or "")   # oldest first: the longest-ignored ask
             sessions.append({"session_id": summ.id, "project": summ.project, "iid": summ.iid,
                              "title": summ.title, "asks": asks})
         sessions.sort(key=lambda s: s["asks"][0].get("since") or "")
