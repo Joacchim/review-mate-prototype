@@ -21,18 +21,17 @@ def new_state() -> SessionState:
 
 # --- AC-13: the contract document set ---------------------------------------
 
-def test_session_state_has_exactly_the_six_document_types():
+def test_a_new_session_starts_empty():
+    """The document collections a session owns start empty and its status is active.
+
+    Which fields exist at all is asserted once, in `tests/boundary` — AC-13 is a contract about the
+    core's shape, and a set literal in two suites drifts on the first field either forgets.
+    """
     s = new_state()
     assert s.mr is None
-    for field in ("files", "highlights", "cards", "access_requests", "threads"):
+    for field in ("files", "highlights", "cards", "access_requests", "threads", "messages",
+                  "drafts"):
         assert getattr(s, field) == []
-    # the contract collections + mr, nothing the design did not name (chat + drafts added Phase-3+)
-    doc_fields = {"mr", "files", "highlights", "cards", "access_requests", "threads",
-                  "messages", "drafts"}
-    envelope = {"id", "status", "created_at", "seq"}
-    workspace = {"checkout_path"}   # the on-disk MR checkout (code-graph / LSP / grep)
-    counters = {"highlights_created"}   # monotonic, so a "#N" reference survives a removal
-    assert set(SessionState.model_fields) == doc_fields | envelope | workspace | counters
     assert s.status is SessionStatus.ACTIVE
 
 
