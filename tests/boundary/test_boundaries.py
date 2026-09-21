@@ -51,6 +51,8 @@ def test_session_state_is_exactly_the_contract_set():  # AC-13
     doc_fields = {"mr", "files", "highlights", "cards", "access_requests", "threads",
                   "messages", "drafts"}
     counters = {"highlights_created"}   # monotonic, so a "#N" reference survives a removal
+    asks = {"insights_requested", "insights_requested_at"}   # the MR-level escalation, as a
+    #                                     highlight's context_requested pair is the per-range one
     envelope = {"id", "status", "created_at", "seq"}
     workspace = {"checkout_path"}   # the on-disk MR checkout (code-graph / LSP / grep)
-    assert set(SessionState.model_fields) == doc_fields | envelope | workspace | counters
+    assert set(SessionState.model_fields) == doc_fields | envelope | workspace | counters | asks

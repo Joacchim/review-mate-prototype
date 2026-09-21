@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from review_mate.session.state import (
     AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, DraftComment, FileEntry, Highlight,
-    MRMetadata, Origin, ReviewThread,
+    MRMetadata, Origin, ReviewThread, Subject,
 )
 
 
@@ -97,6 +97,10 @@ class ThreadsReplaced(_EventBase):
     threads: list[ReviewThread]
 
 
+class InsightsRequested(_EventBase):
+    type: Literal["insights_requested"] = "insights_requested"
+
+
 class MessagePosted(_EventBase):
     type: Literal["message_posted"] = "message_posted"
     message: ChatMessage
@@ -104,6 +108,7 @@ class MessagePosted(_EventBase):
 
 class ChatCleared(_EventBase):
     type: Literal["chat_cleared"] = "chat_cleared"
+    anchor: Subject | None = None      # which conversation; None = the review's own
 
 
 class DraftSaved(_EventBase):
@@ -133,7 +138,7 @@ Event = Annotated[
         HighlightAdded, HighlightRemoved, ContextRequested,
         CardEmitted, CardUpdated, CardRemoved,
         AccessRequested, AccessDecided,
-        ThreadApplied, ThreadsReplaced, MessagePosted, ChatCleared,
+        ThreadApplied, ThreadsReplaced, InsightsRequested, MessagePosted, ChatCleared,
         DraftSaved, DraftRemoved, DraftPosted, SessionEnded,
     ],
     Field(discriminator="type"),

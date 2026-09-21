@@ -6,7 +6,7 @@ state exactly — the basis for durable resume (AC-8).
 from __future__ import annotations
 
 from review_mate.session import events as ev
-from review_mate.session.state import DraftStatus, SessionState, SessionStatus
+from review_mate.session.state import DraftStatus, SessionState, SessionStatus, SubjectKind
 
 
 def reduce(state: SessionState, event: "ev.Event") -> SessionState:
@@ -31,6 +31,9 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
     elif isinstance(event, ev.HighlightRemoved):
         s.highlights = [h for h in s.highlights if h.id != event.highlight_id]
         s.drafts = [d for d in s.drafts if d.highlight_id != event.highlight_id]  # no orphan drafts
+        s.messages = [m for m in s.messages
+                      if not (m.anchor is not None and m.anchor.kind is SubjectKind.HIGHLIGHT
+                              and m.anchor.id == event.highlight_id)]
     elif isinstance(event, ev.ContextRequested):
         for h in s.highlights:
             if h.id == event.highlight_id:
@@ -51,6 +54,11 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
                     c.citations = list(event.citations)
     elif isinstance(event, ev.CardRemoved):
         s.cards = [c for c in s.cards if c.id != event.card_id]
+        # dismissing an insight discards what was said about it, as removing a highlight discards
+        # its draft: a conversation whose subject is gone has no row left to render it
+        s.messages = [m for m in s.messages
+                      if not (m.anchor is not None and m.anchor.kind is SubjectKind.INSIGHT
+                              and m.anchor.id == event.card_id)]
     elif isinstance(event, ev.AccessRequested):
         s.access_requests.append(event.request)
     elif isinstance(event, ev.AccessDecided):
@@ -72,7 +80,10 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
     elif isinstance(event, ev.MessagePosted):
         s.messages.append(event.message)
     elif isinstance(event, ev.ChatCleared):
-        s.messages = []
+        s.messages = [m for m in s.messages if m.anchor != event.anchor]
+    elif isinstance(event, ev.InsightsRequested):
+        s.insights_requested = True
+        s.insights_requested_at = event.ts
     elif isinstance(event, ev.DraftSaved):
         replaced = False
         for i, d in enumerate(s.drafts):

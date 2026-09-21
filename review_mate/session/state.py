@@ -129,10 +129,29 @@ class ReviewThread(BaseModel):
     capabilities: dict[str, bool] = Field(default_factory=dict)
 
 
+class SubjectKind(str, Enum):
+    """What a conversation can be about, beyond the review itself."""
+    HIGHLIGHT = "highlight"
+    INSIGHT = "insight"
+    THREAD = "thread"
+
+
+class Subject(BaseModel):
+    """A conversation's subject: a row of the rail, addressed by kind and id.
+
+    The kinds are exactly what a client can open a detail panel on, so a conversation lives where
+    its subject already renders. An id is unique on its own, but the kind travels with it: a client
+    resolves the row without guessing which list to look in.
+    """
+    kind: SubjectKind
+    id: str
+
+
 class ChatMessage(BaseModel):
     id: str
     role: str                          # "user" (browser) or "agent"
     body: str
+    anchor: Subject | None = None      # what it is about; None = the review as a whole
     created_at: str = ""
 
 
@@ -175,6 +194,10 @@ class SessionState(BaseModel):
     access_requests: list[AccessRequest] = Field(default_factory=list)
     threads: list[ReviewThread] = Field(default_factory=list)
     messages: list[ChatMessage] = Field(default_factory=list)
+    # the MR-level counterpart of Highlight.context_requested: the reviewer asked for insights on
+    # the change as a whole, so an answer is expected without any line range having been marked
+    insights_requested: bool = False
+    insights_requested_at: str = ""
     drafts: list[DraftComment] = Field(default_factory=list)
 
 

@@ -23,6 +23,7 @@ def _sample(cmd_type: str):
         "add_highlight": cmd.AddHighlight(file="a.py", side=Side.NEW, line_range=LineRange(start=1, end=1)),
         "remove_highlight": cmd.RemoveHighlight(highlight_id="x"),
         "request_context": cmd.RequestContext(highlight_id="x"),
+        "request_insights": cmd.RequestInsights(),
         "decide_access": cmd.DecideAccess(request_id="x", approve=True),
         "end_session": cmd.EndSession(),
         "emit_card": cmd.EmitCard(highlight_id="x", body="b"),

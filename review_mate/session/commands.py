@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 from review_mate.session import events as ev
 from review_mate.session.state import (
     AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, DraftComment, DraftStatus,
-    FileEntry, Highlight, LineRange, MRMetadata, Origin, ReviewThread, Side,
+    FileEntry, Highlight, LineRange, MRMetadata, Origin, ReviewThread, Side, Subject, SubjectKind,
 )
 
 
@@ -103,10 +103,17 @@ class ReplaceThreads(BaseModel):
 class PostMessage(BaseModel):
     type: Literal["post_message"] = "post_message"
     body: str
+    anchor: Subject | None = None      # the subject discussed; None = the review as a whole
 
 
 class ClearChat(BaseModel):
     type: Literal["clear_chat"] = "clear_chat"
+    anchor: Subject | None = None      # clears that conversation only
+
+
+class RequestInsights(BaseModel):
+    """Ask the agent for what it finds on the change as a whole — `request_context` at MR level."""
+    type: Literal["request_insights"] = "request_insights"
 
 
 class SaveDraft(BaseModel):
@@ -133,7 +140,7 @@ class EndSession(BaseModel):
 
 
 Command = Union[
-    AddHighlight, RemoveHighlight, RequestContext, EmitCard, UpdateCard, RemoveCard,
+    AddHighlight, RemoveHighlight, RequestContext, RequestInsights, EmitCard, UpdateCard, RemoveCard,
     RequestAccess, DecideAccess, ApplyMRMetadata, SetCheckout, ApplyFiles, ApplyThread, ReplaceThreads,
     PostMessage, ClearChat, SaveDraft, RemoveDraft, MarkDraftPosted, EndSession,
 ]
@@ -160,6 +167,7 @@ AUTHORITY: dict[str, set[Origin]] = {
     "add_highlight": {Origin.BROWSER, Origin.AGENT},
     "remove_highlight": {Origin.BROWSER},
     "request_context": {Origin.BROWSER},   # the reviewer escalates a highlight to the agent tier (D21)
+    "request_insights": {Origin.BROWSER},  # ... and the same ask about the change as a whole
     "remove_card": {Origin.BROWSER},   # the reviewer dismisses an insight card
     "decide_access": {Origin.BROWSER},
     "end_session": {Origin.BROWSER},
@@ -178,6 +186,26 @@ AUTHORITY: dict[str, set[Origin]] = {
     "apply_thread": {Origin.SYSTEM},
     "replace_threads": {Origin.SYSTEM},
 }
+
+
+def _absent_subject(state, anchor: "Subject | None") -> str | None:
+    """Why a conversation cannot be held about this subject, or None if it can.
+
+    A message anchored to something that does not exist would be unreachable: no rail row carries
+    it, so nothing would ever render it.
+    """
+    if anchor is None:
+        return None
+    if anchor.kind is SubjectKind.HIGHLIGHT:
+        if not any(h.id == anchor.id for h in state.highlights):
+            return f"no such highlight: {anchor.id}"
+    elif anchor.kind is SubjectKind.INSIGHT:
+        if not any(c.id == anchor.id and c.highlight_id is None for c in state.cards):
+            return f"no such insight: {anchor.id}"
+    elif anchor.kind is SubjectKind.THREAD:
+        if not any(t.id == anchor.id for t in state.threads):
+            return f"no such thread: {anchor.id}"
+    return None
 
 
 def _now() -> str:
@@ -266,9 +294,16 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
         return emit(ev.ThreadsReplaced, threads=command.threads)
 
     if isinstance(command, PostMessage):
+        missing = _absent_subject(state, command.anchor)
+        if missing is not None:
+            return Rejection(reason=missing)
         role = "user" if origin is Origin.BROWSER else "agent"
-        msg = ChatMessage(id=_id(), role=role, body=command.body, created_at=ts)
+        msg = ChatMessage(id=_id(), role=role, body=command.body, anchor=command.anchor,
+                          created_at=ts)
         return emit(ev.MessagePosted, message=msg)
+
+    if isinstance(command, RequestInsights):
+        return emit(ev.InsightsRequested)
 
     if isinstance(command, SaveDraft):
         if command.highlight_id is not None and \
@@ -296,7 +331,7 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
                     thread_id=command.thread_id)
 
     if isinstance(command, ClearChat):
-        return emit(ev.ChatCleared)
+        return emit(ev.ChatCleared, anchor=command.anchor)
 
     if isinstance(command, EndSession):
         return emit(ev.SessionEnded)

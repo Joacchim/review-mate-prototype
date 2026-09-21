@@ -8,6 +8,7 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from review_mate.mcp.bridge import AgentBridge
+from review_mate.session.state import Subject, SubjectKind
 
 
 def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP:
@@ -72,9 +73,17 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
         return (await bridge.request_access(session_id, repo, reason)).model_dump()
 
     @mcp.tool()
-    async def post_message(session_id: str, body: str) -> dict:
-        """Post a chat message to the reviewer (the agent side of the conversation)."""
-        return (await bridge.post_message(session_id, body)).model_dump()
+    async def post_message(session_id: str, body: str, anchor_kind: str | None = None,
+                           anchor_id: str | None = None) -> dict:
+        """Post a chat message to the reviewer (the agent side of the conversation).
+
+        Leave the anchor out to speak in the review's own conversation. To answer where the
+        reviewer asked, name the subject: `anchor_kind` is highlight, insight or thread, and
+        `anchor_id` is that row's id — both as they arrive on an inbound message's `anchor`.
+        """
+        anchor = (Subject(kind=SubjectKind(anchor_kind), id=anchor_id)
+                  if anchor_kind is not None and anchor_id is not None else None)
+        return (await bridge.post_message(session_id, body, anchor)).model_dump()
 
     @mcp.tool()
     async def wait_for_message(session_id: str, since: int = 0,
