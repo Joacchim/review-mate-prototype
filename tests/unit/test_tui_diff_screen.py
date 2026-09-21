@@ -79,9 +79,10 @@ def test_the_file_scope_is_the_listing_plus_the_path():
     assert screen.body_scope == "diff:s1:full:pkg/b.py"
 
 
-def test_it_watches_the_listing_the_open_file_and_the_rail():
+def test_it_watches_the_listing_the_open_file_the_rail_and_the_conversation():
     screen = DiffScreen(StubClient({"diff:s1:full": listing([row("a.py"), row("b.py")])}), "s1")
-    assert screen.wanted() == ["diff:s1:full", "rail:s1", "diff:s1:full:a.py"]
+    assert screen.wanted() == ["diff:s1:full", "rail:s1", "chat:s1", "chat:s1:review",
+                               "diff:s1:full:a.py"]
 
 
 def test_the_diff_renders_with_gutters_and_markers():
@@ -257,3 +258,79 @@ def test_focus_cycles_through_the_three_panes():
     screen.toggle_focus(); assert screen.focus == "body"
     screen.toggle_focus(); assert screen.focus == "rail"
     screen.toggle_focus(); assert screen.focus == "files"
+
+
+# --- the conversation --------------------------------------------------------
+
+
+def chat_index(state="watching", stale=False, conversations=None):
+    return {"session": "s1", "state": "ready", "conversations": conversations or [],
+            "agent": {"state": state, "stale": stale, "since": None, "attached": state != "off",
+                      "parked": False, "last_seen": None, "asks": []}}
+
+
+def conversation(messages, owed=False, kind="review", ident=""):
+    return {"session": "s1", "state": "ready", "kind": kind, "id": ident, "owed": owed,
+            "messages": messages}
+
+
+def message(role, body):
+    return {"id": f"m-{body[:4]}", "role": role, "body": body, "created_at": ""}
+
+
+def text_of(screen):
+    return "".join(part for _, part in screen.fragments())
+
+
+def test_the_review_conversation_is_what_the_screen_shows_by_default():
+    screen = DiffScreen(StubClient({
+        "diff:s1:full": listing([row("a.py")]),
+        "chat:s1": chat_index(),
+        "chat:s1:review": conversation([message("user", "what is this for?"),
+                                        message("agent", "the fleet selector")]),
+    }), "s1")
+    rendered = text_of(screen)
+    assert "Chat — this review" in rendered
+    assert "what is this for?" in rendered and "the fleet selector" in rendered
+
+
+def test_an_empty_conversation_says_how_to_start_one():
+    screen = DiffScreen(StubClient({"diff:s1:full": listing([row("a.py")]),
+                                    "chat:s1": chat_index(),
+                                    "chat:s1:review": conversation([])}), "s1")
+    assert "c writes a message" in text_of(screen)
+
+
+def test_the_agent_state_is_the_servers_word():
+    for state, shown in (("working", "Claude is on it"), ("stalled", "nothing is listening"),
+                         ("watching", "Claude is watching"), ("off", "no agent")):
+        screen = DiffScreen(StubClient({"diff:s1:full": listing([row("a.py")]),
+                                        "chat:s1": chat_index(state)}), "s1")
+        assert shown in text_of(screen)
+
+
+def test_an_ask_that_has_sat_says_so():
+    screen = DiffScreen(StubClient({"diff:s1:full": listing([row("a.py")]),
+                                    "chat:s1": chat_index("working", stale=True)}), "s1")
+    assert "no answer yet" in text_of(screen)
+
+
+def test_the_rail_cursor_picks_whose_conversation_is_shown():
+    views = {"diff:s1:full": listing([row("a.py")]),
+             "chat:s1": chat_index(),
+             "chat:s1:review": conversation([message("user", "about the review")]),
+             "chat:s1:highlight:h1": conversation([message("user", "about this line")],
+                                                  kind="highlight", ident="h1"),
+             "rail:s1": {"session": "s1", "state": "ready", "insights": [], "highlights": [
+                 {"id": "h1", "n": 3, "file": "pkg/a.py", "side": "new", "start": 42, "end": 42,
+                  "question": None, "status": "open", "author": "browser",
+                  "context_requested": False, "context_requested_at": "", "stale": False,
+                  "comment_state": "context", "created_at": "",
+                  "context": {"state": "idle", "blame": [], "linked_issues": [], "error": ""},
+                  "card": None}]}}
+    screen = DiffScreen(StubClient(views), "s1")
+    assert "about the review" in text_of(screen)
+    screen.focus = "rail"
+    rendered = text_of(screen)
+    assert "Chat — #3 a.py:42" in rendered
+    assert "about this line" in rendered and "about the review" not in rendered

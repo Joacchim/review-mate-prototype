@@ -11,10 +11,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from prompt_toolkit.application import Application
-from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.key_binding import ConditionalKeyBindings, KeyBindings, merge_key_bindings
 from prompt_toolkit.layout import Layout, Window
-from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.layout.containers import HSplit
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, VSplit
 from prompt_toolkit.styles import Style
 
 from review_mate.tui.client import ViewClient
@@ -182,6 +184,12 @@ class Shell:
         self.hub = HubScreen(client)
         self.diff: DiffScreen | None = None
         self._app: Application | None = None
+        # writing a message takes the keyboard: the buffer is focused, so navigation keys are
+        # text while it is open rather than every binding needing to know about composing
+        self.composing = False
+        self.compose = Buffer(multiline=False)
+        self._compose_window: Window | None = None
+        self._main_window: Window | None = None
 
     @property
     def screen(self):
@@ -243,6 +251,41 @@ class Shell:
         await self.client.watch(wanted)
         self.invalidate()
 
+    # --- writing a message ---------------------------------------------------
+
+    def start_compose(self) -> None:
+        if self.diff is None:
+            return
+        self.composing = True
+        self.compose.reset()
+        if self._app is not None and self._compose_window is not None:
+            self._app.layout.focus(self._compose_window)
+        self.invalidate()
+
+    def cancel_compose(self) -> None:
+        self.composing = False
+        self.compose.reset()
+        if self._app is not None and self._main_window is not None:
+            self._app.layout.focus(self._main_window)
+        self.invalidate()
+
+    def compose_command(self) -> dict | None:
+        """The message being written, as a command — anchored to whatever the screen is about."""
+        body = self.compose.text.strip()
+        if not body or self.diff is None:
+            return None
+        command: dict = {"type": "post_message", "body": body}
+        anchor = self.diff.subject()
+        if anchor is not None:
+            command["anchor"] = anchor
+        return command
+
+    def compose_prompt(self) -> list[tuple[str, str]]:
+        if self.diff is None:
+            return [("class:muted", " ")]
+        anchor = self.diff.subject()
+        return [("class:info", " say> " if anchor is None else " reply> ")]
+
     async def run_command(self, coroutine) -> None:
         await coroutine
         self.invalidate()
@@ -260,15 +303,22 @@ class Shell:
         def _quit(event) -> None:
             event.app.exit()
 
+        def _moved(delta: int) -> None:
+            # the rail cursor picks the subject, so moving it changes which conversation is watched
+            previous = self.diff.wanted() if self.diff is not None else []
+            self.screen.move(delta)
+            if self.diff is not None and self.diff.focus == "rail":
+                spawn(self.resync(previous))
+
         @kb.add("j")
         @kb.add("down")
         def _down(event) -> None:
-            self.screen.move(1)
+            _moved(1)
 
         @kb.add("k")
         @kb.add("up")
         def _up(event) -> None:
-            self.screen.move(-1)
+            _moved(-1)
 
         @kb.add("enter")
         def _enter(event) -> None:
@@ -345,6 +395,7 @@ class Shell:
         @kb.add("c")
         def _close(event) -> None:
             if self.diff is not None:
+                self.start_compose()
                 return
             session = self.hub.selected_session()
             if session:
@@ -355,11 +406,34 @@ class Shell:
             if self.diff is None:
                 spawn(self.client.command("hub.refresh"))
 
-        return kb
+        writing = KeyBindings()
+
+        @writing.add("enter")
+        def _send(event) -> None:
+            command = self.compose_command()
+            session = self.diff.session if self.diff is not None else None
+            self.cancel_compose()
+            if command is not None and session is not None:
+                spawn(self.client.session_command(session, command))
+
+        @writing.add("escape", eager=True)
+        def _abandon(event) -> None:
+            self.cancel_compose()
+
+        composing = Condition(lambda: self.composing)
+        return merge_key_bindings([ConditionalKeyBindings(kb, ~composing),
+                                   ConditionalKeyBindings(writing, composing)])
 
     def build(self) -> Application:
         control = FormattedTextControl(self.fragments, focusable=True, show_cursor=False)
-        layout = Layout(HSplit([Window(control, wrap_lines=False)]))
+        self._main_window = Window(control, wrap_lines=False)
+        self._compose_window = Window(BufferControl(self.compose), height=1)
+        prompt = Window(FormattedTextControl(self.compose_prompt), height=1, width=8)
+        layout = Layout(HSplit([
+            self._main_window,
+            ConditionalContainer(VSplit([prompt, self._compose_window]),
+                                 filter=Condition(lambda: self.composing)),
+        ]))
         self._app = Application(layout=layout, key_bindings=self.bindings(), style=STYLE,
                                 full_screen=True, mouse_support=False)
         return self._app

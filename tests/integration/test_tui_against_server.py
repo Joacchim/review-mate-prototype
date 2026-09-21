@@ -306,3 +306,57 @@ async def test_escalating_a_highlight_is_accepted_by_the_session(tmp_path):
             ask = screen.ask_command()
             assert ask["type"] == "request_context"
             assert await client.session_command(session, ask), client.last_command_error
+
+
+async def test_writing_in_the_terminal_reaches_the_conversation(tmp_path):
+    """The terminal holds a conversation over the same protocol: the message it writes becomes a
+    command, the session changes, and the conversation scope comes back carrying it."""
+    from review_mate.tui.app import Shell
+
+    async with serving(build(tmp_path, DiffHost())) as base:
+        async with connected(base) as (client, watcher):
+            await watcher.until(lambda v: v.get("queue_state") == "ready")
+            await client.command("session.open", ref={"host": "gitlab", "project": "g/p", "iid": 1})
+            session = (await watcher.until(lambda v: v["sessions"]))["sessions"][0]["id"]
+
+            shell = Shell(client)
+            watcher.also = shell.on_change
+            await shell.open_review(session)
+            await wait_for(lambda: client.views.get(f"chat:{session}:review") is not None)
+
+            shell.start_compose()
+            shell.compose.text = "what is this guard for?"
+            command = shell.compose_command()
+            shell.cancel_compose()
+            assert await client.session_command(session, command), client.last_command_error
+
+            await wait_for(lambda: shell.diff.conversation.get("messages"))
+            said = shell.diff.conversation["messages"][0]
+            assert (said["role"], said["body"]) == ("user", "what is this guard for?")
+            assert shell.diff.conversation["owed"] is True          # the agent owes an answer
+            rendered = "".join(text for _, text in shell.fragments())
+            assert "what is this guard for?" in rendered
+
+
+async def test_the_terminal_is_told_whether_anyone_is_listening(tmp_path):
+    """The label is the server's: presence joined with what is outstanding, not a rule here."""
+    from review_mate.tui.app import Shell
+
+    app = build(tmp_path, DiffHost())
+    async with serving(app) as base:
+        async with connected(base) as (client, watcher):
+            await watcher.until(lambda v: v.get("queue_state") == "ready")
+            await client.command("session.open", ref={"host": "gitlab", "project": "g/p", "iid": 1})
+            session = (await watcher.until(lambda v: v["sessions"]))["sessions"][0]["id"]
+            shell = Shell(client)
+            watcher.also = shell.on_change
+            await shell.open_review(session)
+            await wait_for(lambda: client.views.get(f"chat:{session}") is not None)
+
+            def agent():
+                return (client.views.get(f"chat:{session}") or {}).get("agent", {})
+
+            await wait_for(lambda: agent().get("state") == "off")     # nothing asked, none listening
+            await client.session_command(session, {"type": "post_message", "body": "look?"})
+            await wait_for(lambda: agent().get("state") == "stalled")  # asked, and still nobody
+            assert "nothing is listening" in "".join(t for _, t in shell.fragments())

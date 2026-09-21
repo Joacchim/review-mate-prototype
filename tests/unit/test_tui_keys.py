@@ -65,6 +65,11 @@ def views():
                                          "lines": [line("context", 1, 1, "def f():"),
                                                    line("added", None, 2, "    return 1")]}]},
         "rail:s1": {"session": "s1", "state": "ready", "highlights": [], "insights": []},
+        "chat:s1": {"session": "s1", "state": "ready", "conversations": [],
+                    "agent": {"state": "watching", "stale": False, "since": None,
+                              "attached": True, "parked": False, "last_seen": None, "asks": []}},
+        "chat:s1:review": {"session": "s1", "state": "ready", "kind": "review", "id": "",
+                           "owed": False, "messages": []},
     }
 
 
@@ -76,13 +81,17 @@ def shell_on_a_review():
 
 
 def press(shell, key):
-    """Invoke the handler the binding registered for `key`, as the application would."""
+    """Invoke the handler the binding registered for `key`, as the application would.
+
+    Filters are honoured: writing a message and navigating bind some of the same keys, and a test
+    that ignored the condition would exercise whichever was registered first.
+    """
     parsed = _parse_key(key)
     for binding in shell.bindings().bindings:
-        if binding.keys == (parsed,):
+        if binding.keys == (parsed,) and binding.filter():
             binding.handler(None)
             return
-    raise AssertionError(f"nothing is bound to {key!r}")
+    raise AssertionError(f"nothing is bound to {key!r} in this state")
 
 
 async def settle():
@@ -156,3 +165,83 @@ async def test_keys_that_belong_to_the_hub_do_nothing_in_a_review():
     press(shell, "c")                         # close a review
     await settle()
     assert client.commands == []
+
+
+# --- writing a message -------------------------------------------------------
+
+
+def with_highlights(shell, client, count=2):
+    """Put highlights in the rail and focus it, as a reader picking a subject would."""
+    client.views["rail:s1"] = {
+        "session": "s1", "state": "ready", "insights": [],
+        "highlights": [{"id": f"h{n}", "n": n + 1, "file": "a.py", "side": "new",
+                        "start": 1 + n, "end": 1 + n, "question": None, "status": "open",
+                        "author": "browser", "context_requested": False,
+                        "context_requested_at": "", "stale": False, "comment_state": "context",
+                        "created_at": "", "context": {"state": "idle", "blame": [],
+                                                      "linked_issues": [], "error": ""},
+                        "card": None}
+                       for n in range(count)]}
+    shell.diff.focus = "rail"
+
+
+async def test_c_opens_the_composer_and_enter_sends_what_was_written():
+    shell, client = shell_on_a_review()
+    press(shell, "c")
+    assert shell.composing is True
+    shell.compose.text = "what is this guard for?"
+    press(shell, "enter")
+    await settle()
+    assert client.session_commands == [("s1", {"type": "post_message",
+                                               "body": "what is this guard for?"})]
+    assert shell.composing is False
+
+
+async def test_a_message_written_on_a_highlight_is_anchored_to_it():
+    shell, client = shell_on_a_review()
+    with_highlights(shell, client)
+    press(shell, "c")
+    shell.compose.text = "does anything still read this?"
+    press(shell, "enter")
+    await settle()
+    _, command = client.session_commands[-1]
+    assert command["anchor"] == {"kind": "highlight", "id": "h0"}
+
+
+async def test_escape_abandons_what_was_written():
+    shell, client = shell_on_a_review()
+    press(shell, "c")
+    shell.compose.text = "never mind"
+    press(shell, "escape")
+    await settle()
+    assert shell.composing is False and client.session_commands == []
+
+
+async def test_an_empty_message_is_not_sent():
+    shell, client = shell_on_a_review()
+    press(shell, "c")
+    shell.compose.text = "   "
+    press(shell, "enter")
+    await settle()
+    assert client.session_commands == []
+
+
+async def test_navigation_keys_are_text_while_writing():
+    """The buffer has the keyboard: j is a letter, not a cursor move."""
+    shell, client = shell_on_a_review()
+    press(shell, "tab")
+    before = shell.diff.focus
+    press(shell, "c")
+    with pytest.raises(AssertionError):
+        press(shell, "j")
+    assert shell.diff.focus == before
+
+
+async def test_moving_the_rail_cursor_moves_the_conversation_watched():
+    shell, client = shell_on_a_review()
+    with_highlights(shell, client)
+    assert shell.diff.conversation_scope() == "chat:s1:highlight:h0"
+    press(shell, "j")
+    await settle()
+    assert shell.diff.conversation_scope() == "chat:s1:highlight:h1"
+    assert "chat:s1:highlight:h1" in client.scopes

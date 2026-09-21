@@ -39,6 +39,19 @@ SIDE_MARK = {"added": "+", "removed": "-", "context": " "}
 MODES = ("full", "since")
 FILE_PANE_ROWS = 8
 RAIL_PANE_ROWS = 5
+CHAT_PANE_ROWS = 6
+
+# what the agent state reads as on one line — the server decides the word, this picks the colour
+AGENT_STYLE = {"working": "class:info", "stalled": "class:error",
+               "watching": "class:ok", "off": "class:muted"}
+AGENT_LABEL = {"working": "Claude is on it", "stalled": "nothing is listening",
+               "watching": "Claude is watching", "off": "no agent"}
+
+
+def _one_line(body: str, width: int = 68) -> str:
+    """A message as one row: the terminal shows the exchange, not the prose."""
+    line = next((ln for ln in (body or "").splitlines() if ln.strip()), "")
+    return line if len(line) <= width else line[: width - 1] + "\u2026"
 
 
 def line_fragments(text: str, spans, base: str) -> list[tuple[str, str]]:
@@ -104,6 +117,32 @@ class DiffScreen:
         return self.client.views.get(f"rail:{self.session}") or {}
 
     @property
+    def chat(self) -> dict:
+        """The index: every conversation this review holds, and the state the agent is in."""
+        return self.client.views.get(f"chat:{self.session}") or {}
+
+    def subject(self) -> dict | None:
+        """What the chat pane is about: the highlight under the rail cursor, else the review.
+
+        The rail cursor is the terminal's selection, so the conversation follows it the way the
+        open file follows the file cursor — one place to point at a thing, and everything about
+        that thing follows.
+        """
+        rows = self.highlights
+        if self.focus != "rail" or not rows:
+            return None
+        return {"kind": "highlight", "id": rows[max(0, min(self.rail_index, len(rows) - 1))]["id"]}
+
+    def conversation_scope(self) -> str:
+        anchor = self.subject()
+        return (f"chat:{self.session}:review" if anchor is None
+                else f"chat:{self.session}:{anchor['kind']}:{anchor['id']}")
+
+    @property
+    def conversation(self) -> dict:
+        return self.client.views.get(self.conversation_scope()) or {}
+
+    @property
     def highlights(self) -> list[dict]:
         """This session's highlights, newest last. The rail is session-wide; the overlay selects."""
         return self.rail.get("highlights", [])
@@ -119,7 +158,8 @@ class DiffScreen:
         return lines
 
     def wanted(self) -> list[str]:
-        scopes = [self.listing, f"rail:{self.session}"]
+        scopes = [self.listing, f"rail:{self.session}", f"chat:{self.session}",
+                  self.conversation_scope()]
         body = self.body_scope
         if body:
             scopes.append(body)
@@ -136,6 +176,7 @@ class DiffScreen:
         title = f"{mr.get('project', '')}!{mr.get('iid', '')}  {mr.get('title', '')}"
         out.append(("class:header", f" {title}\n"))
         out.append(("class:muted", f"  mode {self.mode}   [{self.client.status}]"))
+        out.extend(self._agent_badge())
         if not view.get("head_aligned", True):
             out.append(("class:attention", "   read-only: the MR moved past this session"))
         if view.get("clean") is False:
@@ -154,6 +195,7 @@ class DiffScreen:
         out.append(("", "\n"))
         out.extend(self._body_pane())
         out.extend(self._rail_pane())
+        out.extend(self._chat_pane())
         error = self.client.errors.get(f"rail:{self.session}") or self.client.last_command_error
         if error:
             out.append(("class:error", f"\n {error}\n"))
@@ -272,14 +314,48 @@ class DiffScreen:
             out.append((style, answer + ("  (stale)" if highlight.get("stale") else "") + "\n"))
         return out
 
+    def _agent_badge(self) -> list[tuple[str, str]]:
+        """Working, stalled, watching or off — the server's word, not a rule applied here."""
+        agent = self.chat.get("agent") or {}
+        state = agent.get("state")
+        if not state:
+            return []
+        label = AGENT_LABEL.get(state, state)
+        if agent.get("stale"):
+            label += " (no answer yet)"
+        return [("class:muted", "   "), (AGENT_STYLE.get(state, "class:muted"), label)]
+
+    def _chat_pane(self) -> list[tuple[str, str]]:
+        anchor = self.subject()
+        if anchor is None:
+            heading = "Chat \u2014 this review"
+        else:
+            row = next((h for h in self.highlights if h["id"] == anchor["id"]), None)
+            where = f"#{row['n']} {row['file'].split('/')[-1]}:{row['start']}" if row else "a highlight"
+            heading = f"Chat \u2014 {where}"
+        view = self.conversation
+        out: list[tuple[str, str]] = [("class:header", f"\n {heading}\n")]
+        messages = view.get("messages") or []
+        if not messages:
+            out.append(("class:muted", "   nothing said yet \u2014 c writes a message\n"))
+            return out
+        for message in messages[-CHAT_PANE_ROWS:]:
+            who = "you" if message["role"] == "user" else "claude"
+            style = "class:info" if message["role"] == "user" else "class:ok"
+            out.append((style, f"   {who:<7}"))
+            out.append(("", _one_line(message["body"]) + "\n"))
+        if view.get("owed"):
+            out.append(("class:muted", "   waiting on Claude\n"))
+        return out
+
     def _footer(self) -> str:
         if self.anchor is not None:
             return "\n j/k extend   v ask about the selection   esc cancel\n"
         if self.focus == "body":
             return "\n tab pane   j/k line   v select   n/p file   m mode   b back   q quit\n"
         if self.focus == "rail":
-            return "\n tab pane   j/k move   a ask Claude   n/p file   b back   q quit\n"
-        return "\n tab pane   j/k move   n/p file   m mode   b back   q quit\n"
+            return "\n tab pane   j/k move   a ask Claude   c write   n/p file   b back   q quit\n"
+        return "\n tab pane   j/k move   c write   n/p file   m mode   b back   q quit\n"
 
     # --- interaction ---------------------------------------------------------
 
