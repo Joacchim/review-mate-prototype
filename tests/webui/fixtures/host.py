@@ -8,6 +8,8 @@ class StubHost:
     def __init__(self, queue=None) -> None:
         self.queue = list(queue or [])
         self.files: dict[str, str] = {}
+        self.blame_lines: list[dict] = []
+        self.issues: list[dict] = []
         self.versions: list[dict] = []
         self.commit_list: list[dict] = []
         self.commit_files: dict[str, list] = {}
@@ -31,6 +33,15 @@ class StubHost:
 
     async def commit_diff(self, project: str, sha: str):
         return list(self.commit_files.get(sha, []))
+
+    async def blame(self, project: str, path: str, ref: str, start: int, end: int):
+        """Last-touch for a line range — the cheap context tier the rail folds in."""
+        if self.fail_with is not None:
+            raise self.fail_with
+        return list(self.blame_lines)
+
+    async def linked_issues(self, project: str, iid):
+        return list(self.issues)
 
     async def get_file(self, project: str, path: str, ref: str) -> str:
         """Whole-file content, which unfolding context and the markdown view both read."""

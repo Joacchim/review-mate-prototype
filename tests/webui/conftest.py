@@ -102,10 +102,13 @@ def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app):
     stub_host.versions = []
     stub_host.commit_list = []
     stub_host.commit_files = {}
+    stub_host.blame_lines = []
+    stub_host.issues = []
     stub_workspace.calls = []
     stub_workspace.clean = True
     review_kb._data.watermarks = {}
-    for scope in (staged_app.state.hub, staged_app.state.diff_scopes, staged_app.state.blob_scopes):
+    for scope in (staged_app.state.hub, staged_app.state.diff_scopes, staged_app.state.blob_scopes,
+                  staged_app.state.rail_scope):
         scope.reset()
     yield fake_manager
     fake_manager.reset()

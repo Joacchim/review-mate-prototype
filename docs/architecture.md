@@ -100,7 +100,7 @@ Writes go to `POST /api/cmd` as `{"cmd": …, "args": {…}}` — `session.open`
 | `diff:<sid>:<mode>` | the file list and the MR |
 | `diff:<sid>:<mode>:<path>` | one file's hunks, lines and token spans |
 | `blob:<sid>:<mode>:<path>` | a whole file at the resolved sha, for unfolding |
-| `rail:<sid>` | the session's highlights with their cards, and MR-level insights |
+| `rail:<sid>` | the session's highlights with their cards and cheap context, and MR-level insights |
 
 A file's scope name is the list's name with a path appended, so a client concatenates rather than
 assembling a second name. Names are validated: a path may contain a colon, a session id and a mode
@@ -168,9 +168,10 @@ messages are about what is inside one.
 
 Alongside the view protocol, the session document is served directly: `GET /api/sessions/{id}`
 returns the folded state, `POST /api/sessions/{id}/commands` submits a session command, and a
-per-session websocket streams its events. The browser's review surfaces — the rail, highlights,
-drafts, threads — read that path. The agent reaches the same sessions in-process through the MCP
-bridge rather than over HTTP.
+per-session websocket streams its events. A client reads what the scopes fold — highlights, their
+cards and the cheap tier all arrive on `rail:<sid>` — and reaches for the document only for what no
+scope carries: drafts under edit, threads, chat. The agent reaches the same sessions in-process
+through the MCP bridge rather than over HTTP.
 
 ## Clients
 

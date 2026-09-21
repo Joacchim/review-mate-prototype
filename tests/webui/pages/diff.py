@@ -1,4 +1,4 @@
-"""The review surface: the file tree and the rendered diff."""
+"""The review surface: the file tree, the rendered diff, and the highlight overlay on it."""
 from __future__ import annotations
 
 from playwright.sync_api import Page, expect
@@ -56,6 +56,12 @@ class DiffPage:
 
     def unfold_all(self) -> None:
         self.page.locator("table.hunk tr.expand .exlink").filter(has_text="all").first.click()
+
+    # --- the highlight overlay ----------------------------------------------
+
+    @property
+    def highlighted_lines(self):
+        return self.page.locator("table.hunk tr.line.hl")
 
     # --- toggles ------------------------------------------------------------
 

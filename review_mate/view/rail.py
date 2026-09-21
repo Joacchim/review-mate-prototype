@@ -45,6 +45,9 @@ class RailHighlight(BaseModel):
     end: int = 0
     question: str | None = None
     status: str = "open"
+    author: str = "browser"          # a highlight the agent made reads differently in the rail
+    context_requested: bool = False  # escalated past the cheap tier, so an answer is expected
+    context_requested_at: str = ""   # when they escalated — a client ages the "working" cue from it
     stale: bool = False          # made against an earlier head, so its lines may have moved
     comment_state: str = "context"   # context | comment | posted
     created_at: str = ""
@@ -90,6 +93,9 @@ class RailScope:
                 start=highlight.line_range.start, end=highlight.line_range.end,
                 question=highlight.question,
                 status=getattr(highlight.status, "value", "open"),
+                author=getattr(highlight.author, "value", "browser"),
+                context_requested=bool(highlight.context_requested),
+                context_requested_at=highlight.context_requested_at,
                 stale=bool(highlight.created_sha and head and highlight.created_sha != head),
                 comment_state=("context" if draft is None else
                                "posted" if draft.status is DraftStatus.POSTED else "comment"),

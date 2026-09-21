@@ -280,3 +280,26 @@ async def test_numbering_survives_a_restart(tmp_path):
     view = await RailScope(restored, provider=provider).build(sid)
     assert [h["n"] for h in view["highlights"]] == [1, 3, 4]
     await restored.shutdown()
+
+
+async def test_the_rail_says_who_asked_and_whether_it_was_escalated(session):
+    """A highlight the agent made reads differently, and an escalated one is awaiting an answer."""
+    from review_mate.session.commands import RequestContext
+
+    manager, sid, provider = session
+    actor = manager.get(sid)
+    await actor.submit(highlight("a.py", 1, 1), Origin.BROWSER)
+    await actor.submit(highlight("b.py", 2, 2), Origin.AGENT)
+    rail = rail_for(manager, provider)
+    view = await rail.build(sid)
+    assert [h["author"] for h in view["highlights"]] == ["browser", "agent"]
+    assert [h["context_requested"] for h in view["highlights"]] == [False, False]
+
+    await actor.submit(RequestContext(highlight_id=actor.snapshot().highlights[0].id),
+                       Origin.BROWSER)
+    view = await rail.build(sid)
+    assert view["highlights"][0]["context_requested"] is True
+    # the escalation's own timestamp rides along: it is what ages the "Claude is working" cue
+    assert view["highlights"][0]["context_requested_at"] == (
+        actor.snapshot().highlights[0].context_requested_at)
+    assert view["highlights"][0]["context_requested_at"] != ""

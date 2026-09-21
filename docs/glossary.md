@@ -59,9 +59,9 @@ with one, that file's hunks, lines and token spans.
 **blob** — the scope family carrying a whole file at a resolved sha, which is what a client splices
 from when a reader unfolds the context between hunks.
 
-**rail** — the scope family carrying a session's highlights with their cards, and the MR-level
-insights. One scope per session rather than per file: the numbering is session-wide, and a card
-arriving would otherwise republish a whole tokenized file.
+**rail** — the scope family carrying a session's highlights with their cards and their cheap
+context tier, plus the MR-level insights. One scope per session rather than per file: the numbering
+is session-wide, and a card arriving would otherwise republish a whole tokenized file.
 
 **#N** — a highlight's number, fixed when it is created and never reassigned. It is a reference a
 reviewer uses in conversation and an agent cites in a card, so removing a highlight leaves a gap

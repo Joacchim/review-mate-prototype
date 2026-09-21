@@ -32,7 +32,6 @@ let approveToggle = false;           // "Approve MR" checkbox on the submit bar
 let threadFilter = "unresolved";     // discussions filter: unresolved | all
 const threadReplyBuf = {};           // thread_id -> in-progress reply text (survives re-render)
 let threadReplyFocused = null;       // thread_id of the focused reply textarea, to restore after render
-const cheapCtx = {};                 // highlight_id -> {blame, linked_issues} | "loading" (D21 cheap tier)
 const askBuf = {};                   // highlight_id -> in-progress "ask Claude" question text
 let askFocused = null;               // highlight_id of the focused ask-context input, to restore after render
 let me = null;                       // the reviewer's own host username (to mark "your" notes)
@@ -136,7 +135,7 @@ function setStatus(msg) { $("status").textContent = msg || ""; }
 // --- is Claude working, or is nothing listening? -----------------------------
 // A request to the agent (a chat message, a context escalation) can take a while, and the reviewer
 // has no way to tell a slow answer from a lost one. Two facts settle it, and the UI shows both
-// continuously: what they're waiting on (derived here from the session snapshot — the server never
+// continuously: what they're waiting on (derived here from the rail and the chat — the server never
 // tracks who owes what) and whether an agent is watching at all (/api/agent-status).
 
 // everything the reviewer is currently waiting on Claude for, oldest first
@@ -145,9 +144,8 @@ function outstandingAsks() {
   const out = [];
   const last = state.messages && state.messages[state.messages.length - 1];
   if (last && last.role === "user") out.push({ kind: "message", since: last.created_at });
-  (state.highlights || []).forEach((h) => {
-    if (!h.context_requested) return;
-    if ((state.cards || []).some((c) => c.highlight_id === h.id)) return;   // already answered
+  railHighlights().forEach((h) => {
+    if (!h.context_requested || h.card) return;   // not escalated, or already answered
     out.push({ kind: "context", id: h.id, since: h.context_requested_at || h.created_at });
   });
   return out.sort((a, b) => (a.since || "").localeCompare(b.since || ""));
@@ -310,7 +308,8 @@ function diffMode() {
 function diffScopes() {
   const mode = diffMode();
   const listing = `diff:${SID}:${mode}`;
-  const scopes = currentFile ? [listing, `${listing}:${currentFile}`] : [listing];
+  const scopes = [listing, `rail:${SID}`];
+  if (currentFile) scopes.push(`${listing}:${currentFile}`);
   blobWanted.forEach((path) => scopes.push(`blob:${SID}:${mode}:${path}`));
   return scopes;
 }
@@ -324,6 +323,25 @@ function listingView() {
 function scopeHunks(path) {
   const view = scopeViews[`diff:${SID}:${diffMode()}:${path}`];
   return view && view.state === "ready" ? view.hunks : null;
+}
+
+// what this review has asked about, as the server folded it: numbering, state, cards, cheap tier
+function railView() {
+  return scopeViews[`rail:${SID}`] || null;
+}
+
+function railHighlights() {
+  const view = railView();
+  return view && view.state === "ready" ? view.highlights : [];
+}
+
+function railInsights() {
+  const view = railView();
+  return view && view.state === "ready" ? view.insights : [];
+}
+
+function railHighlight(id) {
+  return railHighlights().find((h) => h.id === id) || null;
 }
 
 // a whole file at the MR head: [{n, text, tokens}], or null until its scope arrives
@@ -617,11 +635,6 @@ function toggleSinceLast() {
   render();             // the new mode's scope is subscribed on render and arrives on the stream
 }
 
-// a highlight made against an earlier MR head — its lines may have moved since (diff-versions)
-function isStale(hl) {
-  return !!(hl.created_sha && state.mr && state.mr.sha && hl.created_sha !== state.mr.sha);
-}
-
 async function markReviewed() {
   setStatus("marking reviewed…");
   try {
@@ -900,8 +913,8 @@ function selectFile(entry) {
 
 function highlightLines(path) {
   const set = new Set();
-  state.highlights.filter((h) => h.file === path).forEach((h) => {
-    for (let l = h.line_range.start; l <= h.line_range.end; l++) set.add(l);
+  railHighlights().filter((h) => h.file === path).forEach((h) => {
+    for (let l = h.start; l <= h.end; l++) set.add(l);
   });
   return set;
 }
@@ -971,7 +984,7 @@ function gapContaining(file, line) {
 }
 
 function highlightExact(path, lo, hi) {
-  return state.highlights.find((h) => h.file === path && h.line_range.start === lo && h.line_range.end === hi);
+  return railHighlights().find((h) => h.file === path && h.start === lo && h.end === hi);
 }
 
 // the per-file diffs currently in play: the since-last delta when that mode is on and parsed, else
@@ -1314,19 +1327,13 @@ function commitSelection(path, a, b) {
   else post({ type: "add_highlight", file: path, side: "new", line_range: { start: lo, end: hi } });
 }
 
-function commentState(hl) {
-  const d = state.drafts.find((x) => x.highlight_id === hl.id);
-  if (!d) return "context";
-  return d.status === "posted" ? "posted" : "comment";
-}
-
 function firstLine(s) {
   const ln = (s || "").split("\n").find((l) => l.trim()) || "";
   return ln.length > 80 ? ln.slice(0, 79) + "…" : ln;
 }
 
 function railMatch(hl) {
-  if (railFilter !== "all" && commentState(hl) !== railFilter) return false;
+  if (railFilter !== "all" && hl.comment_state !== railFilter) return false;
   if (railQuery) {
     const d = state.drafts.find((x) => x.highlight_id === hl.id);
     const buf = (hl.id in draftBuffers) ? draftBuffers[hl.id] : (d ? d.body : "");
@@ -1352,7 +1359,7 @@ function renderRail() {
   renderHlist();
 
   // MR-level insights Claude raised on its own (cards anchored to no highlight)
-  const insights = state.cards.filter((c) => !c.highlight_id);
+  const insights = railInsights();
   if (insights.length) {
     el.appendChild(h3("Claude's insights"));
     insights.forEach((c) => el.appendChild(insightRow(c)));
@@ -1382,7 +1389,7 @@ function renderRail() {
 }
 
 function renderRailTools(el) {
-  if (!state.highlights.length) return;
+  if (!railHighlights().length) return;
   const wrap = document.createElement("div");
   wrap.className = "railtools";
   const seg = document.createElement("div"); seg.className = "seg"; seg.id = "railseg";
@@ -1400,8 +1407,9 @@ function renderRailTools(el) {
 function fillSeg() {
   const seg = $("railseg"); if (!seg) return;
   seg.innerHTML = "";
-  const counts = { all: state.highlights.length, context: 0, comment: 0, posted: 0 };
-  state.highlights.forEach((hl) => { counts[commentState(hl)] += 1; });
+  const rows = railHighlights();
+  const counts = { all: rows.length, context: 0, comment: 0, posted: 0 };
+  rows.forEach((hl) => { counts[hl.comment_state] += 1; });
   [["all", "All"], ["context", "Cards"], ["comment", "Comments"], ["posted", "Posted"]].forEach(([k, label]) => {
     seg.appendChild(btn(`${label} ${counts[k]}`, "btn" + (railFilter === k ? " on" : ""),
       () => { railFilter = k; fillSeg(); renderHlist(); }));
@@ -1411,19 +1419,20 @@ function fillSeg() {
 function renderHlist() {
   const list = $("hlist"); if (!list) return;
   list.innerHTML = "";
-  if (!state.highlights.length) { list.appendChild(empty("highlight a line to ask for context")); return; }
+  const rows = railHighlights();
+  if (!rows.length) { list.appendChild(empty("highlight a line to ask for context")); return; }
   let shown = 0;
-  state.highlights.forEach((hl, i) => { if (railMatch(hl)) { list.appendChild(hlRow(hl, i + 1)); shown += 1; } });
+  // #N is the server's, fixed when the highlight was made — a position here would move on removal
+  rows.forEach((hl) => { if (railMatch(hl)) { list.appendChild(hlRow(hl, hl.n)); shown += 1; } });
   if (!shown) list.appendChild(empty("no highlights match this filter"));
 }
 
 function hlRow(hl, n) {
-  const st = commentState(hl);
-  const card = state.cards.find((c) => c.highlight_id === hl.id);
+  const st = hl.comment_state;
+  const card = hl.card;
   const d = state.drafts.find((x) => x.highlight_id === hl.id);
   const buf = (hl.id in draftBuffers) ? draftBuffers[hl.id] : (d ? d.body : "");
-  const lr = hl.line_range;
-  const loc = `${hl.file}:${lr.start}${lr.end !== lr.start ? "-" + lr.end : ""}`;
+  const loc = `${hl.file}:${hl.start}${hl.end !== hl.start ? "-" + hl.end : ""}`;
   const chipLabel = { context: "context", comment: "comment", posted: "✓ posted" }[st];
   const prev = buf ? firstLine(buf)
              : st === "context" ? (card ? "context ready" : hl.context_requested ? "waiting for context…" : "")
@@ -1435,7 +1444,7 @@ function hlRow(hl, n) {
     `<button class="x" title="discard">×</button>` +
     `<div class="top"><span class="num">#${n}</span>` +
     `<span class="chip ${st}">${chipLabel}</span>` +
-    (isStale(hl) ? `<span class="chip stale" title="made on an earlier version — its lines may have moved">older ver</span>` : "") +
+    (hl.stale ? `<span class="chip stale" title="made on an earlier version — its lines may have moved">older ver</span>` : "") +
     `<span class="loc">${esc(loc)}</span></div>` +
     `<div class="prev">${esc(prev)}</div>`;
   // the index is the always-visible surface, so an escalation still waiting shows a live cue here
@@ -1510,7 +1519,7 @@ function renderDetail() {
   }
 
   if (selected && selected.kind === "insight") {
-    const c = state.cards.find((x) => x.id === selected.id);
+    const c = railInsights().find((x) => x.id === selected.id);
     if (!c) { selected = null; el.hidden = true; el.innerHTML = ""; return; }
     el.hidden = false; el.innerHTML = "";
     const head = document.createElement("div");
@@ -1547,18 +1556,17 @@ function renderDetail() {
     return;
   }
 
-  const hl = selected ? state.highlights.find((h) => h.id === selected.id) : null;
+  const hl = selected ? railHighlight(selected.id) : null;
   if (!hl) { selected = null; el.hidden = true; el.innerHTML = ""; return; }
-  const card = state.cards.find((c) => c.highlight_id === hl.id);
+  const card = hl.card;
   const draft = state.drafts.find((d) => d.highlight_id === hl.id);
-  const posted = draft && draft.status === "posted";
-  const lr = hl.line_range;
-  const loc = `${hl.file}:${lr.start}${lr.end !== lr.start ? "-" + lr.end : ""}`;
+  const posted = hl.comment_state === "posted";
+  const loc = `${hl.file}:${hl.start}${hl.end !== hl.start ? "-" + hl.end : ""}`;
 
   el.hidden = false; el.innerHTML = "";
   const head = document.createElement("div");
   head.className = "dhead";
-  head.innerHTML = `<span class="num">#${state.highlights.indexOf(hl) + 1}</span>` +
+  head.innerHTML = `<span class="num">#${hl.n}</span>` +
     (hl.author === "agent" ? `<span class="byclaude">Claude flagged</span>` : "") +
     `<span class="loc" title="jump to code">${esc(loc)}</span>`;
   head.appendChild(btn("×", "dclose", close));
@@ -1631,9 +1639,9 @@ function draftEditor(key, anchor, draft) {
   const sugActive = canSuggest && (suggOpen[key] || (draft && draft.suggestion != null));
   let sta = null;
   if (sugActive) {
-    const hl = state.highlights.find((h) => h.id === anchor);
+    const hl = railHighlight(anchor);
     const seed = (draft && draft.suggestion != null) ? draft.suggestion
-               : (hl ? newSideLines(hl.file, hl.line_range.start, hl.line_range.end) : "");
+               : (hl ? newSideLines(hl.file, hl.start, hl.end) : "");
     if (!(key in suggBuf)) suggBuf[key] = seed;
     const lbl = document.createElement("div"); lbl.className = "suglbl"; lbl.textContent = "suggested change — edit the lines";
     sta = document.createElement("textarea");
@@ -1727,9 +1735,9 @@ function threadRow(t) {
 function matchingHighlight(t) {
   if (!t.anchor || !t.anchor.file) return null;
   const line = t.anchor.line;
-  const i = state.highlights.findIndex((h) => h.file === t.anchor.file && line != null &&
-    line >= h.line_range.start && line <= h.line_range.end);
-  return i >= 0 ? { hl: state.highlights[i], n: i + 1 } : null;
+  const hl = railHighlights().find((h) => h.file === t.anchor.file && line != null &&
+    line >= h.start && line <= h.end);
+  return hl ? { hl, n: hl.n } : null;
 }
 
 async function threadAction(path, body, okMsg) {
@@ -2003,24 +2011,13 @@ function requestContext(hl) {
   delete askBuf[hl.id];
 }
 
-// the cheap, deterministic context tier (D21): last-touch + linked issues, fetched once per highlight
-async function fetchCheapContext(hl) {
-  const lr = hl.line_range;
-  cheapCtx[hl.id] = "loading";
-  try {
-    cheapCtx[hl.id] = await fetch(
-      `/api/sessions/${SID}/context?file=${encodeURIComponent(hl.file)}&start=${lr.start}&end=${lr.end}`
-    ).then((r) => r.json());
-  } catch (e) { cheapCtx[hl.id] = { blame: [], linked_issues: [] }; }
-  if (selected && selected.kind === "hl" && selected.id === hl.id) renderDetail();
-}
-
 function cheapContextBlock(hl) {
-  const c = cheapCtx[hl.id];
-  if (c === undefined) { fetchCheapContext(hl); }
+  const c = hl.context || {};
   const box = document.createElement("div");
   box.className = "cheapctx";
-  if (c === undefined || c === "loading") { box.appendChild(empty("looking up context…")); return box; }
+  if (c.state === "loading" || c.state === "idle") { box.appendChild(empty("looking up context…")); return box; }
+  if (c.state === "unavailable") { box.appendChild(empty("this host has no last-touch")); return box; }
+  if (c.state === "error") { box.appendChild(empty("context unavailable: " + (c.error || ""))); return box; }
   const blame = (c.blame || []);
   const issues = (c.linked_issues || []);
   if (!blame.length && !issues.length) { box.appendChild(empty("no last-touch or linked issue")); return box; }
@@ -2045,7 +2042,7 @@ function cheapContextBlock(hl) {
 
 function goToHighlight(hl) {
   if (currentFile !== hl.file) { currentFile = hl.file; render(); }
-  const cell = $("diff").querySelector(`td.code[data-line="${hl.line_range.start}"]`);
+  const cell = $("diff").querySelector(`td.code[data-line="${hl.start}"]`);
   if (cell) cell.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 

@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from review_mate.session.state import (
-    ChangeType, DraftComment, DraftStatus, FileEntry, MRMetadata, SessionState, SessionStatus,
+    Card, ChangeType, DraftComment, DraftStatus, FileEntry, Highlight, LineRange, MRMetadata,
+    SessionState, SessionStatus, Side,
 )
 
 DIFF_A = """@@ -44,3 +44,4 @@ class Scheduler:
@@ -49,6 +50,34 @@ def review_with_drafts(session_id="s1") -> SessionState:
     return session(session_id, drafts=[
         DraftComment(id="d1", highlight_id=None, body="an unsubmitted thought", status=DraftStatus.DRAFT),
     ])
+
+
+def review_with_highlights(session_id="s1") -> SessionState:
+    """A review already asked about: one answered, one escalated and waiting, one made older.
+
+    The numbers are 1, 3 and 4 — #2 was removed — so a rail that renumbers from its own row order
+    disagrees with what the reviewer and the agent call these.
+    """
+    state = two_file_review(session_id)
+    state.highlights = [
+        Highlight(id="h1", ordinal=1, file="scheduler/capacity.py", side=Side.NEW,
+                  line_range=LineRange(start=45, end=46), question="why keep the legacy queue?",
+                  created_at="2026-01-01T00:01:00+00:00", created_sha="abc123"),
+        Highlight(id="h3", ordinal=3, file="scheduler/capacity.py", side=Side.NEW,
+                  line_range=LineRange(start=47, end=47),
+                  created_at="2026-01-01T00:02:00+00:00", created_sha="abc123",
+                  context_requested=True, context_requested_at="2026-01-01T00:02:30+00:00"),
+        Highlight(id="h4", ordinal=4, file="scheduler/config.py", side=Side.NEW,
+                  line_range=LineRange(start=12, end=12),
+                  created_at="2026-01-01T00:03:00+00:00", created_sha="0ld0000"),
+    ]
+    state.cards = [
+        Card(id="c1", highlight_id="h1", body="`_legacy` is the pre-fleet queue.",
+             created_at="2026-01-01T00:01:30+00:00"),
+        Card(id="c2", highlight_id=None, body="Three call sites still assume a single queue.",
+             created_at="2026-01-01T00:04:00+00:00"),
+    ]
+    return state
 
 
 # a file whose body is long enough for the unfold bands to appear between hunks
