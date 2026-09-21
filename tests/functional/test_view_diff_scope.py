@@ -25,8 +25,28 @@ DIFF_B = """@@ -10,2 +10,2 @@
 +new = 2
 """
 
+# Same shape as their originals — one removal, the same additions — so a re-read changes the file's
+# own scope and leaves the listing, which carries counts and not bodies, identical.
+DIFF_A_EDITED = """@@ -1,3 +1,4 @@ def reserve(self, pu):
+ def reserve(self, pu):
+-    if pu.legacy:
++    if pu.fleet is LEGACY:
++        q = self._fleet
+     return q
+"""
+DIFF_B_EDITED = """@@ -10,2 +10,2 @@
+-old = 1
++new = 3
+"""
+
 
 class TwoFileHost(HostStub):
+    """A host whose files a test can edit between loads, as a push to the MR would."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.diffs = {"a.py": DIFF_A, "pkg/b.py": DIFF_B}
+
     async def load(self, ref: MRRef) -> MRPayload:
         return MRPayload(
             mr=MRMetadata(host="gitlab", project=ref.project, iid=ref.iid, title="T",
@@ -34,16 +54,16 @@ class TwoFileHost(HostStub):
                           author="dev", url="http://x"),
             files=[
                 FileEntry(path="a.py", change_type=ChangeType.MODIFIED, language="python",
-                          hunks=[{"diff": DIFF_A}]),
+                          hunks=[{"diff": self.diffs["a.py"]}]),
                 FileEntry(path="pkg/b.py", change_type=ChangeType.MODIFIED, language="python",
-                          hunks=[{"diff": DIFF_B}]),
+                          hunks=[{"diff": self.diffs["pkg/b.py"]}]),
             ],
             threads=[],
         )
 
 
-def build(tmp_path):
-    provider = TwoFileHost()
+def build(tmp_path, provider=None):
+    provider = provider or TwoFileHost()
     manager = SessionManager(root=tmp_path / "sessions", mr_source=provider)
     return create_app(manager=manager, provider=provider, with_mcp=False,
                       resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
@@ -89,9 +109,14 @@ def test_a_file_scope_carries_numbered_lines_and_tokens(tmp_path):
 
 
 def test_rereading_one_file_leaves_the_others_untouched(tmp_path):
-    """The point of splitting the diff: a per-file republish moves one scope's seq, not every one."""
-    app = build(tmp_path)
-    with TestClient(app) as tc:
+    """The point of splitting the diff: a per-file republish moves one scope's seq, not every one.
+
+    A re-sync rebuilds every scope the session holds, so isolation is not about what is rebuilt —
+    it is about what a client is told. Each step edits one file and reads exactly one frame: a
+    republished listing or sibling would arrive as an extra frame and take one of these reads.
+    """
+    host = TwoFileHost()
+    with TestClient(build(tmp_path, host)) as tc:
         sid = open_session(tc)
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "scopes": [
@@ -99,19 +124,16 @@ def test_rereading_one_file_leaves_the_others_untouched(tmp_path):
             for scope in (f"diff:{sid}:full", f"diff:{sid}:full:a.py", f"diff:{sid}:full:pkg/b.py"):
                 assert read_scope(ws, scope)["seq"] == 0
 
+            host.diffs["a.py"] = DIFF_A_EDITED
             tc.post(f"/api/sessions/{sid}/refresh-threads", json={})
-            # the re-sync changed the session, so every held reading scope is rebuilt. It applies
-            # several commands, and the tail republishes per change, so the count is not fixed —
-            # what matters is that each held scope moved and nothing else was sent.
-            seqs = {}
-            for _ in range(8):
-                msg = json.loads(ws.receive_text())
-                seqs[msg["scope"]] = msg["seq"]
-                if len(seqs) == 3:
-                    break
-            assert set(seqs) == {f"diff:{sid}:full", f"diff:{sid}:full:a.py",
-                                 f"diff:{sid}:full:pkg/b.py"}
-            assert all(seq >= 1 for seq in seqs.values())
+            moved = json.loads(ws.receive_text())
+            assert moved["scope"] == f"diff:{sid}:full:a.py" and moved["seq"] == 1
+
+            host.diffs["pkg/b.py"] = DIFF_B_EDITED
+            tc.post(f"/api/sessions/{sid}/refresh-threads", json={})
+            moved = json.loads(ws.receive_text())
+            # its own counter: b.py moves to 1 while a.py stays where it was
+            assert moved["scope"] == f"diff:{sid}:full:pkg/b.py" and moved["seq"] == 1
 
 
 def test_a_path_the_change_does_not_touch_says_so(tmp_path):
@@ -230,18 +252,31 @@ def test_blob_line_numbers_are_the_diffs_new_side(tmp_path):
 
 
 def test_one_host_read_serves_repeated_builds(tmp_path):
+    """Content at a sha is fixed, so a rebuild must not go back to the host — and a client holding
+    the blob must not be told about it again either.
+
+    The edited file is what proves the rebuild ran at all: without a frame to wait for, "the host
+    was read once" would also hold if nothing had been rebuilt.
+    """
     provider = BlobHost()
     with TestClient(build_with(tmp_path, provider)) as tc:
         sid = open_session(tc)
-        scope = f"blob:{sid}:full:a.py"
+        blob, open_file = f"blob:{sid}:full:a.py", f"diff:{sid}:full:a.py"
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": [scope]})
-            view = read_scope(ws, scope)["view"]
-            if view["state"] != "ready":
-                read_scope(ws, scope)
-            tc.post(f"/api/sessions/{sid}/refresh-threads", json={})   # republishes held scopes
-            read_scope(ws, scope)
-            assert provider.reads.count(("g/p", "a.py", "abc")) == 1   # content at a sha is fixed
+            ws.send_json({"action": "subscribe", "scopes": [blob, open_file]})
+            seen: dict[str, dict] = {}
+            for _ in range(6):
+                msg = json.loads(ws.receive_text())
+                seen[msg["scope"]] = msg["view"]
+                if seen.get(blob, {}).get("state") == "ready" and open_file in seen:
+                    break
+            assert seen[blob]["state"] == "ready"
+
+            provider.diffs["a.py"] = DIFF_A_EDITED
+            tc.post(f"/api/sessions/{sid}/refresh-threads", json={})
+            moved = json.loads(ws.receive_text())
+            assert moved["scope"] == open_file          # the blob rebuilt identically, so it stayed
+            assert provider.reads.count(("g/p", "a.py", "abc")) == 1
 
 
 def test_a_failed_blob_read_is_reported_in_the_view(tmp_path):

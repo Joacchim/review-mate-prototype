@@ -7,10 +7,18 @@ expensive scope added later costs nothing until a client asks for it.
 Whole-scope replacement makes the slow-consumer policy trivial: a queued update for a scope is
 worthless once a newer one exists, so a subscriber holds at most one pending message per scope
 and the newest always wins. No unbounded queue, no backpressure onto the publisher.
+
+It also means a republish carries no information when the view did not change, and republishing is
+coarse by design: a session's reading scopes are rebuilt together because what a change touches is
+not worth tracking per event. So the bus compares a rendered view against what its watchers already
+hold and pushes only a difference. A tokenized file is the frame that pays for this — it dwarfs
+every other scope, and a highlight or a chat message leaves it untouched.
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Awaitable, Callable
 
@@ -22,6 +30,12 @@ FamilyBuilder = Callable[[str], Awaitable[dict]]
 # A scope name is either a singleton ("hub") or a family member ("file:<sid>:<path>"): the kind up
 # to the first colon selects the builder, and everything after it is that builder's argument.
 FAMILY_SEP = ":"
+
+
+def _fingerprint(kind: str, payload) -> str:
+    """What a watcher holds, as a digest. `kind` keeps an error from matching a view."""
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(f"{kind}:{body}".encode()).hexdigest()
 
 
 class Subscription:
@@ -61,6 +75,7 @@ class ViewBus:
         self._builders: dict[str, Builder] = {}
         self._families: dict[str, FamilyBuilder] = {}
         self._seq: dict[str, int] = {}
+        self._sent: dict[str, str] = {}      # scope -> fingerprint of what watchers hold
         self._subs: set[Subscription] = set()
         # Called as a scope gains its first watcher and loses its last. Work that only makes sense
         # while someone is looking — tailing a session's events to know when to republish — starts
@@ -143,6 +158,7 @@ class ViewBus:
     def forget(self, scope: str) -> None:
         """Drop a family member's sequence once its subject is gone, so a reused name starts clean."""
         self._seq.pop(scope, None)
+        self._sent.pop(scope, None)
 
     def watched(self, prefix: str) -> set[str]:
         """Every scope currently subscribed whose name starts with `prefix` — what to republish
@@ -150,29 +166,48 @@ class ViewBus:
         return {s for sub in self._subs for s in sub.scopes if s.startswith(prefix)}
 
     async def publish(self, scope: str) -> None:
-        """Rebuild a scope and push it to every subscriber watching it.
+        """Rebuild a scope and push it to every subscriber watching it, if it changed.
 
-        The build is skipped when nobody is watching, but `seq` still advances — it counts
-        changes to the scope, not deliveries of it, so a client that subscribes later can tell
-        how current its first view is.
+        `seq` counts changes to the scope rather than deliveries of it, so a view that rebuilt
+        identically advances nothing: there is no change for a later subscriber to have missed.
+
+        The build is skipped when nobody is watching, and `seq` advances on faith there — whether
+        the view changed is unknowable without building it, and a client that subscribes later
+        should read its first view as "not necessarily the first version".
         """
         if self._resolve(scope) is None:
             return
-        self._seq[scope] = self._seq.get(scope, 0) + 1
         watchers = [s for s in self._subs if scope in s.scopes]
         if not watchers:
+            self._seq[scope] = self._seq.get(scope, 0) + 1
+            self._sent.pop(scope, None)      # nothing was compared, so nothing is held
             return
-        message = await self._render(scope)
+        built = await self._build(scope)
+        held = (_fingerprint("error", built.reason) if isinstance(built, ScopeError)
+                else _fingerprint("view", built))
+        if held == self._sent.get(scope):
+            return                           # the watchers already hold this exact view
+        self._seq[scope] = self._seq.get(scope, 0) + 1
+        self._sent[scope] = held
+        message = (built if isinstance(built, ScopeError)
+                   else ScopeUpdate(scope=scope, seq=self._seq[scope], view=built))
         for sub in watchers:
             sub.offer(message)
 
-    async def _render(self, scope: str) -> Message:
-        """Build a scope into a message. A builder failure is reported, never raised at the client."""
+    async def _build(self, scope: str):
+        """The scope's view, or the error that stands in for it — never a raise at the client."""
         builder = self._resolve(scope)
         if builder is None:   # unregistered between resolution and render
             return ScopeError(scope=scope, reason="unknown scope")
         try:
-            view = await builder()
+            return await builder()
         except Exception as exc:   # a broken builder must not take the connection down with it
             return ScopeError(scope=scope, reason=f"{type(exc).__name__}: {exc}")
-        return ScopeUpdate(scope=scope, seq=self._seq.get(scope, 0), view=view)
+
+    async def _render(self, scope: str) -> Message:
+        """Build a scope into a message, and record it as what a watcher now holds."""
+        built = await self._build(scope)
+        if isinstance(built, ScopeError):
+            return built
+        self._sent[scope] = _fingerprint("view", built)
+        return ScopeUpdate(scope=scope, seq=self._seq.get(scope, 0), view=built)

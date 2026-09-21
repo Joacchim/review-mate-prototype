@@ -121,6 +121,11 @@ may not, and a malformed name reports `malformed-name` instead of being read as 
   survives, and a later publish can succeed.
 - **Nothing is built for a scope nobody watches**, though `seq` still advances, so a late subscriber
   learns how current its first view is.
+- **A republish that produced the same view is not sent**, and does not advance `seq` — there is no
+  change for a later subscriber to have missed. Republishing is deliberately coarse (a session
+  rebuilds every scope it holds, rather than tracking which scopes an event could touch), and the
+  difference check is what makes that affordable: a tokenized file dwarfs every other frame, and a
+  highlight or a message leaves it untouched.
 - **Work that only makes sense while someone is looking starts and stops with the watching.** The
   bus reports when a scope gains its first watcher and loses its last, and the tail on a session's
   events — which is what republishes its reading scopes when its state changes — runs exactly

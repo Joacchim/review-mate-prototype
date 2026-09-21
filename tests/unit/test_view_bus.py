@@ -169,14 +169,18 @@ async def test_a_family_serves_any_member_from_one_registration():
 
 
 async def test_family_members_carry_independent_seq():
+    edits = {"file:s1:a.py": 0, "file:s1:b.py": 0}
+
     async def builder(argument):
-        return {"arg": argument}
+        scope = f"file:{argument}"
+        return {"arg": argument, "edits": edits[scope]}
 
     bus = family_bus(builder)
     async with bus.connect() as sub:
         gen = sub.drain()
         await bus.subscribe(sub, ["file:s1:a.py", "file:s1:b.py"])
         await take(gen), await take(gen)
+        edits["file:s1:a.py"] += 1
         await bus.publish("file:s1:a.py")
         msg = await take(gen)
         assert msg.scope == "file:s1:a.py" and msg.seq == 1
@@ -205,17 +209,120 @@ async def test_watched_finds_the_members_to_republish():
 
 
 async def test_forget_resets_a_members_sequence():
-    bus = family_bus(lambda a: _ready({}))
+    edits = {"n": 0}
+    bus = family_bus(lambda a: _ready(dict(edits)))
     async with bus.connect() as sub:
         gen = sub.drain()
         await bus.subscribe(sub, ["file:s1:a.py"])
         await take(gen)
+        edits["n"] = 1
         await bus.publish("file:s1:a.py")
         assert (await take(gen)).seq == 1
         bus.unsubscribe(sub, ["file:s1:a.py"])
         bus.forget("file:s1:a.py")
         await bus.subscribe(sub, ["file:s1:a.py"])
         assert (await take(gen)).seq == 0
+
+
+# --- pushing differences, not republishes ------------------------------------
+
+
+async def test_a_view_that_rebuilt_identically_is_not_pushed():
+    """The republish is coarse by design: a session rebuilds every scope it holds, and most of
+    them are unchanged. A watcher already holding the view learns nothing from receiving it."""
+    state = {"n": 1}
+    bus = bus_with(lambda: _ready(dict(state)))
+    async with bus.connect() as sub:
+        gen = sub.drain()
+        await bus.subscribe(sub, ["demo"])
+        await take(gen)
+        await bus.publish("demo")
+        await nothing_more(gen)
+
+
+async def test_an_unchanged_rebuild_does_not_advance_seq():
+    """seq counts changes to a scope, so an identical rebuild leaves nothing to have missed."""
+    state = {"n": 1}
+    bus = bus_with(lambda: _ready(dict(state)))
+    async with bus.connect() as sub:
+        gen = sub.drain()
+        await bus.subscribe(sub, ["demo"])
+        await take(gen)
+        await bus.publish("demo")
+        state["n"] = 2
+        await bus.publish("demo")
+        assert (await take(gen)).seq == 1       # the real change is the first one counted
+
+
+async def test_a_change_still_arrives_after_an_unchanged_rebuild():
+    state = {"n": 1}
+    bus = bus_with(lambda: _ready(dict(state)))
+    async with bus.connect() as sub:
+        gen = sub.drain()
+        await bus.subscribe(sub, ["demo"])
+        await take(gen)
+        await bus.publish("demo")               # nothing to say
+        state["n"] = 2
+        await bus.publish("demo")
+        assert (await take(gen)).view == {"n": 2}
+
+
+async def test_a_repeated_failure_is_reported_once():
+    async def builder():
+        raise RuntimeError("host is down")
+
+    bus = bus_with(builder)
+    async with bus.connect() as sub:
+        gen = sub.drain()
+        await bus.subscribe(sub, ["demo"])
+        assert isinstance(await take(gen), ScopeError)
+        await bus.publish("demo")
+        await bus.publish("demo")
+        first = await take(gen)                 # the subscribe-time error is not what watchers hold
+        assert isinstance(first, ScopeError)
+        await nothing_more(gen)
+
+
+async def test_a_view_after_an_error_is_pushed():
+    """An error and a view never compare equal, whatever they carry."""
+    fail = {"now": True}
+
+    async def builder():
+        if fail["now"]:
+            raise RuntimeError("host is down")
+        return {"reason": "host is down"}       # the same words, as a view
+
+    bus = bus_with(builder)
+    async with bus.connect() as sub:
+        gen = sub.drain()
+        await bus.subscribe(sub, ["demo"])
+        await take(gen)
+        await bus.publish("demo")
+        assert isinstance(await take(gen), ScopeError)
+        fail["now"] = False
+        await bus.publish("demo")
+        recovered = await take(gen)
+        assert isinstance(recovered, ScopeUpdate) and recovered.view == {"reason": "host is down"}
+
+
+async def test_an_unwatched_republish_leaves_nothing_held():
+    """Whether an unwatched scope changed is unknowable without building it, so the next watcher
+    is sent the view rather than compared against one nobody holds."""
+    state = {"n": 1}
+    bus = bus_with(lambda: _ready(dict(state)))
+    async with bus.connect() as first:
+        gen = first.drain()
+        await bus.subscribe(first, ["demo"])
+        await take(gen)
+        bus.unsubscribe(first, ["demo"])
+        await bus.publish("demo")               # nobody watching
+    async with bus.connect() as second:
+        gen = second.drain()
+        await bus.subscribe(second, ["demo"])
+        assert (await take(gen)).view == {"n": 1}
+        state["n"] = 2
+        await bus.publish("demo")
+        assert (await take(gen)).view == {"n": 2}
 
 
 # --- watch lifecycle ---------------------------------------------------------
