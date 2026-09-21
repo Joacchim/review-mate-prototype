@@ -7,7 +7,9 @@ derivation would be the failure this suite exists to catch.
 import pytest
 from playwright.sync_api import expect
 
-from webui.fixtures.scenarios import review_with_highlights
+from review_mate.session.commands import EmitCard
+
+from webui.fixtures.scenarios import review_with_highlights, two_file_review
 from webui.pages.diff import DiffPage
 from webui.pages.rail import RailPage
 
@@ -97,3 +99,63 @@ def test_a_host_with_no_last_touch_says_so(diff, rail, staged, stub_host):
     diff.load("s1")
     rail.row(1).click()
     expect(rail.cheap_context).to_contain_text("no last-touch")
+
+
+# --- interactions: a click leaves as a command and comes back as a new view ----
+
+def test_asking_about_a_line_puts_it_in_the_rail(diff, rail, staged):
+    """No reload: the command lands, the session tail republishes, the rail repaints."""
+    staged.put(two_file_review("s1"))
+    diff.load("s1")
+    expect(rail.rows).to_have_count(0)
+    diff.ask_about(45)
+    expect(rail.rows).to_have_count(1)
+    expect(rail.rows.first).to_contain_text("scheduler/capacity.py:45")
+    expect(diff.highlighted_lines).to_have_count(1)
+
+
+def test_dragging_asks_about_the_whole_range(diff, rail, staged):
+    staged.put(two_file_review("s1"))
+    diff.load("s1")
+    diff.ask_about(45, 46)
+    expect(rail.rows.first).to_contain_text("scheduler/capacity.py:45-46")
+    expect(diff.highlighted_lines).to_have_count(2)
+
+
+def test_asking_twice_about_a_line_discards_it(diff, rail, staged):
+    staged.put(two_file_review("s1"))
+    diff.load("s1")
+    diff.ask_about(45)
+    expect(rail.rows).to_have_count(1)
+    diff.ask_about(45)
+    expect(rail.rows).to_have_count(0)
+
+
+def test_escalating_marks_the_highlight_as_waiting(diff, rail, staged):
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    rail.row(4).click()
+    rail.escalate("does anything still read this?")
+    expect(rail.detail.locator(".q")).to_have_text("does anything still read this?")
+    expect(rail.waiting).not_to_be_empty()
+    # the index is the always-visible surface, so the escalation shows its own live cue there too
+    expect(rail.row(4).locator(".awtext")).not_to_be_empty()
+
+
+def test_a_card_arriving_repaints_the_rail(diff, rail, staged, as_agent):
+    """The agent's own path: a card the browser could not have sent lands on the open view."""
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    rail.row(3).click()
+    expect(rail.detail.locator(".card")).to_have_count(0)
+    as_agent("s1", EmitCard(highlight_id="h3", body="Nothing else reads `_legacy`."))
+    expect(rail.detail.locator(".card")).to_contain_text("Nothing else reads")
+    expect(rail.row(3)).to_contain_text("context ready")      # the row's preview, once answered
+
+
+def test_dismissing_an_insight_removes_it(diff, rail, staged):
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    expect(rail.insights).to_have_count(1)
+    rail.dismiss_insight()
+    expect(rail.insights).to_have_count(0)

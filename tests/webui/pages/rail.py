@@ -30,3 +30,17 @@ class RailPage:
     @property
     def cheap_context(self):
         return self.page.locator("#detail .cheapctx")
+
+    def escalate(self, question: str = "") -> None:
+        """Ask Claude for context on the highlight the detail panel is showing."""
+        if question:
+            self.detail.locator(".askinp").fill(question)
+        self.detail.get_by_role("button", name="Ask Claude for context").click()
+
+    @property
+    def waiting(self):
+        """The live "Claude is working" cue on an escalation with no card yet."""
+        return self.page.locator("#detail .awtext")
+
+    def dismiss_insight(self, index: int = 0) -> None:
+        self.insights.nth(index).locator(".x").click()

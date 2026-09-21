@@ -57,6 +57,16 @@ class DiffPage:
     def unfold_all(self) -> None:
         self.page.locator("table.hunk tr.expand .exlink").filter(has_text="all").first.click()
 
+    # --- asking about lines --------------------------------------------------
+
+    def ask_about(self, first: int, last: int | None = None) -> None:
+        """Click a line, or drag from one to another — what commits a highlight."""
+        self.line(first).hover()
+        self.page.mouse.down()
+        if last is not None and last != first:
+            self.line(last).hover()
+        self.page.mouse.up()
+
     # --- the highlight overlay ----------------------------------------------
 
     @property

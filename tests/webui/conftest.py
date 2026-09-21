@@ -16,6 +16,7 @@ import pytest
 import uvicorn
 
 from review_mate.seams import MRRef
+from review_mate.session.state import Origin
 from review_mate.server.app import create_app
 from webui.fixtures.host import StubHost
 from webui.fixtures.manager import FakeManager
@@ -28,6 +29,7 @@ class _Server:
     """uvicorn on an ephemeral port, in a thread, for the browser to talk to."""
 
     def __init__(self, app) -> None:
+        self.loop: asyncio.AbstractEventLoop | None = None
         self._config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error")
         self._server = uvicorn.Server(self._config)
         self._thread = threading.Thread(target=self._server.run, daemon=True)
@@ -39,6 +41,7 @@ class _Server:
             if time.time() > deadline:
                 raise RuntimeError("the fixture server did not start")
             time.sleep(0.02)
+        self.loop = self._server.servers[0].get_loop()
         port = self._server.servers[0].sockets[0].getsockname()[1]
         return f"http://127.0.0.1:{port}"
 
@@ -79,11 +82,35 @@ def staged_app(fake_manager, stub_host, stub_workspace, review_kb):
 
 
 @pytest.fixture(scope="session")
-def base_url(staged_app) -> str:
+def _fixture_server(staged_app):
     server = _Server(staged_app)
-    url = server.start()
-    yield url
+    server.start()
+    yield server
     server.stop()
+
+
+@pytest.fixture(scope="session")
+def base_url(_fixture_server) -> str:
+    port = _fixture_server._server.servers[0].sockets[0].getsockname()[1]
+    return f"http://127.0.0.1:{port}"
+
+
+@pytest.fixture
+def as_agent(_fixture_server, fake_manager):
+    """Submit a command the browser is not allowed to send — an agent emitting a card, say.
+
+    It runs on the server's own loop, so the event reaches the session tail that is already
+    subscribed and the scope republishes exactly as it would in production.
+    """
+    def submit(session_id: str, command, origin=Origin.AGENT):
+        actor = fake_manager.actor(session_id)
+        assert actor is not None, f"no staged session {session_id}"
+        future = asyncio.run_coroutine_threadsafe(actor.submit(command, origin),
+                                                  _fixture_server.loop)
+        result = future.result(timeout=10)
+        assert result.ok, result.reason
+        return result
+    return submit
 
 
 @pytest.fixture(autouse=True)

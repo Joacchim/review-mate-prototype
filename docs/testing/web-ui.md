@@ -34,16 +34,22 @@ code as in production and validated by the same models. No test writes protocol 
 ```mermaid
 flowchart LR
     T["a test"] -->|stages state| F["FakeManager<br/>SessionState objects"]
-    F --> S["HubScope · DiffScopes · BlobScopes<br/><i>production code</i>"]
+    F --> S["HubScope · DiffScopes · BlobScopes · RailScope<br/><i>production code</i>"]
     S --> B["ViewBus<br/><i>production code</i>"]
     B --> R["build_view_routes<br/><i>production code</i>"]
     R -->|"/api/stream · /api/cmd"| P["the page under test"]
+    P -->|"a click, as a command"| C["handle() · reduce()<br/><i>production code</i>"]
+    C -->|"the event the command produced"| F
     T -->|asserts on| P
 ```
 
-`HubScope` and `DiffScopes` reach the manager through `get()` and `list()` only, so `FakeManager`
-is those two methods over a dict of `SessionState`. Scenarios are built from the real state models
-— `MRMetadata`, `FileEntry`, `Highlight` — never from dicts.
+Scenarios are built from the real state models — `MRMetadata`, `FileEntry`, `Highlight` — never
+from dicts, and commands run the production `handle()` and `reduce()`, so a click lands in staged
+state the way it lands in production and the session tail republishes the scopes that hold it.
+What `FakeManager` fakes is durability: there is no event log, and `seq` is counted in the fake.
+
+A test can also act as a plane the browser is not: `as_agent` submits a command on the fixture
+server's own loop, which is how a card arrives on a view that is already open.
 
 ### Two entry points
 
