@@ -23,6 +23,12 @@ uv run pytest tests/webui --browser firefox     # one
 uv run pytest tests/webui --headed --slowmo 300 # watch it
 ```
 
+Run this suite in its own invocation. pytest-playwright's fixtures are synchronous and the other
+suites are `asyncio_mode = auto`, so collecting both in one session leaves the async tests
+unawaited and reports them as failures that have nothing to do with the code. The gate is
+`uv run pytest --ignore=tests/webui` plus `uv run pytest tests/webui`, and CI runs them as separate
+jobs for the same reason.
+
 ## Architecture
 
 ### Stub the host, never the protocol
