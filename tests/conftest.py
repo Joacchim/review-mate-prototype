@@ -1,9 +1,24 @@
-"""Shared test doubles.
+"""Shared test doubles, and the guard that keeps the suite out of the reviewer's own files.
 
 `HostStub` counts its own calls, so a test can assert what was *not* called — which is how the
 "building a view never fans out to the host" guarantee is checked.
 """
 import pytest
+
+from review_mate.config import review_mate_home
+
+
+@pytest.fixture(autouse=True)
+def _home_is_never_the_reviewers(tmp_path_factory, monkeypatch):
+    """No test writes into `~/.review-mate`.
+
+    Every default path resolves through `review_mate_home()`, so pointing that at a temporary
+    directory covers the knowledge base, the session log and the workspace at once. Doing it here
+    rather than per test is the point: `create_app` defaults its knowledge base to the real home,
+    and a test that submits a review writes a watermark — so one call site forgetting to pass a
+    root is enough to edit the reviewer's own review history.
+    """
+    monkeypatch.setenv("REVIEW_MATE_HOME", str(tmp_path_factory.mktemp("home")))
 
 from review_mate.seams import MRPayload, MRRef
 from review_mate.session.state import ChangeType, FileEntry, MRMetadata, ReviewThread
