@@ -1,4 +1,4 @@
-"""The rail: the highlight index, and the detail panel it opens."""
+"""The rail: what the change owns, what its lines own, and the detail panel either opens."""
 from __future__ import annotations
 
 from playwright.sync_api import Page
@@ -20,6 +20,42 @@ class RailPage:
     @property
     def insights(self):
         return self.page.locator("#rail .hrow:has(.chip.insight)")
+
+    # --- the two zones -------------------------------------------------------
+
+    @property
+    def pin(self):
+        """What the whole change owns, above the split — it does not scroll with the index."""
+        return self.page.locator(".railpin")
+
+    @property
+    def mr_row(self):
+        return self.page.locator(".railpin .hrow.mr")
+
+    @property
+    def pinned_insights(self):
+        return self.page.locator(".railpin .railinsights .hrow")
+
+    @property
+    def index_rows(self):
+        """Every row in the scrolling zone, including the threads `rows` deliberately leaves out."""
+        return self.page.locator(".raillist .hrow")
+
+    def zone_sizes(self) -> dict:
+        """What the split is for, in pixels: the cap, whether the insights scroll inside it, and
+        whether the index kept any room at all."""
+        return self.page.evaluate("""() => {
+          const rail = document.querySelector('.rail');
+          const pin = document.querySelector('.railpin');
+          const box = document.querySelector('.railinsights');
+          const list = document.querySelector('.raillist');
+          return {rail: rail.clientHeight, pin: pin.getBoundingClientRect().height,
+                  insights_scroll: box.scrollHeight, insights_visible: box.clientHeight,
+                  index: list.clientHeight};
+        }""")
+
+    def pin_is_outside_the_scroller(self) -> bool:
+        return self.page.locator(".raillist .railpin").count() == 0
 
     # --- the detail panel ----------------------------------------------------
 

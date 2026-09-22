@@ -1318,49 +1318,77 @@ function railMatch(hl) {
   return true;
 }
 
+// The rail has two zones. The pinned one holds what the reviewer wants within reach whatever they
+// are reading — the MR-level comment, and the insights Claude raised about the change as a whole —
+// and it is capped, so its own growth cannot bury what sits under it. Everything else scrolls, in
+// the order it already had: the per-line index, then the discussions, then the access requests,
+// each under its own heading. The pin is about what stays reachable, not a home for every row that
+// happens to be MR-wide.
 function renderRail() {
   const el = $("rail");
   el.innerHTML = "";
 
   renderVersionBanner(el);      // "updated since your last review" (diff-versions)
-  renderReviewBar(el);          // sticky submit + counts
-  renderMrRow(el);              // the MR-level review comment, pinned above the index
-  renderRailTools(el);          // filter chips + text search
+  renderReviewBar(el);          // submit + counts
 
-  el.appendChild(h3("Highlights & cards"));
+  el.appendChild(renderMrZone());
+
   const list = document.createElement("div");
-  list.id = "hlist";
+  list.className = "raillist";
   el.appendChild(list);
+
+  list.appendChild(railSplit("Per line"));
+  renderRailTools(list);        // filter chips + text search
+  const hlist = document.createElement("div");
+  hlist.id = "hlist";
+  list.appendChild(hlist);
   renderHlist();
 
-  // MR-level insights Claude raised on its own (cards anchored to no highlight)
-  const insights = railInsights();
-  if (insights.length) {
-    el.appendChild(h3("Claude's insights"));
-    insights.forEach((c) => el.appendChild(insightRow(c)));
-  }
-
-  renderThreads(el);            // existing MR discussions — reply / resolve / refresh
+  renderThreads(list);          // existing MR discussions — reply / resolve / refresh
 
   const pending = state.access_requests.filter((r) => r.status === "pending");
-  el.appendChild(h3("Access requests"));
-  if (!pending.length) el.appendChild(empty("none"));
+  list.appendChild(h3("Access requests"));
+  if (!pending.length) list.appendChild(empty("none"));
   pending.forEach((r) => {
     const box = document.createElement("div");
     box.className = "req";
     box.innerHTML = `<div class="repo">${esc(r.repo)}</div><div class="why">${esc(r.reason)}</div>`;
     box.appendChild(btn("Approve", "btn ok", () => post({ type: "decide_access", request_id: r.id, approve: true })));
     box.appendChild(btn("Deny", "btn no", () => post({ type: "decide_access", request_id: r.id, approve: false })));
-    el.appendChild(box);
+    list.appendChild(box);
   });
 
-  renderChat(el);
+  renderChat(list);
   renderDetail();
 
   if (railSearchFocused) {  // a WS-driven re-render shouldn't steal the search box you're typing in
     const s = $("railsearch");
     if (s) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
   }
+}
+
+// what the whole change owns: the MR-level review comment, then the insights Claude raised itself.
+// The comment is always there to be written, so it sits outside the scroller; the insights take the
+// cap and scroll within it, however many arrive.
+function renderMrZone() {
+  const zone = document.createElement("div");
+  zone.className = "railpin";
+  const insights = railInsights();
+  zone.appendChild(h3(insights.length ? `The merge request · ${insights.length} insights`
+                                      : "The merge request"));
+  renderMrRow(zone);
+  const box = document.createElement("div");
+  box.className = "railinsights";
+  insights.forEach((c) => box.appendChild(insightRow(c)));
+  zone.appendChild(box);
+  return zone;
+}
+
+function railSplit(label) {
+  const el = document.createElement("div");
+  el.className = "railsplit";
+  el.textContent = label;
+  return el;
 }
 
 function renderRailTools(el) {
@@ -1863,7 +1891,7 @@ function renderReviewBar(el) {
 
   const alreadyApproved = !!(approvalStatus && approvalStatus.you_approved);
   const bar = document.createElement("div");
-  bar.className = "reviewbar sticky";
+  bar.className = "reviewbar";
   const lbl = document.createElement("span");
   lbl.textContent = `Your review · ${pending.length} pending${posted.length ? ` · ${posted.length} posted` : ""}`;
   bar.appendChild(lbl);

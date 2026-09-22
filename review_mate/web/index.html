@@ -16,6 +16,7 @@
     --accentglow:rgba(110,168,254,.22); --fg2bg:rgba(154,163,178,.08);
     --postline:#2e6b45; --delline:#6b2e38; --usermsgbg:#1d2a44;
     --tokcmt:#7f8aa3; --tokstr:#8fdcb0; --toknum:#e0b892; --shadow:rgba(0,0,0,.55);
+    --pinbg:rgba(110,168,254,.05); --pinline:#2b3550;
     --tokfn:#78b7f0; --toktype:#e0c38a; --tokbuiltin:#63c4c9; --toktag:#e58a8a;
     --tokattr:#e0b892; --tokop:#63c4c9; --tokdel:#e58a8a; --tokins:#8fdcb0;
   }
@@ -30,6 +31,7 @@
     --accentglow:rgba(9,105,218,.18); --fg2bg:rgba(89,99,110,.08);
     --postline:#1a7f37; --delline:#cf222e; --usermsgbg:#ddf4ff;
     --tokcmt:#6e7781; --tokstr:#116329; --toknum:#953800; --shadow:rgba(0,0,0,.16);
+    --pinbg:rgba(9,105,218,.05); --pinline:#c3d2e8;
     --tokfn:#0550ae; --toktype:#7d4e00; --tokbuiltin:#0e6b70; --toktag:#b31d28;
     --tokattr:#953800; --tokop:#0e6b70; --tokdel:#82071e; --tokins:#116329;
   }
@@ -72,7 +74,25 @@
   button.btn:hover{border-color:var(--accent)} button.btn.on{border-color:var(--accent);color:var(--accent)}
   .shell{display:grid;grid-template-columns:240px 1fr 360px;height:calc(100% - 47px);transition:grid-template-columns .12s}
   .shell.hl{grid-template-columns:0 1fr 360px} .shell.hr{grid-template-columns:240px 1fr 0} .shell.hl.hr{grid-template-columns:0 1fr 0}
-  .files,.rail{overflow:auto;background:var(--panel)} .files{border-right:1px solid var(--line)} .rail{border-left:1px solid var(--line);padding:12px}
+  .files{overflow:auto;background:var(--panel);border-right:1px solid var(--line)}
+  /* two zones: the one that stays within reach whatever is being read, and the one that scrolls
+     under it. The first is capped so its growth cannot bury the second. */
+  .rail{background:var(--panel);border-left:1px solid var(--line);padding:12px;
+        display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .railpin{position:relative;flex:none;display:flex;flex-direction:column;min-height:0;
+           max-height:46%;background:var(--pinbg);border:1px solid var(--pinline);
+           border-radius:10px;padding:9px 9px 5px;margin-bottom:2px}
+  .railpin h3{margin:0 0 8px;padding:0 2px}
+  /* the zone's own edge, so a clipped row reads as more-below rather than a broken one */
+  .railpin::after{content:"";position:absolute;left:1px;right:1px;bottom:1px;height:18px;
+                  border-radius:0 0 9px 9px;pointer-events:none;
+                  background:linear-gradient(to top,var(--panel),transparent)}
+  .railinsights{flex:1;min-height:0;overflow:auto;padding-right:2px}
+  .railinsights .hrow:last-child{margin-bottom:4px}
+  .raillist{flex:1;min-height:0;overflow:auto;padding-right:2px}
+  .railsplit{display:flex;align-items:center;gap:8px;margin:12px 0 9px;font-size:11px;
+             letter-spacing:.08em;text-transform:uppercase;color:var(--fg2)}
+  .railsplit::after{content:"";flex:1;height:1px;background:var(--line2)}
   /* collapse in place — never display:none (that drops the panel from the grid and shifts the diff) */
   .shell.hl .files,.shell.hr .rail{overflow:hidden;border:0;padding:0}
   .diff{overflow:auto;padding:0 0 60px}
@@ -151,7 +171,6 @@
   .hrow.mr{background:var(--panel);border-style:dashed} .hrow.mr.active{border-style:solid}
   .detail .dlabel{font-size:12px;color:var(--fg2)}
   .reviewbar{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:10px;font-size:12.5px;color:var(--fg2)}
-  .reviewbar.sticky{position:sticky;top:0;z-index:3}
   .reviewbar .approve-tog{display:inline-flex;align-items:center;gap:4px;margin-left:auto;white-space:nowrap;cursor:pointer;user-select:none}
   .reviewbar .approve-tog input{cursor:pointer}
   .reviewbar .chip.you-approved{margin-left:auto;font-size:10px;padding:2px 7px}   /* right-aligned status marker */
