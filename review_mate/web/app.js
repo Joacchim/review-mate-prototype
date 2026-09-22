@@ -44,7 +44,6 @@ let commitsMode = false;             // per-commit review: the diff pane shows o
 let commitList = null;               // [{sha, short_id, title, message, …}] oldest→newest, or null
 let currentCommit = null;            // sha of the commit being reviewed
 let sinceLast = false;               // showing the rebase-aware "since last review" interdiff
-let agentWatch = null;               // {attached, parked, last_seen} — is an agent on the activity stream?
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
@@ -133,44 +132,29 @@ function newSideLines(path, lo, hi) {
 function setStatus(msg) { $("status").textContent = msg || ""; }
 
 // --- is Claude working, or is nothing listening? -----------------------------
-// A request to the agent (a chat message, a context escalation) can take a while, and the reviewer
-// has no way to tell a slow answer from a lost one. Two facts settle it, and the UI shows both
-// continuously: what they're waiting on (derived here from the rail and the chat — the server never
-// tracks who owes what) and whether an agent is watching at all (/api/agent-status).
+// The server answers this now. `chat:<sid>` publishes the join of presence with what the review is
+// still owed, because neither half means anything on its own: a watcher parked in wait() is idle by
+// definition, and an ask nobody is listening for is not a slow answer. The rule — including why an
+// agent's own question back is not an ask — lives in review_mate/view/asks.py. The browser renders
+// the word it is given.
 
-// everything the reviewer is currently waiting on Claude for, oldest first
-function outstandingAsks() {
-  if (!state) return [];
-  const out = [];
-  const last = state.messages && state.messages[state.messages.length - 1];
-  if (last && last.role === "user") out.push({ kind: "message", since: last.created_at });
-  railHighlights().forEach((h) => {
-    if (!h.context_requested || h.card) return;   // not escalated, or already answered
-    out.push({ kind: "context", id: h.id, since: h.context_requested_at || h.created_at });
-  });
-  return out.sort((a, b) => (a.since || "").localeCompare(b.since || ""));
+// this session's conversations, and the agent state they add up to
+function chatIndex() {
+  return scopeViews[`chat:${SID}`] || null;
 }
 
-// How long an ask may sit with an agent attached before "working" stops being a credible reading.
-// Well past normal card latency (the coordinator's long-poll ceiling is 50s), well under the many
-// minutes it takes a human to get suspicious on their own.
-const AGENT_STALE_AFTER = 300;
+const AGENT_OFF = { state: "off", stale: false, since: null, asks: [] };
 
-// working: something outstanding and an agent is watching. stalled: outstanding and nothing is —
-// the case that used to be indistinguishable from "slow". watching/off: nothing outstanding.
-// `stale` qualifies "working": an agent IS attached, but the ask has sat long enough that "it's
-// being worked on" is no longer the likely explanation — it may never have received the request at
-// all, since the activity stream is ephemeral and a server restart drops in-flight notifications.
-// Watcher presence can't distinguish those two, so age is the only signal the browser has.
+// A review page reads its session's own join. The landing page has no session, so the hub answers
+// the narrower question it owns — is anyone listening at all — and each row carries its own count.
 function agentState() {
-  const asks = outstandingAsks();
-  const attached = !!(agentWatch && agentWatch.attached);
-  if (asks.length) {
-    const age = (Date.now() - Date.parse(asks[0].since || "")) / 1000;
-    const stale = attached && age > AGENT_STALE_AFTER;
-    return { cls: attached ? "working" : "stalled", stale, since: asks[0].since, asks };
+  if (SID) {
+    const view = chatIndex();
+    return view && view.state === "ready" && view.agent ? view.agent : AGENT_OFF;
   }
-  return { cls: attached ? "watching" : "off", stale: false, since: null, asks };
+  const hub = scopeViews.hub;
+  const attached = !!(hub && hub.agent && hub.agent.attached);
+  return { ...AGENT_OFF, state: attached ? "watching" : "off", attached };
 }
 
 function elapsed(iso) {
@@ -195,12 +179,12 @@ function renderAgentLight() {
   const el = $("agent");
   if (!el) return;
   const st = agentState();
-  el.className = "agent " + st.cls + (st.stale ? " stale" : "");
-  el.title = st.stale ? AGENT_STALE_TITLE : AGENT_TITLE[st.cls];
+  el.className = "agent " + st.state + (st.stale ? " stale" : "");
+  el.title = st.stale ? AGENT_STALE_TITLE : AGENT_TITLE[st.state];
   el.querySelector(".alab").textContent =
     st.stale ? `Claude · ${elapsed(st.since)} · no progress` :
-    st.cls === "working" ? `Claude · ${elapsed(st.since)}` :
-    st.cls === "stalled" ? "no agent watching" : "";
+    st.state === "working" ? `Claude · ${elapsed(st.since)}` :
+    st.state === "stalled" ? "no agent watching" : "";
 }
 
 // the inline "still waiting" line, next to whatever the reviewer asked (a chat turn, a highlight).
@@ -215,36 +199,24 @@ function agentWaitLine(since, mini) {
   return el;
 }
 
+// Staleness is the session's reading, not this line's: the threshold that decides it has one owner
+// on the server, and a second copy here to age each line separately would be that owner again.
 function paintWaitLine(el) {
   const st = agentState();
-  const stalled = st.cls === "stalled";
-  // a per-line staleness age: this line's own ask may be older or newer than the panel's oldest
-  const stale = st.cls === "working" &&
-    (Date.now() - Date.parse(el.dataset.since || "")) / 1000 > AGENT_STALE_AFTER;
-  el.className = "agentwait " + (stalled ? "stalled" : stale ? "stale" : "working")
+  const stalled = st.state === "stalled";
+  el.className = "agentwait " + (stalled ? "stalled" : st.stale ? "stale" : "working")
                + (el.dataset.mini ? " mini" : "");
   const age = elapsed(el.dataset.since);
   el.querySelector(".awtext").textContent = el.dataset.mini
-    ? (stalled ? `not picked up · ${age}` : stale ? `no progress · ${age}` : `Claude working · ${age}`)
+    ? (stalled ? `not picked up · ${age}` : st.stale ? `no progress · ${age}` : `Claude working · ${age}`)
     : (stalled ? `no agent is watching — waiting ${age}, nothing has picked this up`
-       : stale ? `waiting ${age} with an agent attached — it may never have received this; re-send it`
-               : `Claude is working on it… ${age}`);
+       : st.stale ? `waiting ${age} with an agent attached — it may never have received this; re-send it`
+                  : `Claude is working on it… ${age}`);
 }
 
-async function pollAgentStatus() {
-  try { agentWatch = await fetch("/api/agent-status").then((r) => r.json()); }
-  catch (e) { agentWatch = null; }
-}
-
-// One ticker drives both: the elapsed times refresh every second, the watcher fetch rides along —
-// often while an answer is outstanding, rarely when none is (it's a cheap in-process read, but
-// there's nothing to learn while the reviewer isn't waiting on anything).
+// One ticker, and it only ages the labels: the state itself arrives on the stream.
 function startAgentWatch() {
-  let ticks = 0;
-  const tick = async () => {
-    const period = outstandingAsks().length ? 2 : 15;
-    if (ticks % period === 0) await pollAgentStatus();
-    ticks += 1;
+  const tick = () => {
     renderAgentLight();
     document.querySelectorAll(".agentwait").forEach(paintWaitLine);
   };
@@ -269,6 +241,7 @@ function connectViews(scopes) {
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
     if (msg.type === "scope") {
       scopeViews[msg.scope] = msg.view;   // whole-scope replacement — nothing to merge
+      renderAgentLight();                 // the state rides a scope, so it repaints with one
       if (msg.scope === "hub") {
         markHubReady();
         if (!SID) showLanding();
@@ -304,11 +277,12 @@ function diffMode() {
   return sinceLast ? "since" : "full";
 }
 
-// the scopes the review page reads: the file list, the file being shown, and any whole file it needs
+// the scopes the review page reads: the file list, the file being shown, any whole file it needs,
+// the rail, and the chat index that carries the agent's state
 function diffScopes() {
   const mode = diffMode();
   const listing = `diff:${SID}:${mode}`;
-  const scopes = [listing, `rail:${SID}`];
+  const scopes = [listing, `rail:${SID}`, `chat:${SID}`];
   if (currentFile) scopes.push(`${listing}:${currentFile}`);
   blobWanted.forEach((path) => scopes.push(`blob:${SID}:${mode}:${path}`));
   return scopes;
@@ -749,8 +723,9 @@ async function renderSuggestions(query) {
 // route a fuzzy query to Claude's lookup channel; render its answer + loadable candidates
 async function askClaude(query, panel) {
   panel.innerHTML = "";
-  // the lookup channel has no session to hang a wait line on — say it plainly instead
-  panel.appendChild(empty(agentWatch && !agentWatch.attached
+  // the lookup channel has no session to hang a wait line on — say it plainly instead. Only once
+  // the hub has arrived: an unknown watcher must not read as an absent one.
+  panel.appendChild(empty(scopeViews.hub && !agentState().attached
     ? "asking Claude… — but no agent is watching, so this will go unanswered"
     : "asking Claude…"));
   let id = null;
