@@ -87,8 +87,9 @@ it dangerous.
 4. **Relaunch** the watch (step 1) with the updated `since`.
 
 Relaunch the watch **promptly** — the poll doubles as your presence heartbeat. The reviewer's UI reads
-`/api/agent-status`, which reports an agent as attached while a poll is parked and for 90s after the
-last one; go quiet for longer and their screen correctly says nothing is listening. Do the reaping and
+your presence off the view stream (`chat:<sid>` on a review, `hub` on the queue), which reports an
+agent as attached while a poll is parked and for 90s after the last one; go quiet for longer and
+their screen correctly says nothing is listening. Do the reaping and
 dispatching around the watch, never instead of it.
 
 ```mermaid
