@@ -20,7 +20,8 @@ from review_mate.seams import MRRef
 from review_mate.view.protocol import HUB, ScopeError, Subscribe, parse_client_message
 
 
-def build_view_routes(manager, bus, hub, resolve_ref=None) -> list:
+def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
+                      review=None, kb=None) -> list:
     async def _publish_hub() -> None:
         await bus.publish(HUB)
 
@@ -93,10 +94,51 @@ def build_view_routes(manager, bus, hub, resolve_ref=None) -> list:
         await _publish_hub()
         return JSONResponse({"ok": True})
 
+    def _session_arg(args: dict) -> str | None:
+        sid = args.get("session")
+        return sid if isinstance(sid, str) and sid else None
+
+    async def _review_submit(args: dict) -> JSONResponse:
+        """Send the prepared review. The same sequence the REST route runs, so whichever client
+        a reviewer sends from, the same comments land in the same order."""
+        sid = _session_arg(args)
+        if sid is None:
+            return JSONResponse({"ok": False, "reason": "no session"}, status_code=400)
+        if submitter is None:
+            return JSONResponse({"ok": False, "reason": "review posting unavailable"},
+                                status_code=400)
+        result = await submitter.submit(sid, approve=bool(args.get("approve")))
+        if "error" in result:
+            return JSONResponse({"ok": False, "reason": result["error"]},
+                                status_code=404 if result["error"] == "unknown session" else 400)
+        if review is not None and args.get("approve"):
+            # approving is the one thing that changes what the host would say about approvals
+            with suppress(Exception):
+                await review.refresh(sid)
+        await bus.publish(f"review:{sid}")
+        await _publish_hub()
+        return JSONResponse({"ok": True, **result})
+
+    async def _review_mark_reviewed(args: dict) -> JSONResponse:
+        """Advance the reviewed watermark without sending anything — "I have read up to here"."""
+        sid = _session_arg(args)
+        actor = manager.get(sid) if sid else None
+        if actor is None:
+            return JSONResponse({"ok": False, "reason": "unknown session"}, status_code=404)
+        snapshot = actor.snapshot()
+        if snapshot.mr is None or kb is None:
+            return JSONResponse({"ok": False, "reason": "unavailable"}, status_code=400)
+        kb.set_watermark(snapshot.mr.host, snapshot.mr.project, snapshot.mr.iid, snapshot.mr.sha)
+        await bus.publish(f"review:{sid}")
+        await _publish_hub()
+        return JSONResponse({"ok": True, "watermark": snapshot.mr.sha})
+
     _HANDLERS = {
         "session.open": _session_open,
         "session.close": _session_close,
         "hub.refresh": _hub_refresh,
+        "review.submit": _review_submit,
+        "review.mark_reviewed": _review_mark_reviewed,
     }
 
     async def stream(ws: WebSocket) -> None:

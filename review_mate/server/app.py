@@ -6,7 +6,7 @@ static UI is mounted last so it never shadows the `/api` routes.
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from starlette.applications import Starlette
@@ -97,6 +97,7 @@ def create_app(manager: SessionManager | None = None,
     from review_mate.view.diffscope import BlobScopes, DiffScopes
     from review_mate.view.rail import RailScope
     from review_mate.view.review import ReviewScope
+    from review_mate.writeback.submit import ReviewSubmitter
     from review_mate.view.hub import HubScope
     from review_mate.view.protocol import HUB
     # a session's reading scopes are rebuilt when its state changes, but only while a client is
@@ -167,6 +168,10 @@ def create_app(manager: SessionManager | None = None,
     def _on_first_watch(scope: str) -> None:
         if _carries_presence(scope):
             _ensure_ticker()
+        if scope.startswith("review:") and scope.count(":") == 1:
+            # who approved is a host fact the bar shows, so it is worth asking for exactly while
+            # someone is reading it — and once, rather than on every rebuild
+            asyncio.create_task(_warm_approval(scope.partition(":")[2]))
         session_id = _session_of(scope)
         if session_id is None or session_id in session_pumps:
             return
@@ -219,6 +224,16 @@ def create_app(manager: SessionManager | None = None,
     review_scope = ReviewScope(manager, provider=provider, kb=kb)
     bus.register_family("review", review_scope.build)
 
+    async def _warm_approval(session_id: str) -> None:
+        """Ask the host who approved, then republish so the bar stops saying it does not know.
+
+        Best-effort on purpose: a host that will not answer leaves the bar reading `checked: false`,
+        which is what it should read, rather than taking the review down with it.
+        """
+        with suppress(Exception):
+            await review_scope.refresh(session_id)
+            await bus.publish(f"review:{session_id}")
+
     async def republish_session(session_id: str) -> None:
         """Rebuild the reading scopes a client currently holds for one session.
 
@@ -245,10 +260,13 @@ def create_app(manager: SessionManager | None = None,
             presence_task.cancel()
             presence_task = None
 
+    submitter = ReviewSubmitter(manager, writeback, provider=provider, kb=kb)
     routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider, broker=broker,
-                          writeback=writeback, activity_broker=activity_broker, kb=kb)
+                          writeback=writeback, activity_broker=activity_broker, kb=kb,
+                          submitter=submitter)
     # registered before the static mount so `/api/stream` and `/api/cmd` are never shadowed by the UI
-    routes.extend(build_view_routes(manager, bus, hub, resolve_ref=resolve_ref))
+    routes.extend(build_view_routes(manager, bus, hub, resolve_ref=resolve_ref,
+                                    submitter=submitter, review=review_scope, kb=kb))
 
     mcp_app = None
     if with_mcp:

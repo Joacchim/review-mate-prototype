@@ -316,3 +316,54 @@ async def test_reply_capability_missing_returns_400(tmp_path):
     assert r.status_code == 400
     assert manager.get(sid).snapshot().threads == []   # nothing mirrored on failure
     await manager.shutdown()
+
+
+# --- the same review, sent as a named command -------------------------------
+# `review.submit` and the REST route run one sequence (`ReviewSubmitter`), so what these pin is
+# that the command reaches it and republishes what it changed — not the posting itself, which the
+# tests above already cover.
+
+async def test_the_submit_command_posts_the_same_review(tmp_path):
+    writer = StubWriter()
+    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    async with client:
+        await manager.get(sid).submit(SaveDraft(highlight_id=None, body="MR summary"), Origin.BROWSER)
+        r = await client.post("/api/cmd", json={"cmd": "review.submit", "args": {"session": sid}})
+        data = r.json()
+    assert data["ok"] is True and data["posted"] == 1
+    assert writer.calls == [("post_mr_comment", "MR summary")]
+    await manager.shutdown()
+
+
+async def test_the_submit_command_can_approve(tmp_path):
+    writer = StubWriter()
+    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    async with client:
+        r = await client.post("/api/cmd",
+                              json={"cmd": "review.submit", "args": {"session": sid, "approve": True}})
+        data = r.json()
+    assert data["ok"] is True and data["approved"] is True
+    assert writer.calls == [("approve",)]
+    await manager.shutdown()
+
+
+async def test_submitting_an_unknown_session_says_so(tmp_path):
+    manager, _sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
+    async with client:
+        r = await client.post("/api/cmd",
+                              json={"cmd": "review.submit", "args": {"session": "nope"}})
+    assert r.status_code == 404 and r.json()["ok"] is False
+    await manager.shutdown()
+
+
+async def test_marking_reviewed_advances_the_watermark_without_posting(tmp_path):
+    """"I have read up to here" — the other thing a reviewer does with a change that moved."""
+    writer = StubWriter()
+    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    async with client:
+        r = await client.post("/api/cmd",
+                              json={"cmd": "review.mark_reviewed", "args": {"session": sid}})
+    assert r.json() == {"ok": True, "watermark": "s"}
+    assert manager._test_kb.get_watermark("gitlab", "g/p", 42) == "s"
+    assert writer.calls == []               # nothing was sent to the host
+    await manager.shutdown()

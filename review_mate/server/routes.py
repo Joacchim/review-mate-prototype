@@ -15,10 +15,10 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from review_mate.seams import MRRef, RepoRef
 from review_mate.view.asks import outstanding as outstanding_asks
 from review_mate.session.commands import (
-    ApplyFiles, ApplyMRMetadata, MarkDraftPosted, ReplaceThreads, parse_command,
+    ApplyFiles, ApplyMRMetadata, ReplaceThreads, parse_command,
 )
 from review_mate.session.manager import SessionManager
-from review_mate.session.state import DraftStatus, Origin, SessionStatus
+from review_mate.session.state import Origin, SessionStatus
 
 # server-side long-poll ceiling for GET /api/activity: under common idle cutoffs, and short enough
 # that the coordinator gets a regular tick (to re-evaluate the idle-reap bound) even when quiet.
@@ -26,7 +26,7 @@ ACTIVITY_TIMEOUT = 50.0
 
 
 def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broker=None,
-                 writeback=None, activity_broker=None, kb=None) -> list:
+                 writeback=None, activity_broker=None, kb=None, submitter=None) -> list:
     async def create_session(request: Request) -> JSONResponse:
         body = await _maybe_json(request)
         raw = body.get("ref") if isinstance(body, dict) else None
@@ -157,61 +157,17 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         return JSONResponse({"ok": True, "seq": result.seq})
 
     async def submit_review(request: Request) -> JSONResponse:
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        if writeback is None:
+        """Post the prepared review. The sequence lives in `ReviewSubmitter`, which the
+        `review.submit` command runs too — so the terminal and the browser send the same review."""
+        if submitter is None:
             return JSONResponse({"error": "review posting unavailable"}, status_code=400)
-        snap = actor.snapshot()
-        if snap.mr is None:
-            return JSONResponse({"error": "no MR loaded"}, status_code=400)
-        ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
-        pending = [d for d in snap.drafts if d.status is DraftStatus.DRAFT]
-        by_id = {h.id: h for h in snap.highlights}
-        results = []
-        for d in pending:
-            try:
-                # compose prose + an optional fenced suggestion block (line-anchored only)
-                body = d.body or ""
-                hl = by_id.get(d.highlight_id) if d.highlight_id else None
-                if d.suggestion and hl is not None:
-                    span = max(hl.line_range.end - hl.line_range.start, 0)
-                    block = f"```suggestion:-0+{span}\n{d.suggestion}\n```"
-                    body = f"{body}\n\n{block}" if body.strip() else block
-                res = await writeback.post_comment(snap.id, d.highlight_id, body, ref)
-                # anchored comments return a discussion {id, notes:[…]}; an MR-level note returns the note
-                note = (res.get("notes") or [res])[0] if isinstance(res, dict) else {}
-                url = (f"{snap.mr.url}#note_{note.get('id')}"
-                       if note.get("id") and snap.mr.url else None)
-                thread_id = (str(res["id"]) if isinstance(res, dict) and d.highlight_id
-                             and res.get("id") is not None else None)
-                await actor.submit(MarkDraftPosted(highlight_id=d.highlight_id, url=url,
-                                                   thread_id=thread_id), Origin.BROWSER)
-                results.append({"highlight_id": d.highlight_id, "ok": True, "url": url})
-            except Exception as exc:  # one bad anchor shouldn't sink the rest of the review
-                results.append({"highlight_id": d.highlight_id, "ok": False, "error": str(exc)})
-        posted = sum(1 for r in results if r["ok"])
-        if posted:
-            # surface the just-posted comments as live threads in session state — otherwise the
-            # inline "your comment" block (and its Resolve control) can't find its thread until a
-            # manual refresh, since submit only recorded the thread_id on the draft
-            try:
-                await _remirror_threads(actor, ref)
-            except Exception:
-                pass
-        approved = False
-        approve_error = None
         body = await _maybe_json(request)
-        if isinstance(body, dict) and body.get("approve"):
-            try:
-                await writeback.approve(ref)   # capability-gated in the writer
-                approved = True
-            except Exception as exc:
-                approve_error = str(exc)
-        if kb is not None and snap.mr.sha:   # submitting a review advances the reviewed watermark
-            kb.set_watermark(snap.mr.host, snap.mr.project, snap.mr.iid, snap.mr.sha)
-        return JSONResponse({"posted": posted, "total": len(pending), "results": results,
-                             "approved": approved, "approve_error": approve_error})
+        approve = bool(isinstance(body, dict) and body.get("approve"))
+        result = await submitter.submit(request.path_params["id"], approve=approve)
+        if "error" in result:
+            return JSONResponse(result,
+                                status_code=404 if result["error"] == "unknown session" else 400)
+        return JSONResponse(result)
 
     async def mark_reviewed(request: Request) -> JSONResponse:
         """Advance the reviewed watermark to the current head without submitting (diff-versions)."""
