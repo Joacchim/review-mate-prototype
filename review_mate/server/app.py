@@ -37,6 +37,10 @@ _WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 # this bounds how long a view can claim an agent is attached after it stopped listening.
 PRESENCE_TICK = 5.0
 
+# The scope families named after a session, rather than after the fleet. A review's lifetime is
+# decided by whether any of these is being read, so a new one belongs here and nowhere else.
+SESSION_FAMILIES = ("diff", "blob", "rail", "chat", "review")
+
 
 def build_manager_from_env(activity_broker=None):
     """Wire a live SessionManager when a host is configured; else the self-contained baseline.
@@ -92,6 +96,7 @@ def create_app(manager: SessionManager | None = None,
     from review_mate.view.chat import ChatScopes
     from review_mate.view.diffscope import BlobScopes, DiffScopes
     from review_mate.view.rail import RailScope
+    from review_mate.view.review import ReviewScope
     from review_mate.view.hub import HubScope
     from review_mate.view.protocol import HUB
     # a session's reading scopes are rebuilt when its state changes, but only while a client is
@@ -102,11 +107,23 @@ def create_app(manager: SessionManager | None = None,
 
     def _session_of(scope: str) -> str | None:
         kind, sep, rest = scope.partition(":")
-        return rest.partition(":")[0] if sep and kind in ("diff", "blob", "rail", "chat") else None
+        return rest.partition(":")[0] if sep and kind in SESSION_FAMILIES else None
+
+    def _session_scopes(session_id: str) -> set[str]:
+        """Every scope a client can be holding for one session.
+
+        One list, because three callers ask the same question — is anyone still reading this
+        review, what must be rebuilt when it changes, and which session a scope belongs to — and a
+        family added to only two of them goes stale in a way nothing fails on.
+        """
+        held: set[str] = set()
+        for family in SESSION_FAMILIES:
+            # diff and blob name a file after the session, so they match on a prefix
+            held |= bus.watched(f"{family}:{session_id}:") | bus.watched(f"{family}:{session_id}")
+        return held
 
     def _still_watched(session_id: str) -> bool:
-        return bool(bus.watched(f"diff:{session_id}:") or bus.watched(f"blob:{session_id}:")
-                    or bus.watched(f"rail:{session_id}") or bus.watched(f"chat:{session_id}"))
+        return bool(_session_scopes(session_id))
 
     async def _tail(session_id: str) -> None:
         actor = manager.get(session_id)
@@ -199,6 +216,8 @@ def create_app(manager: SessionManager | None = None,
     bus.register_family("rail", rail_scope.build)
     chat_scopes = ChatScopes(manager, watcher=watcher)
     bus.register_family("chat", chat_scopes.build)
+    review_scope = ReviewScope(manager, provider=provider, kb=kb)
+    bus.register_family("review", review_scope.build)
 
     async def republish_session(session_id: str) -> None:
         """Rebuild the reading scopes a client currently holds for one session.
@@ -210,8 +229,7 @@ def create_app(manager: SessionManager | None = None,
         Blobs are included: a re-sync can move the head, and a blob reads at whatever sha its mode
         resolves to.
         """
-        held = (bus.watched(f"diff:{session_id}:") | bus.watched(f"blob:{session_id}:")
-                | bus.watched(f"rail:{session_id}") | bus.watched(f"chat:{session_id}"))
+        held = _session_scopes(session_id)
         if bus.watchers(HUB):
             # the hub folds per-session facts too — counts, and what each review is waiting on
             held = held | {HUB}

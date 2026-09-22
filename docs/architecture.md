@@ -104,6 +104,7 @@ Writes go to `POST /api/cmd` as `{"cmd": …, "args": {…}}` — `session.open`
 | `chat:<sid>` | an index of the review's conversations, and the agent state it is in |
 | `chat:<sid>:review` | the conversation about the change as a whole |
 | `chat:<sid>:<kind>:<id>` | one subject's conversation — kind is highlight, insight or thread |
+| `review:<sid>` | the comments prepared to send, whether the change moved on, and who has approved |
 
 A file's scope name is the list's name with a path appended, so a client concatenates rather than
 assembling a second name. Names are validated: a path may contain a colon, a session id and a mode
