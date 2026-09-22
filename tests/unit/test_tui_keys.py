@@ -357,3 +357,93 @@ async def test_escape_abandons_a_comment_without_saving_it():
     await settle()
     assert client.session_commands == []
     assert not shell.composing and shell.compose_kind == "message"
+
+
+# --- sending it --------------------------------------------------------------
+# Sending reaches the merge request and cannot be taken back, so the gesture is deliberate: an
+# uppercase key, then a confirmation. What these pin is that nothing leaves on one keypress.
+
+def _prepared(shell, pending=1, available=True, you_approved=False):
+    shell.client.views["review:s1"] = {
+        "session": "s1", "state": "ready", "pending": pending, "posted": 0,
+        "drafts": [{"id": "d1", "highlight_id": None, "body": "summary", "suggestion": None,
+                    "status": "draft", "url": "", "thread_id": "", "created_at": ""}] * pending,
+        "approval": {"available": available, "checked": True, "you_approved": you_approved,
+                     "approved_by": []},
+        "version": {"head": "abc", "watermark": None, "behind": False}}
+
+
+async def test_sending_asks_before_it_sends():
+    shell, client = shell_on_a_review()
+    _prepared(shell)
+    press(shell, "S")
+    await settle()
+    assert client.commands == []                       # nothing has left yet
+    assert shell.confirming
+    assert "send 1 comment?" in "".join(t for _, t in shell.fragments())
+
+
+async def test_confirming_sends_the_review():
+    shell, client = shell_on_a_review()
+    _prepared(shell)
+    press(shell, "S")
+    press(shell, "y")
+    await settle()
+    assert client.commands == [("review.submit", {"session": "s1", "approve": False})]
+
+
+async def test_escape_calls_it_off():
+    shell, client = shell_on_a_review()
+    _prepared(shell)
+    press(shell, "S")
+    press(shell, "escape")
+    await settle()
+    assert client.commands == [] and not shell.confirming
+
+
+async def test_y_on_its_own_sends_nothing():
+    """The confirmation only answers a question that was asked."""
+    shell, client = shell_on_a_review()
+    _prepared(shell)
+    press(shell, "y")
+    await settle()
+    assert client.commands == []
+
+
+async def test_with_nothing_prepared_there_is_nothing_to_confirm():
+    shell, _ = shell_on_a_review()
+    _prepared(shell, pending=0, available=False)
+    press(shell, "S")
+    assert not shell.confirming
+
+
+async def test_approval_travels_with_the_submission():
+    shell, client = shell_on_a_review()
+    _prepared(shell)
+    press(shell, "A")
+    assert shell.approve
+    assert "approval armed" in "".join(t for _, t in shell.fragments())
+    press(shell, "S")
+    press(shell, "y")
+    await settle()
+    assert client.commands == [("review.submit", {"session": "s1", "approve": True})]
+    assert not shell.approve                           # spent, not left armed for the next one
+
+
+async def test_an_mr_that_cannot_be_approved_does_not_arm():
+    shell, _ = shell_on_a_review()
+    _prepared(shell, available=False)
+    press(shell, "A")
+    assert not shell.approve
+
+
+async def test_approving_alone_is_worth_confirming():
+    """No comments prepared, but an approval armed — that is still something to send."""
+    shell, client = shell_on_a_review()
+    _prepared(shell, pending=0)
+    press(shell, "A")
+    press(shell, "S")
+    assert shell.confirming
+    press(shell, "y")
+    await settle()
+    assert client.commands == [("review.submit", {"session": "s1", "approve": True})]

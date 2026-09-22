@@ -198,6 +198,7 @@ class DiffScreen:
         out.append(("class:header", f" {title}\n"))
         out.append(("class:muted", f"  mode {self.mode}   [{self.client.status}]"))
         out.extend(self._agent_badge())
+        out.extend(self._review_badge())
         if not view.get("head_aligned", True):
             out.append(("class:attention", "   read-only: the MR moved past this session"))
         if view.get("clean") is False:
@@ -336,6 +337,28 @@ class DiffScreen:
             out.append((style, answer + ("  (stale)" if highlight.get("stale") else "") + "\n"))
         return out
 
+    def _review_badge(self) -> list[tuple[str, str]]:
+        """What is waiting to be sent, and whether this has already been approved.
+
+        Silent when there is nothing prepared and no approval to report — a header line that always
+        says "0 pending" is a line the reviewer stops reading.
+        """
+        review = self.review
+        if not review:
+            return []
+        pending, posted = review.get("pending", 0), review.get("posted", 0)
+        approval = review.get("approval") or {}
+        out: list[tuple[str, str]] = []
+        if pending:
+            out.append(("class:attention", f"   {pending} to send"))
+        if posted:
+            out.append(("class:ok", f"   {posted} sent"))
+        if approval.get("you_approved"):
+            out.append(("class:ok", "   \u2713 approved"))
+        if (review.get("version") or {}).get("behind"):
+            out.append(("class:attention", "   moved since you read it"))
+        return out
+
     def _agent_badge(self) -> list[tuple[str, str]]:
         """Working, stalled, watching or off — the server's word, not a rule applied here."""
         agent = self.chat.get("agent") or {}
@@ -376,8 +399,9 @@ class DiffScreen:
         if self.focus == "body":
             return "\n tab pane   j/k line   v select   n/p file   m mode   b back   q quit\n"
         if self.focus == "rail":
-            return "\n tab pane   j/k move   a ask Claude   c write   n/p file   b back   q quit\n"
-        return "\n tab pane   j/k move   c write   n/p file   m mode   b back   q quit\n"
+            return ("\n tab pane   j/k move   a ask Claude   c write   d comment   S send"
+                    "   b back   q quit\n")
+        return "\n tab pane   j/k move   c write   d comment   S send   n/p file   b back   q quit\n"
 
     # --- interaction ---------------------------------------------------------
 

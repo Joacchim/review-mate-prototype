@@ -190,6 +190,9 @@ class Shell:
         # One composer, two kinds. A message is a line and sends on enter; a review comment is
         # prose the reviewer shapes, so enter breaks the line there and c-s saves it.
         self.compose_kind = "message"
+        # sending a review reaches the merge request, so it asks first and the answer is a keypress
+        self.approve = False
+        self.confirming = False
         self.compose = Buffer(multiline=Condition(lambda: self.compose_kind == "draft"))
         self._compose_window: Window | None = None
         self._main_window: Window | None = None
@@ -202,7 +205,26 @@ class Shell:
         screen = self.screen
         if isinstance(screen, DiffScreen):
             screen.rows = self._rows()
+            return screen.fragments() + self._sending_line()
         return screen.fragments()
+
+    def _sending_line(self) -> list[tuple[str, Any]]:
+        """What pressing S is about to do, in the reviewer's words, before it happens.
+
+        Sending reaches the merge request and cannot be taken back, so the count and the approval
+        are spelled out rather than left to whatever the reviewer remembers arming.
+        """
+        if self.diff is None:
+            return []
+        pending = (self.diff.review.get("pending") or 0)
+        if self.confirming:
+            what = f"send {pending} comment{'' if pending == 1 else 's'}" if pending else "approve"
+            if pending and self.approve:
+                what += " and approve"
+            return [("class:attention", f" {what}?  y to confirm, esc to cancel\n")]
+        if self.approve:
+            return [("class:info", " approval armed \u2014 S sends it with your comments\n")]
+        return []
 
     def _rows(self) -> int:
         app = self._app
@@ -273,6 +295,9 @@ class Shell:
     def cancel_compose(self) -> None:
         self.composing = False
         self.compose_kind = "message"
+        # sending a review reaches the merge request, so it asks first and the answer is a keypress
+        self.approve = False
+        self.confirming = False
         self.compose.reset()
         if self._app is not None and self._main_window is not None:
             self._app.layout.focus(self._main_window)
@@ -368,6 +393,10 @@ class Shell:
 
         @kb.add("escape", eager=True)
         def _cancel(event) -> None:
+            if self.confirming:
+                self.confirming = False
+                self.invalidate()
+                return
             if self.diff is not None and self.diff.anchor is not None:
                 self.diff.cancel_selection()
                 self.invalidate()
@@ -429,6 +458,32 @@ class Shell:
             """Write the review comment for whatever the rail points at, or for the MR itself."""
             if self.diff is not None:
                 self.start_compose("draft")
+
+        @kb.add("A")
+        def _approve(event) -> None:
+            """Arm the approval. It travels with the next submission rather than on its own, so
+            approving and commenting are one decision the reviewer makes once."""
+            if self.diff is not None and (self.diff.review.get("approval") or {}).get("available"):
+                self.approve = not self.approve
+                self.invalidate()
+
+        @kb.add("S")
+        def _submit(event) -> None:
+            if self.diff is None:
+                return
+            if not (self.diff.review.get("pending") or self.approve):
+                return                      # nothing to send and nothing to approve
+            self.confirming = True
+            self.invalidate()
+
+        @kb.add("y")
+        def _confirm(event) -> None:
+            if not self.confirming or self.diff is None:
+                return
+            self.confirming = False
+            spawn(self.client.command("review.submit", session=self.diff.session,
+                                      approve=self.approve))
+            self.approve = False
 
         @kb.add("x")
         def _discard(event) -> None:

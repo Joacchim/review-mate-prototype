@@ -87,10 +87,40 @@ async def wait_for(predicate, timeout=10.0):
         await asyncio.sleep(0.01)
 
 
-def build(tmp_path, provider):
+def build(tmp_path, provider, writer=None):
+    from review_mate.kb.store import ReviewKB
+    from review_mate.writeback.service import Writeback
     manager = SessionManager(root=tmp_path / "sessions", mr_source=provider)
+    # tmp-rooted on purpose: create_app defaults the KB to ~/.review-mate, and a test that submits
+    # a review would otherwise write a watermark into the reviewer's own store
     return create_app(manager=manager, provider=provider, with_mcp=False,
+                      writeback=Writeback(manager, writer) if writer is not None else None,
+                      kb=ReviewKB(root=tmp_path / "kb"),
                       resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+
+
+class SpyWriter:
+    """A host that records what a review sent it, so a test can name it rather than count calls."""
+
+    def __init__(self):
+        self.posted = []
+        self.approved = False
+
+    def capabilities(self):
+        from review_mate.host.base import GITLAB_CAPABILITIES
+        return dict(GITLAB_CAPABILITIES)
+
+    async def post_comment(self, ref, position, body):
+        self.posted.append(body)
+        return {"id": "disc-1", "notes": [{"id": 11}]}
+
+    async def post_mr_comment(self, ref, body):
+        self.posted.append(body)
+        return {"id": 12}
+
+    async def approve(self, ref):
+        self.approved = True
+        return {}
 
 
 async def test_the_tui_client_renders_a_hub_it_never_modelled(tmp_path):
@@ -392,3 +422,36 @@ async def test_drafting_in_the_terminal_reaches_the_review(tmp_path):
             assert prepared["highlight_id"] is None      # nothing selected, so it is the summary
             # and reopening the composer starts from it rather than from blank
             assert shell.diff.draft_body() == "this needs a test"
+
+
+async def test_sending_a_review_from_the_terminal_reaches_the_host(tmp_path):
+    """The whole point of the commands: a review prepared in the terminal leaves from the terminal,
+    through the same sequence the browser's submit runs."""
+    from review_mate.tui.app import Shell
+
+    writer = SpyWriter()
+    async with serving(build(tmp_path, DiffHost(), writer=writer)) as base:
+        async with connected(base) as (client, watcher):
+            await watcher.until(lambda v: v.get("queue_state") == "ready")
+            await client.command("session.open", ref={"host": "gitlab", "project": "g/p", "iid": 1})
+            session = (await watcher.until(lambda v: v["sessions"]))["sessions"][0]["id"]
+
+            shell = Shell(client)
+            watcher.also = shell.on_change
+            await shell.open_review(session)
+            await wait_for(lambda: client.views.get(f"review:{session}") is not None)
+
+            shell.start_compose("draft")
+            shell.compose.text = "reads well overall"
+            command = shell.compose_command()
+            shell.cancel_compose()
+            assert await client.session_command(session, command), client.last_command_error
+            await wait_for(lambda: shell.diff.review.get("pending") == 1)
+
+            assert await client.command("review.submit", session=session, approve=False), \
+                client.last_command_error
+            await wait_for(lambda: shell.diff.review.get("posted") == 1)
+
+    assert writer.posted == ["reads well overall"]
+    assert writer.approved is False
+    assert shell.diff.review["pending"] == 0
