@@ -16,6 +16,8 @@
     --accentglow:rgba(110,168,254,.22); --fg2bg:rgba(154,163,178,.08);
     --postline:#2e6b45; --delline:#6b2e38; --usermsgbg:#1d2a44;
     --tokcmt:#7f8aa3; --tokstr:#8fdcb0; --toknum:#e0b892; --shadow:rgba(0,0,0,.55);
+    --tokfn:#78b7f0; --toktype:#e0c38a; --tokbuiltin:#63c4c9; --toktag:#e58a8a;
+    --tokattr:#e0b892; --tokop:#63c4c9; --tokdel:#e58a8a; --tokins:#8fdcb0;
   }
   :root[data-theme="light"]{
     --bg:#ffffff; --panel:#f6f8fa; --panel2:#eaeef2; --line:#d0d7de; --line2:#afb8c1; --fg:#1b1f24;
@@ -28,6 +30,8 @@
     --accentglow:rgba(9,105,218,.18); --fg2bg:rgba(89,99,110,.08);
     --postline:#1a7f37; --delline:#cf222e; --usermsgbg:#ddf4ff;
     --tokcmt:#6e7781; --tokstr:#116329; --toknum:#953800; --shadow:rgba(0,0,0,.16);
+    --tokfn:#0550ae; --toktype:#7d4e00; --tokbuiltin:#0e6b70; --toktag:#b31d28;
+    --tokattr:#953800; --tokop:#0e6b70; --tokdel:#82071e; --tokins:#116329;
   }
   *{box-sizing:border-box} html,body{margin:0;height:100%}
   body{background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}
@@ -111,9 +115,9 @@
   tr.flash td.code{background:var(--purplebg)}                    /* jumped-to discussion line */
   .tok-cmt{color:var(--tokcmt);font-style:italic} .tok-str{color:var(--tokstr)} .tok-num{color:var(--toknum)} .tok-kw{color:var(--purple)}
   /* the rest of the kinds the server lexes; an unmapped kind renders plain */
-  .tok-fn{color:#78b7f0} .tok-type{color:#e0c38a} .tok-builtin{color:#63c4c9}
-  .tok-tag{color:#e58a8a} .tok-attr{color:#e0b892} .tok-op{color:#63c4c9}
-  .tok-del{color:#e58a8a} .tok-ins{color:#8fdcb0}
+  .tok-fn{color:var(--tokfn)} .tok-type{color:var(--toktype)} .tok-builtin{color:var(--tokbuiltin)}
+  .tok-tag{color:var(--toktag)} .tok-attr{color:var(--tokattr)} .tok-op{color:var(--tokop)}
+  .tok-del{color:var(--tokdel)} .tok-ins{color:var(--tokins)}
   td.gap{background:var(--bg)}
   /* split-mode cell colouring (cells carry their own classes) */
   td.code.delc{background:var(--del);color:var(--delfg)} td.ln.delln{background:var(--delln)}
