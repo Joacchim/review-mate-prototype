@@ -70,6 +70,10 @@ def views():
                               "attached": True, "parked": False, "last_seen": None, "asks": []}},
         "chat:s1:review": {"session": "s1", "state": "ready", "kind": "review", "id": "",
                            "owed": False, "messages": []},
+        "review:s1": {"session": "s1", "state": "ready", "drafts": [], "pending": 0, "posted": 0,
+                      "approval": {"available": False, "checked": True, "you_approved": False,
+                                   "approved_by": []},
+                      "version": {"head": "abc", "watermark": None, "behind": False}},
     }
 
 
@@ -245,3 +249,111 @@ async def test_moving_the_rail_cursor_moves_the_conversation_watched():
     await settle()
     assert shell.diff.conversation_scope() == "chat:s1:highlight:h1"
     assert "chat:s1:highlight:h1" in client.scopes
+
+
+# --- writing a review comment ------------------------------------------------
+# A message and a comment share one composer, so what these pin is that the kind decides where the
+# text goes and which keys commit it — the two must not blur, because one is private and the other
+# is what the merge request will read.
+
+def _rail_on(shell, highlight):
+    shell.client.views["rail:s1"] = {"session": "s1", "state": "ready",
+                                     "highlights": [highlight], "insights": []}
+    shell.diff.focus = "rail"
+
+
+def hl(id="h1", n=1, comment_state="context"):
+    return {"id": id, "n": n, "file": "a.py", "side": "new", "start": 1, "end": 1,
+            "question": None, "status": "open", "stale": False,
+            "comment_state": comment_state, "created_at": "", "card": None,
+            "context": {"state": "idle", "blame": [], "linked_issues": [], "error": ""}}
+
+
+async def test_d_opens_a_comment_on_whatever_the_rail_points_at():
+    shell, _ = shell_on_a_review()
+    _rail_on(shell, hl())
+    press(shell, "d")
+    assert shell.composing and shell.compose_kind == "draft"
+    assert "comment>" in "".join(t for _, t in shell.compose_prompt())
+
+
+async def test_with_nothing_selected_the_comment_is_the_mr_summary():
+    shell, _ = shell_on_a_review()
+    press(shell, "d")                          # the rail is unfocused, so this is MR-level
+    assert "note>" in "".join(t for _, t in shell.compose_prompt())
+    shell.compose.text = "reads well overall"
+    assert shell.compose_command() == {"type": "save_draft", "highlight_id": None,
+                                       "body": "reads well overall"}
+
+
+async def test_saving_a_comment_sends_it_anchored():
+    shell, client = shell_on_a_review()
+    _rail_on(shell, hl())
+    press(shell, "d")
+    shell.compose.text = "this needs a test"
+    press(shell, "c-s")
+    await settle()
+    assert client.session_commands == [("s1", {"type": "save_draft", "highlight_id": "h1",
+                                               "body": "this needs a test"})]
+    assert not shell.composing
+
+
+async def test_enter_belongs_to_the_prose_while_a_comment_is_open():
+    """The difference between a line and prose. Binding enter here would make the editor one line."""
+    shell, _ = shell_on_a_review()
+    press(shell, "d")
+    with pytest.raises(AssertionError):
+        press(shell, "enter")
+
+
+async def test_a_message_still_sends_on_enter():
+    shell, client = shell_on_a_review()
+    press(shell, "c")                          # the other kind, unchanged
+    shell.compose.text = "why is this the only writer?"
+    press(shell, "enter")
+    await settle()
+    assert client.session_commands == [("s1", {"type": "post_message",
+                                               "body": "why is this the only writer?"})]
+
+
+async def test_reopening_a_comment_brings_back_what_was_written():
+    """Saving again is a correction, not a second comment — so the editor starts from the text."""
+    shell, _ = shell_on_a_review()
+    _rail_on(shell, hl(comment_state="comment"))
+    shell.client.views["review:s1"] = dict(
+        shell.client.views["review:s1"],
+        drafts=[{"id": "d1", "highlight_id": "h1", "body": "half a thought", "suggestion": None,
+                 "status": "draft", "url": "", "thread_id": "", "created_at": ""}], pending=1)
+    press(shell, "d")
+    assert shell.compose.text == "half a thought"
+
+
+async def test_x_discards_the_comment_prepared_here():
+    shell, client = shell_on_a_review()
+    _rail_on(shell, hl(comment_state="comment"))
+    shell.client.views["review:s1"] = dict(
+        shell.client.views["review:s1"],
+        drafts=[{"id": "d1", "highlight_id": "h1", "body": "never mind", "suggestion": None,
+                 "status": "draft", "url": "", "thread_id": "", "created_at": ""}], pending=1)
+    press(shell, "x")
+    await settle()
+    assert client.session_commands == [("s1", {"type": "remove_draft", "highlight_id": "h1"})]
+
+
+async def test_x_with_nothing_prepared_does_nothing():
+    shell, client = shell_on_a_review()
+    _rail_on(shell, hl())
+    press(shell, "x")
+    await settle()
+    assert client.session_commands == []
+
+
+async def test_escape_abandons_a_comment_without_saving_it():
+    shell, client = shell_on_a_review()
+    _rail_on(shell, hl())
+    press(shell, "d")
+    shell.compose.text = "half-written"
+    press(shell, "escape")
+    await settle()
+    assert client.session_commands == []
+    assert not shell.composing and shell.compose_kind == "message"

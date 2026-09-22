@@ -47,6 +47,10 @@ AGENT_STYLE = {"working": "class:info", "stalled": "class:error",
 AGENT_LABEL = {"working": "Claude is on it", "stalled": "nothing is listening",
                "watching": "Claude is watching", "off": "no agent"}
 
+# whether a line already has a comment prepared for it, or one already sent — the rail says so
+# without the reviewer opening anything
+COMMENT_MARK = {"comment": ("class:info", "✎ "), "posted": ("class:ok", "✓ ")}
+
 
 def _one_line(body: str, width: int = 68) -> str:
     """A message as one row: the terminal shows the exchange, not the prose."""
@@ -121,6 +125,23 @@ class DiffScreen:
         """The index: every conversation this review holds, and the state the agent is in."""
         return self.client.views.get(f"chat:{self.session}") or {}
 
+    @property
+    def review(self) -> dict:
+        """What is prepared to send: the drafts, the approval, and whether this has moved on."""
+        return self.client.views.get(f"review:{self.session}") or {}
+
+    def draft_body(self) -> str:
+        """The comment already prepared for whatever the rail points at, so editing one reopens it.
+
+        Empty when there is none, which is also what the composer wants to start from.
+        """
+        anchor = self.subject()
+        wanted = anchor["id"] if anchor else None
+        for draft in self.review.get("drafts") or []:
+            if draft.get("highlight_id") == wanted and draft.get("status") != "posted":
+                return draft.get("body") or ""
+        return ""
+
     def subject(self) -> dict | None:
         """What the chat pane is about: the highlight under the rail cursor, else the review.
 
@@ -159,7 +180,7 @@ class DiffScreen:
 
     def wanted(self) -> list[str]:
         scopes = [self.listing, f"rail:{self.session}", f"chat:{self.session}",
-                  self.conversation_scope()]
+                  f"review:{self.session}", self.conversation_scope()]
         body = self.body_scope
         if body:
             scopes.append(body)
@@ -311,6 +332,7 @@ class DiffScreen:
             out.append(("class:selected" if selected else "class:info",
                         f" #{highlight['n']:<3}"))
             out.append(("class:muted", f"{where:<22} "))
+            out.append(COMMENT_MARK.get(highlight.get("comment_state"), ("class:muted", "  ")))
             out.append((style, answer + ("  (stale)" if highlight.get("stale") else "") + "\n"))
         return out
 

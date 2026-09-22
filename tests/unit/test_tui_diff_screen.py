@@ -79,10 +79,10 @@ def test_the_file_scope_is_the_listing_plus_the_path():
     assert screen.body_scope == "diff:s1:full:pkg/b.py"
 
 
-def test_it_watches_the_listing_the_open_file_the_rail_and_the_conversation():
+def test_it_watches_the_listing_the_open_file_the_rail_the_conversation_and_the_review():
     screen = DiffScreen(StubClient({"diff:s1:full": listing([row("a.py"), row("b.py")])}), "s1")
-    assert screen.wanted() == ["diff:s1:full", "rail:s1", "chat:s1", "chat:s1:review",
-                               "diff:s1:full:a.py"]
+    assert screen.wanted() == ["diff:s1:full", "rail:s1", "chat:s1", "review:s1",
+                               "chat:s1:review", "diff:s1:full:a.py"]
 
 
 def test_the_diff_renders_with_gutters_and_markers():

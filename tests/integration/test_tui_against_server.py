@@ -360,3 +360,35 @@ async def test_the_terminal_is_told_whether_anyone_is_listening(tmp_path):
             await client.session_command(session, {"type": "post_message", "body": "look?"})
             await wait_for(lambda: agent().get("state") == "stalled")  # asked, and still nobody
             assert "nothing is listening" in "".join(t for _, t in shell.fragments())
+
+
+async def test_drafting_in_the_terminal_reaches_the_review(tmp_path):
+    """The terminal prepares a review comment over the same protocol: what it writes becomes a
+    command, the session changes, and the review scope comes back carrying it."""
+    from review_mate.tui.app import Shell
+
+    async with serving(build(tmp_path, DiffHost())) as base:
+        async with connected(base) as (client, watcher):
+            await watcher.until(lambda v: v.get("queue_state") == "ready")
+            await client.command("session.open", ref={"host": "gitlab", "project": "g/p", "iid": 1})
+            session = (await watcher.until(lambda v: v["sessions"]))["sessions"][0]["id"]
+
+            shell = Shell(client)
+            watcher.also = shell.on_change
+            await shell.open_review(session)
+            await wait_for(lambda: client.views.get(f"review:{session}") is not None)
+
+            shell.start_compose("draft")
+            shell.compose.text = "this needs a test"
+            command = shell.compose_command()
+            shell.cancel_compose()
+            assert await client.session_command(session, command), client.last_command_error
+
+            await wait_for(lambda: shell.diff.review.get("drafts"))
+            review = shell.diff.review
+            assert review["pending"] == 1 and review["posted"] == 0
+            prepared = review["drafts"][0]
+            assert prepared["body"] == "this needs a test"
+            assert prepared["highlight_id"] is None      # nothing selected, so it is the summary
+            # and reopening the composer starts from it rather than from blank
+            assert shell.diff.draft_body() == "this needs a test"

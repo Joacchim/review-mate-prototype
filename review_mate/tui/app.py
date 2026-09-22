@@ -187,7 +187,10 @@ class Shell:
         # writing a message takes the keyboard: the buffer is focused, so navigation keys are
         # text while it is open rather than every binding needing to know about composing
         self.composing = False
-        self.compose = Buffer(multiline=False)
+        # One composer, two kinds. A message is a line and sends on enter; a review comment is
+        # prose the reviewer shapes, so enter breaks the line there and c-s saves it.
+        self.compose_kind = "message"
+        self.compose = Buffer(multiline=Condition(lambda: self.compose_kind == "draft"))
         self._compose_window: Window | None = None
         self._main_window: Window | None = None
 
@@ -253,29 +256,42 @@ class Shell:
 
     # --- writing a message ---------------------------------------------------
 
-    def start_compose(self) -> None:
+    def start_compose(self, kind: str = "message") -> None:
         if self.diff is None:
             return
         self.composing = True
+        self.compose_kind = kind
         self.compose.reset()
+        if kind == "draft":
+            # editing rather than writing from scratch: a comment already prepared for this
+            # subject comes back, so saving again is a correction and not a second comment
+            self.compose.text = self.diff.draft_body()
         if self._app is not None and self._compose_window is not None:
             self._app.layout.focus(self._compose_window)
         self.invalidate()
 
     def cancel_compose(self) -> None:
         self.composing = False
+        self.compose_kind = "message"
         self.compose.reset()
         if self._app is not None and self._main_window is not None:
             self._app.layout.focus(self._main_window)
         self.invalidate()
 
     def compose_command(self) -> dict | None:
-        """The message being written, as a command — anchored to whatever the screen is about."""
+        """What is being written, as a command — about whatever the screen is pointed at.
+
+        The two kinds go to different places on purpose: a message is a session command only the
+        reviewer sees, a draft is prose the merge request will read once it is submitted.
+        """
         body = self.compose.text.strip()
         if not body or self.diff is None:
             return None
-        command: dict = {"type": "post_message", "body": body}
         anchor = self.diff.subject()
+        if self.compose_kind == "draft":
+            return {"type": "save_draft",
+                    "highlight_id": anchor["id"] if anchor else None, "body": body}
+        command: dict = {"type": "post_message", "body": body}
         if anchor is not None:
             command["anchor"] = anchor
         return command
@@ -284,6 +300,8 @@ class Shell:
         if self.diff is None:
             return [("class:muted", " ")]
         anchor = self.diff.subject()
+        if self.compose_kind == "draft":
+            return [("class:info", " note> " if anchor is None else " comment> ")]
         return [("class:info", " say> " if anchor is None else " reply> ")]
 
     async def run_command(self, coroutine) -> None:
@@ -406,22 +424,49 @@ class Shell:
             if self.diff is None:
                 spawn(self.client.command("hub.refresh"))
 
-        writing = KeyBindings()
+        @kb.add("d")
+        def _draft(event) -> None:
+            """Write the review comment for whatever the rail points at, or for the MR itself."""
+            if self.diff is not None:
+                self.start_compose("draft")
 
-        @writing.add("enter")
-        def _send(event) -> None:
+        @kb.add("x")
+        def _discard(event) -> None:
+            if self.diff is None or not self.diff.draft_body():
+                return
+            anchor = self.diff.subject()
+            spawn(self.client.session_command(
+                self.diff.session,
+                {"type": "remove_draft", "highlight_id": anchor["id"] if anchor else None}))
+
+        writing = KeyBindings()          # whichever kind is open
+        sending = KeyBindings()          # a message is one line, so enter is its whole gesture
+
+        def _commit() -> None:
             command = self.compose_command()
             session = self.diff.session if self.diff is not None else None
             self.cancel_compose()
             if command is not None and session is not None:
                 spawn(self.client.session_command(session, command))
 
+        @sending.add("enter")
+        def _send(event) -> None:
+            _commit()
+
+        @writing.add("c-s")
+        def _save(event) -> None:
+            _commit()
+
         @writing.add("escape", eager=True)
         def _abandon(event) -> None:
             self.cancel_compose()
 
         composing = Condition(lambda: self.composing)
+        one_line = Condition(lambda: self.compose_kind == "message")
+        # enter belongs to the buffer while a comment is being written — that is what makes it
+        # prose rather than a line — so only the one-line kind binds it
         return merge_key_bindings([ConditionalKeyBindings(kb, ~composing),
+                                   ConditionalKeyBindings(sending, composing & one_line),
                                    ConditionalKeyBindings(writing, composing)])
 
     def build(self) -> Application:
