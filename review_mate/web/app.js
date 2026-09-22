@@ -26,6 +26,8 @@ let railQuery = "";                  // index text search (file + comment + ques
 let railSearchFocused = false;       // restore search focus after a WS-driven re-render
 let selected = null;                 // {kind:"hl"|"insight"|"mr"|"thread", id} shown in the detail overlay
 let detailTab = null;                // "claude" | "host" for the open subject; null picks the default
+let detailMax = false;               // the panel given the whole window, for reading a long one
+let detailReading = false;           // and held to a measure within it, when the lines get long
 const msgDraft = {};                 // conversation scope -> in-progress message (survives re-render)
 let msgFocused = null;               // scope of the focused composer, to restore after render
 const MR_KEY = "__mr__";             // draftBuffers/focus key for the (anchorless) MR-level comment
@@ -78,6 +80,15 @@ function md(src) {
   if (inCode) html += `<pre class="md"><code>${code}</code></pre>`;
   return html;
 }
+
+// Esc steps out of full view rather than closing the panel: the subject is still open behind it,
+// and losing it to a stray keypress costs more than the extra press.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !detailMax) return;
+  if (/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+  detailMax = false;
+  renderDetail();
+});
 
 // --- boot -------------------------------------------------------------------
 
@@ -1487,9 +1498,12 @@ function renderHlist() {
 // What closing the panel means, wherever it is noticed. Two paths notice it and they cannot share
 // a call: the reviewer's × re-renders from the top, while a subject that vanished under the panel
 // is discovered *inside* a render and must not start another. So they share this instead.
+// `detailReading` is deliberately left alone — the width someone prefers to read at outlives the
+// conversation they were reading.
 function clearSubject() {
   selected = null;
   detailTab = null;
+  detailMax = false;
 }
 
 // Opening a subject is a subscription change, and so is closing one: the panel holds the
@@ -1590,10 +1604,15 @@ function renderDetail() {
     return;
   }
   el.hidden = false; el.innerHTML = "";
+  el.classList.toggle("max", detailMax);
+  el.classList.toggle("reading", detailReading);
   const tab = detailTab || defaultDetailTab(subject);
-  el.appendChild(detailHead(subject, close));
-  el.appendChild(detailTabs(subject, tab));
-  el.appendChild(tab === "host" ? hostChannel(subject) : claudeChannel(subject));
+  const body = document.createElement("div");
+  body.className = "dbody";
+  el.appendChild(body);
+  body.appendChild(detailHead(subject, close));
+  body.appendChild(detailTabs(subject, tab));
+  body.appendChild(tab === "host" ? hostChannel(subject) : claudeChannel(subject));
   restoreDetailFocus(el, subject, tab);
 }
 
@@ -1649,6 +1668,16 @@ function detailHead(subject, close) {
       `<span class="loc" title="jump to code">${esc(loc)}</span>`;
     head.querySelector(".loc").onclick = () => goToHighlight(hl);
   }
+  // A long conversation is the reason to ask for the whole window, so full view opens edge to edge
+  // and the measure is the opt-in — the other way round reads as a panel that refused to grow.
+  if (detailMax) {
+    head.appendChild(btn(detailReading ? "↔ Full width" : "↔ Reading width", "dmax",
+                         () => { detailReading = !detailReading; renderDetail(); }));
+  }
+  head.appendChild(btn(detailMax ? "⤡ Fit" : "⤢ Full view", "dmax", () => {
+    detailMax = !detailMax;
+    renderDetail();
+  }));
   head.appendChild(btn("×", "dclose", close));
   return head;
 }

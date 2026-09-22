@@ -54,3 +54,32 @@ class DetailPage:
 
     def close(self) -> None:
         self.page.locator("#detail .dclose").click()
+
+    # --- reading it over the whole window ------------------------------------
+
+    @property
+    def full_view(self):
+        return self.page.locator("#detail .dmax", has_text="Full view")
+
+    @property
+    def reading_width(self):
+        return self.page.locator("#detail .dmax", has_text="Reading width")
+
+    @property
+    def full_width(self):
+        return self.page.locator("#detail .dmax", has_text="Full width")
+
+    @property
+    def maximised(self):
+        return self.page.locator("#detail.max")
+
+    def widths(self) -> dict:
+        """The panel against the window, and the text column against the panel — a mode whose only
+        evidence is a class name proves nothing."""
+        return self.page.evaluate("""() => {
+          const d = document.getElementById('detail');
+          const b = d.querySelector('.dbody');
+          return {panel: Math.round(d.getBoundingClientRect().width),
+                  body: Math.round(b.getBoundingClientRect().width),
+                  window: window.innerWidth};
+        }""")

@@ -179,11 +179,22 @@
   .detail{position:fixed;top:60px;right:384px;width:clamp(380px,46vw,640px);max-height:calc(100vh - 84px);overflow-y:auto;overflow-x:hidden;
     background:var(--panel);border:1px solid var(--line2);border-radius:10px;box-shadow:0 16px 48px var(--shadow);padding:14px 16px;z-index:40}
   .detail[hidden]{display:none}
+  /* full view: the same panel, given the whole window. It opens edge to edge because a long
+     conversation is what makes a reviewer ask for it; `.reading` puts the text back on a measure
+     when the lines get hard to track. Nothing unmounts, so no scope is dropped on the way in. */
+  .detail.max{top:10px;right:10px;left:10px;bottom:10px;width:auto;max-height:none;padding:20px 24px}
+  .detail.max .dbody{max-width:none;margin:0 auto}
+  .detail.max.reading .dbody{max-width:120ch}
+  .detail.max .msg.user{margin-left:56px} .detail.max .msg.agent{margin-right:56px}
+  .dhead .dmax{flex:none;color:var(--fg2);border:1px solid var(--line2);background:var(--bg);
+               border-radius:6px;font:inherit;font-size:11.5px;line-height:1;cursor:pointer;padding:4px 7px}
+  .dhead .dmax:hover{color:var(--fg);border-color:var(--accent)}
   .detail .dhead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
   .detail .dhead .num{font-family:var(--mono);font-size:11px;color:var(--fg2);background:var(--bg);border:1px solid var(--line2);border-radius:5px;padding:0 5px}
   .detail .dhead .loc{font-family:var(--mono);font-size:12px;color:var(--accent);cursor:pointer;text-decoration:underline;text-decoration-style:dotted;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .detail .byclaude{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);border:1px solid var(--accentline);border-radius:5px;padding:0 5px}
-  .detail .dclose{margin-left:auto;flex:none;color:var(--fg2);border:none;background:none;font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
+  .detail .dhead .dmax:first-of-type{margin-left:auto}
+  .detail .dclose{flex:none;color:var(--fg2);border:none;background:none;font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
   .detail .dclose:hover{color:var(--fg)}
   .detail .q{color:var(--fg2);font-size:12.5px;margin-bottom:8px}
   .detail .card{white-space:pre-wrap}
