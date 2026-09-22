@@ -236,6 +236,31 @@
   .req .repo{font-family:var(--mono);font-size:12px} .req .why{color:var(--fg2);font-size:12px;margin:4px 0 8px}
   .req button{margin-right:6px} button.ok{border-color:var(--postline);color:var(--addfg)} button.no{border-color:var(--delline);color:var(--delfg)}
   .empty{color:var(--fg2);font-size:12px;padding:8px 0}
+  /* one subject, two channels — the Claude tab is a session command only the reviewer sees, the
+     Review tab is written back to the host. They carry the colours those two already have here:
+     the accent for Claude, the purple a host discussion wears on the diff. */
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin:0 0 11px}
+  .tab{font:inherit;font-size:12.5px;background:none;border:0;border-bottom:2px solid transparent;
+       color:var(--fg2);padding:6px 11px;cursor:pointer;display:flex;align-items:center;gap:6px;
+       margin-bottom:-1px;border-radius:6px 6px 0 0}
+  .tab:hover{color:var(--fg);background:var(--panel2)}
+  .tab .cnt{font-family:var(--mono);font-size:10px;color:var(--fg2);background:var(--bg);
+            border:1px solid var(--line2);border-radius:4px;padding:0 4px}
+  .tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+  .tab.on .cnt{color:var(--accent);border-color:var(--accentline)}
+  .tab.host.on{color:var(--purple);border-bottom-color:var(--purple)}
+  .tab.host.on .cnt{color:var(--purple);border-color:var(--purpleln)}
+  /* which box you are typing into decides who reads it, so each one says so */
+  .channelnote{font-size:10.5px;color:var(--fg2);margin-top:6px}
+  .channelnote.host{color:var(--purple)}
+  .conv{margin-top:12px}
+  .convhdr{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--fg2)}
+  /* which side the conversation is waiting on — see owedSide() for why the two differ in kind */
+  .owed{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:10px;
+        font-family:var(--mono);white-space:nowrap;color:var(--fg2)}
+  .owed::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--line2);flex:none}
+  .owed.claude{color:var(--warnfg)} .owed.claude::before{background:var(--warn)}
+  .owed.you{color:var(--accent)} .owed.you::before{background:var(--accent)}
   /* chat */
   .chat{margin-top:16px}
   .chathdr{display:flex;align-items:center;justify-content:space-between}

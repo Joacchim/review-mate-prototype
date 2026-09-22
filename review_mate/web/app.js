@@ -7,8 +7,6 @@ let state = null;
 let currentFile = null;
 const collapsedDirs = new Set();
 let splitMode = localStorage.getItem("rm-split") === "1";
-let chatDraft = "";
-let chatFocused = false;
 const draftBuffers = {};   // highlight_id -> in-progress review-comment text (survives re-render)
 let focusedDraft = null;   // highlight_id of the focused draft textarea, to restore after render
 let repoTree = null;                 // all repo paths (lazy-loaded when "show all" is on)
@@ -27,6 +25,9 @@ let railFilter = "all";              // index filter: all | context | comment | 
 let railQuery = "";                  // index text search (file + comment + question)
 let railSearchFocused = false;       // restore search focus after a WS-driven re-render
 let selected = null;                 // {kind:"hl"|"insight"|"mr"|"thread", id} shown in the detail overlay
+let detailTab = null;                // "claude" | "host" for the open subject; null picks the default
+const msgDraft = {};                 // conversation scope -> in-progress message (survives re-render)
+let msgFocused = null;               // scope of the focused composer, to restore after render
 const MR_KEY = "__mr__";             // draftBuffers/focus key for the (anchorless) MR-level comment
 let approveToggle = false;           // "Approve MR" checkbox on the submit bar
 let threadFilter = "unresolved";     // discussions filter: unresolved | all
@@ -284,8 +285,62 @@ function diffScopes() {
   const listing = `diff:${SID}:${mode}`;
   const scopes = [listing, `rail:${SID}`, `chat:${SID}`];
   if (currentFile) scopes.push(`${listing}:${currentFile}`);
+  if (selected) scopes.push(conversationScope(selected));   // only the conversation on screen
   blobWanted.forEach((path) => scopes.push(`blob:${SID}:${mode}:${path}`));
   return scopes;
+}
+
+// --- one subject, two channels ----------------------------------------------
+// A conversation's subject is whatever the detail panel opens, addressed exactly as the protocol
+// addresses it (review_mate/view/chat.py). `mr` is the review itself: its Claude channel is the
+// conversation anchored to nothing, and its review channel is the MR-level note everyone sees.
+const SUBJECT_KIND = { hl: "highlight", insight: "insight", thread: "thread" };
+
+function subjectAnchor(sel) {
+  if (!sel || sel.kind === "mr") return null;
+  return { kind: SUBJECT_KIND[sel.kind], id: sel.id };
+}
+
+function conversationScope(sel) {
+  const a = subjectAnchor(sel);
+  return a ? `chat:${SID}:${a.kind}:${a.id}` : `chat:${SID}:review`;
+}
+
+function conversationMessages(sel) {
+  const view = scopeViews[conversationScope(sel)];
+  return view && view.state === "ready" ? view.messages : [];
+}
+
+// this subject's row in the chat index — counts and who spoke last, without opening it
+function conversationRow(sel) {
+  const index = chatIndex();
+  if (!index || index.state !== "ready") return null;
+  const a = subjectAnchor(sel);
+  const kind = a ? a.kind : "review";
+  const id = a ? a.id : "";
+  return (index.conversations || []).find((c) => c.kind === kind && c.id === id) || null;
+}
+
+// Which side the conversation is waiting on. `owed` is the server's and means an answer is actually
+// outstanding. The other direction has no server fact behind it by design — view/asks.py declines to
+// read Claude's last word as a question, because nothing in a message body distinguishes one — so it
+// is read here from who spoke last and means only that: Claude spoke, your turn if you want it.
+function owedSide(sel) {
+  const row = conversationRow(sel);
+  if (!row || !row.count) return null;
+  if (row.owed) return "claude";
+  return row.last_role === "assistant" ? "you" : null;
+}
+
+function owedMarker(sel) {
+  const side = owedSide(sel);
+  if (!side) return null;
+  const el = document.createElement("span");
+  el.className = "owed " + side;
+  el.textContent = side === "claude" ? "Claude ▸" : "you ▸";
+  el.title = side === "claude" ? "you spoke last — Claude owes an answer"
+                               : "Claude spoke last — your turn, if you want it";
+  return el;
 }
 
 // the view behind the current mode's file list, or null until it arrives
@@ -1358,7 +1413,6 @@ function renderRail() {
     list.appendChild(box);
   });
 
-  renderChat(list);
   renderDetail();
 
   if (railSearchFocused) {  // a WS-driven re-render shouldn't steal the search box you're typing in
@@ -1430,6 +1484,22 @@ function renderHlist() {
   if (!shown) list.appendChild(empty("no highlights match this filter"));
 }
 
+// What closing the panel means, wherever it is noticed. Two paths notice it and they cannot share
+// a call: the reviewer's × re-renders from the top, while a subject that vanished under the panel
+// is discovered *inside* a render and must not start another. So they share this instead.
+function clearSubject() {
+  selected = null;
+  detailTab = null;
+}
+
+// Opening a subject is a subscription change, and so is closing one: the panel holds the
+// conversation it has open and no other, the way the diff holds one file.
+function openSubject(sel) {
+  if (sel) { selected = sel; detailTab = null; } else { clearSubject(); }
+  if (SID) watchScopes(diffScopes());
+  renderRail();
+}
+
 function hlRow(hl, n) {
   const st = hl.comment_state;
   const card = hl.card;
@@ -1457,7 +1527,9 @@ function hlRow(hl, n) {
     p.textContent = "";
     p.appendChild(agentWaitLine(hl.context_requested_at || hl.created_at, true));
   }
-  row.onclick = () => { selected = { kind: "hl", id: hl.id }; renderRail(); };
+  const mark = owedMarker({ kind: "hl", id: hl.id });
+  if (mark) row.querySelector(".top").appendChild(mark);
+  row.onclick = () => openSubject({ kind: "hl", id: hl.id });
   row.querySelector(".x").onclick = (e) => { e.stopPropagation(); post({ type: "remove_highlight", highlight_id: hl.id }); };
   return row;
 }
@@ -1470,7 +1542,9 @@ function insightRow(c) {
     `<button class="x" title="dismiss">×</button>` +
     `<div class="top"><span class="chip insight">MR-level</span></div>` +
     `<div class="prev">${esc(firstLine(c.body))}</div>`;
-  row.onclick = () => { selected = { kind: "insight", id: c.id }; renderRail(); };
+  const mark = owedMarker({ kind: "insight", id: c.id });
+  if (mark) row.querySelector(".top").appendChild(mark);
+  row.onclick = () => openSubject({ kind: "insight", id: c.id });
   row.querySelector(".x").onclick = (e) => { e.stopPropagation(); post({ type: "remove_card", card_id: c.id }); };
   return row;
 }
@@ -1491,7 +1565,9 @@ function renderMrRow(el) {
     (d && !posted ? `<button class="x" title="discard">×</button>` : "") +
     `<div class="top">${chip}<span class="loc">whole MR</span></div>` +
     `<div class="prev">${esc(prev)}</div>`;
-  row.onclick = () => { selected = { kind: "mr" }; renderRail(); };
+  const mark = owedMarker({ kind: "mr" });
+  if (mark) row.querySelector(".top").appendChild(mark);
+  row.onclick = () => openSubject({ kind: "mr" });
   if (d && !posted) row.querySelector(".x").onclick = (e) => {
     e.stopPropagation(); delete draftBuffers[MR_KEY]; post({ type: "remove_draft", highlight_id: null });
   };
@@ -1500,51 +1576,63 @@ function renderMrRow(el) {
 
 function mrDraft() { return state.drafts.find((d) => !d.highlight_id); }  // the MR-level comment, if any
 
-// the non-blocking detail overlay: full card + roomy editor for the selected row
+// The non-blocking detail overlay: one subject, and the two channels it is discussed in. They are
+// never one list — the Claude channel is a session command that only the reviewer sees, the review
+// channel is written back to the host for everyone — so composing them as tabs is what keeps an
+// internal message from becoming a posted one by landing in the wrong box.
 function renderDetail() {
   const el = $("detail");
-  const close = () => { selected = null; renderRail(); };
-
-  if (selected && selected.kind === "mr") {
-    const d = mrDraft();
-    el.hidden = false; el.innerHTML = "";
-    const head = document.createElement("div");
-    head.className = "dhead";
-    head.innerHTML = `<span class="chip">MR-level</span><span class="dlabel">review comment — whole MR</span>`;
-    head.appendChild(btn("×", "dclose", close));
-    el.appendChild(head);
-    el.appendChild(draftEditor(MR_KEY, null, d));
-    if (!(d && d.status === "posted") && focusedDraft === MR_KEY) {
-      const ta = el.querySelector("textarea.draftbox");
-      if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
-    }
+  const close = () => openSubject(null);
+  const subject = detailSubject();
+  if (!subject) {
+    if (selected) { clearSubject(); if (SID) watchScopes(diffScopes()); }
+    el.hidden = true; el.innerHTML = "";
     return;
   }
+  el.hidden = false; el.innerHTML = "";
+  const tab = detailTab || defaultDetailTab(subject);
+  el.appendChild(detailHead(subject, close));
+  el.appendChild(detailTabs(subject, tab));
+  el.appendChild(tab === "host" ? hostChannel(subject) : claudeChannel(subject));
+  restoreDetailFocus(el, subject, tab);
+}
 
-  if (selected && selected.kind === "insight") {
-    const c = railInsights().find((x) => x.id === selected.id);
-    if (!c) { selected = null; el.hidden = true; el.innerHTML = ""; return; }
-    el.hidden = false; el.innerHTML = "";
-    const head = document.createElement("div");
-    head.className = "dhead";
+// resolve the selection against live state: a row can vanish under the panel — a removed highlight,
+// a thread the host dropped on re-sync — and the panel closes rather than render a ghost
+function detailSubject() {
+  if (!selected) return null;
+  if (selected.kind === "mr") return { kind: "mr" };
+  if (selected.kind === "insight") {
+    const card = railInsights().find((x) => x.id === selected.id);
+    return card ? { kind: "insight", card } : null;
+  }
+  if (selected.kind === "thread") {
+    const thread = (state.threads || []).find((x) => x.id === selected.id);
+    return thread ? { kind: "thread", thread } : null;
+  }
+  const hl = railHighlight(selected.id);
+  return hl ? { kind: "hl", hl } : null;
+}
+
+// A thread came from the MR, so it opens where it already lives — unless something has been asked
+// about it here. Everything else opens on Claude, which is where its card is.
+function defaultDetailTab(subject) {
+  return subject.kind === "thread" && !conversationMessages(selected).length ? "host" : "claude";
+}
+
+function detailHead(subject, close) {
+  const head = document.createElement("div");
+  head.className = "dhead";
+  if (subject.kind === "mr") {
+    head.innerHTML = `<span class="chip">whole MR</span><span class="dlabel">the change itself</span>`;
+  } else if (subject.kind === "insight") {
     head.innerHTML = `<span class="byclaude">Claude's insight</span>`;
-    head.appendChild(btn("×", "dclose", close));
-    el.appendChild(head);
-    const body = document.createElement("div");
-    body.className = "card md"; body.innerHTML = md(c.body);
-    el.appendChild(body);
-    return;
-  }
-
-  if (selected && selected.kind === "thread") {
-    const t = (state.threads || []).find((x) => x.id === selected.id);
-    if (!t) { selected = null; el.hidden = true; el.innerHTML = ""; return; }
+  } else if (subject.kind === "thread") {
+    const t = subject.thread;
     const loc = t.anchor && t.anchor.file
       ? `${t.anchor.file}${t.anchor.line ? ":" + t.anchor.line : ""}` : "whole MR";
-    el.hidden = false; el.innerHTML = "";
-    const head = document.createElement("div");
-    head.className = "dhead";
-    head.innerHTML = (t.resolved ? `<span class="chip posted">✓ resolved</span>` : `<span class="chip comment">open</span>`) +
+    head.innerHTML = (t.resolved ? `<span class="chip posted">✓ resolved</span>`
+                                 : `<span class="chip comment">open</span>`) +
       `<span class="dlabel">${esc(loc)}</span>`;
     // the location jumps to the code here as it does on the row this was opened from — the panel is
     // where the reviewer reads the thread, so it's where they reach for the link
@@ -1553,66 +1641,205 @@ function renderDetail() {
       locEl.classList.add("jumpcode"); locEl.title = "jump to this line in the diff";
       locEl.onclick = () => jumpToCode(t.anchor.file, t.anchor.line);
     }
-    head.appendChild(btn("×", "dclose", close));
-    el.appendChild(head);
-    el.appendChild(threadConversationBlock(t));
+  } else {
+    const hl = subject.hl;
+    const loc = `${hl.file}:${hl.start}${hl.end !== hl.start ? "-" + hl.end : ""}`;
+    head.innerHTML = `<span class="num">#${hl.n}</span>` +
+      (hl.author === "agent" ? `<span class="byclaude">Claude flagged</span>` : "") +
+      `<span class="loc" title="jump to code">${esc(loc)}</span>`;
+    head.querySelector(".loc").onclick = () => goToHighlight(hl);
+  }
+  head.appendChild(btn("×", "dclose", close));
+  return head;
+}
+
+function detailTabs(subject, active) {
+  const wrap = document.createElement("div");
+  wrap.className = "tabs";
+  wrap.setAttribute("role", "tablist");
+  const counts = { claude: conversationMessages(selected).length, host: hostCount(subject) };
+  [["claude", "Claude", ""], ["host", "Review", " host"]].forEach(([key, label, extra]) => {
+    const t = document.createElement("button");
+    t.type = "button";
+    t.className = "tab" + extra + (active === key ? " on" : "");
+    t.setAttribute("role", "tab");
+    t.setAttribute("aria-selected", active === key ? "true" : "false");
+    t.textContent = label;
+    if (counts[key]) {
+      const n = document.createElement("span");
+      n.className = "cnt"; n.textContent = counts[key];
+      t.appendChild(n);
+    }
+    t.onclick = () => { detailTab = key; renderDetail(); };
+    wrap.appendChild(t);
+  });
+  return wrap;
+}
+
+// the reviewer's own draft for this subject, if it takes one at all
+function subjectDraft(subject) {
+  if (subject.kind === "mr") return mrDraft();
+  if (subject.kind === "hl") return state.drafts.find((d) => d.highlight_id === subject.hl.id);
+  return null;
+}
+
+// the thread this subject has on the MR — its own, or the one its posted comment became
+function hostThread(subject) {
+  if (subject.kind === "thread") return subject.thread;
+  const draft = subjectDraft(subject);
+  if (!(draft && draft.status === "posted" && draft.thread_id)) return null;
+  return (state.threads || []).find((x) => x.id === draft.thread_id) || null;
+}
+
+function hostCount(subject) {
+  const thread = hostThread(subject);
+  return thread ? (thread.comments || []).length : 0;
+}
+
+// --- the Claude channel: the card, and the conversation beneath it -----------
+
+function claudeChannel(subject) {
+  const frag = document.createDocumentFragment();
+  if (subject.kind === "hl") {
+    const hl = subject.hl;
+    const posted = hl.comment_state === "posted";
+    if (hl.question) {
+      const q = document.createElement("div");
+      q.className = "q"; q.textContent = hl.question;
+      frag.appendChild(q);
+    }
+    // the cheap, deterministic context tier — shown by default, no agent (D21). Both tiers drop
+    // once the comment is posted: they were context for writing it, and it is written.
+    if (!posted) {
+      frag.appendChild(cheapContextBlock(hl));
+      if (hl.card) {
+        const c = document.createElement("div");
+        c.className = "card md"; c.innerHTML = md(hl.card.body);
+        frag.appendChild(c);
+      } else if (hl.context_requested) {
+        frag.appendChild(agentWaitLine(hl.context_requested_at || hl.created_at));
+      } else {
+        frag.appendChild(askContextControl(hl));
+      }
+    }
+  } else if (subject.kind === "insight") {
+    const c = document.createElement("div");
+    c.className = "card md"; c.innerHTML = md(subject.card.body);
+    frag.appendChild(c);
+  }
+  frag.appendChild(conversationBlock(subject));
+  return frag;
+}
+
+// one subject's conversation with Claude: the messages, and the box that adds to them
+function conversationBlock(subject) {
+  const scope = conversationScope(selected);
+  const wrap = document.createElement("div");
+  wrap.className = "conv";
+
+  const head = document.createElement("div");
+  head.className = "chathdr";
+  const label = document.createElement("div");
+  label.className = "convhdr";
+  label.textContent = subject.kind === "mr" ? "about the change as a whole" : "about this";
+  head.appendChild(label);
+  const messages = conversationMessages(selected);
+  if (messages.length) {
+    head.appendChild(btn("clear", "btn ghost", () => {
+      if (confirm("Clear this conversation?")) post({ type: "clear_chat", anchor: subjectAnchor(selected) });
+    }));
+  }
+  wrap.appendChild(head);
+
+  const msgs = document.createElement("div");
+  msgs.className = "msgs";
+  if (!messages.length) msgs.appendChild(empty("nothing asked here yet"));
+  messages.forEach((m) => {
+    const d = document.createElement("div");
+    d.className = "msg " + (m.role === "user" ? "user" : "agent");
+    d.innerHTML = `<div class="who">${esc(m.role)}</div><div class="md">${md(m.body)}</div>`;
+    msgs.appendChild(d);
+  });
+  // your turn is still unanswered — say whether it's being worked on or nothing picked it up
+  const last = messages[messages.length - 1];
+  if (last && last.role === "user") msgs.appendChild(agentWaitLine(last.created_at));
+  wrap.appendChild(msgs);
+
+  const box = document.createElement("div");
+  box.className = "chatbox";
+  const inp = document.createElement("input");
+  inp.placeholder = subject.kind === "mr"
+    ? "message Claude about the change — reference a card by #N"
+    : "ask Claude about this";
+  inp.value = msgDraft[scope] || "";
+  inp.oninput = (e) => { msgDraft[scope] = e.target.value; };
+  inp.onfocus = () => { msgFocused = scope; };
+  inp.onblur = () => { if (msgFocused === scope) msgFocused = null; };
+  const send = () => {
+    const body = inp.value.trim();
+    if (!body) return;
+    post({ type: "post_message", body, anchor: subjectAnchor(selected) });
+    delete msgDraft[scope]; inp.value = "";
+  };
+  inp.onkeydown = (e) => { if (e.key === "Enter") send(); };
+  box.appendChild(inp);
+  box.appendChild(btn("Send", "btn", send));
+  wrap.appendChild(box);
+
+  const note = document.createElement("div");
+  note.className = "channelnote";
+  note.textContent = "Only you see this. Nothing here reaches the MR.";
+  wrap.appendChild(note);
+
+  msgs.scrollTop = msgs.scrollHeight;
+  return wrap;
+}
+
+// --- the review channel: what everyone on the merge request sees -------------
+
+function hostChannel(subject) {
+  const frag = document.createDocumentFragment();
+  const thread = hostThread(subject);
+  if (thread) {
+    if (subject.kind !== "thread") {
+      const lbl = document.createElement("div");
+      lbl.className = "yourthread"; lbl.textContent = "your comment";
+      frag.appendChild(lbl);
+    }
+    frag.appendChild(threadConversationBlock(thread));
+    return frag;
+  }
+  if (subject.kind === "insight") {
+    frag.appendChild(empty("an insight is Claude's, not the MR's — nothing here is posted"));
+    return frag;
+  }
+  const key = subject.kind === "mr" ? MR_KEY : subject.hl.id;
+  frag.appendChild(draftEditor(key, subject.kind === "mr" ? null : subject.hl.id,
+                               subjectDraft(subject)));
+  const note = document.createElement("div");
+  note.className = "channelnote host";
+  note.textContent = "Everyone on the merge request sees this once you submit.";
+  frag.appendChild(note);
+  return frag;
+}
+
+// restore focus across a WS-driven re-render; never steal it
+function restoreDetailFocus(el, subject, tab) {
+  if (tab === "claude") {
+    if (msgFocused === conversationScope(selected)) {
+      const inp = el.querySelector(".chatbox input");
+      if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+    }
+    if (subject.kind === "hl" && askFocused === subject.hl.id) {
+      const ai = el.querySelector("input.askinp");
+      if (ai) { ai.focus(); ai.setSelectionRange(ai.value.length, ai.value.length); }
+    }
     return;
   }
-
-  const hl = selected ? railHighlight(selected.id) : null;
-  if (!hl) { selected = null; el.hidden = true; el.innerHTML = ""; return; }
-  const card = hl.card;
-  const draft = state.drafts.find((d) => d.highlight_id === hl.id);
-  const posted = hl.comment_state === "posted";
-  const loc = `${hl.file}:${hl.start}${hl.end !== hl.start ? "-" + hl.end : ""}`;
-
-  el.hidden = false; el.innerHTML = "";
-  const head = document.createElement("div");
-  head.className = "dhead";
-  head.innerHTML = `<span class="num">#${hl.n}</span>` +
-    (hl.author === "agent" ? `<span class="byclaude">Claude flagged</span>` : "") +
-    `<span class="loc" title="jump to code">${esc(loc)}</span>`;
-  head.appendChild(btn("×", "dclose", close));
-  el.appendChild(head);
-  head.querySelector(".loc").onclick = () => goToHighlight(hl);
-
-  if (hl.question) {
-    const q = document.createElement("div");
-    q.className = "q"; q.textContent = hl.question;
-    el.appendChild(q);
-  }
-  // the cheap, deterministic context tier — shown by default, no agent (D21)
-  if (!posted) el.appendChild(cheapContextBlock(hl));
-  // the agent tier is on demand: the card if present, else escalate — or "waiting" once escalated
-  if (!posted) {
-    if (card) {
-      const c = document.createElement("div");
-      c.className = "card md"; c.innerHTML = md(card.body);
-      el.appendChild(c);
-    } else if (hl.context_requested) {
-      el.appendChild(agentWaitLine(hl.context_requested_at || hl.created_at));
-    } else {
-      el.appendChild(askContextControl(hl));
-    }
-  }
-  // once posted, the reviewer's comment IS a live thread — show it inline (draft-as-thread)
-  const postedThread = posted && draft && draft.thread_id
-    ? (state.threads || []).find((x) => x.id === draft.thread_id) : null;
-  if (postedThread) {
-    const lbl = document.createElement("div"); lbl.className = "yourthread"; lbl.textContent = "your comment";
-    el.appendChild(lbl);
-    el.appendChild(threadConversationBlock(postedThread));
-  } else {
-    el.appendChild(draftEditor(hl.id, hl.id, draft));
-  }
-
-  if (!posted && focusedDraft === hl.id) {  // restore focus across a WS re-render; never steal it
+  const key = subject.kind === "mr" ? MR_KEY : subject.kind === "hl" ? subject.hl.id : null;
+  if (key !== null && focusedDraft === key) {
     const ta = el.querySelector("textarea.draftbox");
     if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
-  }
-  if (askFocused === hl.id) {
-    const ai = el.querySelector("input.askinp");
-    if (ai) { ai.focus(); ai.setSelectionRange(ai.value.length, ai.value.length); }
   }
 }
 
@@ -1719,7 +1946,10 @@ function threadRow(t) {
     `<div class="top">${chip}<span class="loc">${esc(loc)}</span>` +
     (t.comments && t.comments.length > 1 ? `<span class="num">${t.comments.length}</span>` : "") +
     `</div><div class="prev">${esc(prev)}</div>`;
-  row.onclick = () => { selected = { kind: "thread", id: t.id }; renderRail(); };
+  const mark = owedMarker({ kind: "thread", id: t.id });
+  const top = row.querySelector(".top");
+  if (mark && top) top.appendChild(mark);
+  row.onclick = () => openSubject({ kind: "thread", id: t.id });
   if (t.anchor && t.anchor.file) {   // the location links to the code — jump the diff there + flash
     const locEl = row.querySelector(".loc");
     locEl.classList.add("jumpcode"); locEl.title = "jump to this line in the diff";
@@ -1728,7 +1958,7 @@ function threadRow(t) {
   const m = matchingHighlight(t);   // also overlaps one of your highlights → offer a jump to it
   if (m) {
     const jump = btn(`→ #${m.n}`, "btn ghost jump", (e) => {
-      e.stopPropagation(); selected = { kind: "hl", id: m.hl.id }; renderRail();
+      e.stopPropagation(); openSubject({ kind: "hl", id: m.hl.id });
     });
     row.querySelector(".top").appendChild(jump);
   }
@@ -1938,57 +2168,6 @@ async function submitReview() {
     setStatus(parts.join(" · ") || "nothing to submit");
     approveToggle = false;
   } catch (e) { setStatus("✕ " + e); }
-}
-
-function renderChat(el) {
-  const wrap = document.createElement("div");
-  wrap.className = "chat";
-  const head = document.createElement("div");
-  head.className = "chathdr";
-  head.appendChild(h3("Chat with Claude"));
-  if (state.messages.length) {
-    const clear = btn("clear", "btn ghost", () => {
-      if (confirm("Clear the chat thread?")) post({ type: "clear_chat" });
-    });
-    head.appendChild(clear);
-  }
-  wrap.appendChild(head);
-  const msgs = document.createElement("div");
-  msgs.className = "msgs";
-  if (!state.messages.length) msgs.appendChild(empty('ask about a card (e.g. "expand on #2") or anything in the diff'));
-  state.messages.forEach((m) => {
-    const d = document.createElement("div");
-    d.className = "msg " + (m.role === "user" ? "user" : "agent");
-    d.innerHTML = `<div class="who">${m.role}</div><div class="md">${md(m.body)}</div>`;
-    msgs.appendChild(d);
-  });
-  // your turn is still unanswered — say whether it's being worked on or nothing picked it up
-  const lastMsg = state.messages[state.messages.length - 1];
-  if (lastMsg && lastMsg.role === "user") msgs.appendChild(agentWaitLine(lastMsg.created_at));
-  wrap.appendChild(msgs);
-
-  const box = document.createElement("div");
-  box.className = "chatbox";
-  const inp = document.createElement("input");
-  inp.placeholder = "message Claude — reference a card by #N";
-  inp.value = chatDraft;
-  inp.oninput = (e) => { chatDraft = e.target.value; };
-  inp.onfocus = () => { chatFocused = true; };
-  inp.onblur = () => { chatFocused = false; };
-  const send = () => {
-    const v = inp.value.trim();
-    if (!v) return;
-    post({ type: "post_message", body: v });
-    chatDraft = ""; inp.value = "";
-  };
-  inp.onkeydown = (e) => { if (e.key === "Enter") send(); };
-  box.appendChild(inp);
-  box.appendChild(btn("Send", "btn", send));
-  wrap.appendChild(box);
-  el.appendChild(wrap);
-
-  msgs.scrollTop = msgs.scrollHeight;
-  if (chatFocused) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
 }
 
 // escalate a highlight to the agent tier (D21) — separate from the review-comment box (D14):
