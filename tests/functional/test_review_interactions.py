@@ -58,6 +58,19 @@ class StubProvider:
         return list(self.threads)
 
 
+async def submit(client, sid, approve=False):
+    """Send the prepared review, the one way there is to send it."""
+    return await client.post("/api/cmd", json={"cmd": "review.submit",
+                                               "args": {"session": sid, "approve": approve}})
+
+
+async def version_of(manager, sid):
+    """What the review scope says about where this reviewer got to."""
+    from review_mate.view.review import ReviewScope
+    scope = ReviewScope(manager, kb=manager._test_kb)
+    return (await scope.build(sid))["version"]
+
+
 async def _app_client(tmp_path, writer, provider):
     from review_mate.kb.store import ReviewKB
     manager = SessionManager(root=tmp_path / "s")
@@ -77,7 +90,7 @@ async def test_submit_without_approve_posts_drafts_only(tmp_path):
     manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
     async with client:
         await manager.get(sid).submit(SaveDraft(highlight_id=None, body="MR summary"), Origin.BROWSER)
-        r = await client.post(f"/api/sessions/{sid}/submit-review", json={})
+        r = await submit(client, sid)
         data = r.json()
     assert data["approved"] is False and data["posted"] == 1
     assert ("approve",) not in writer.calls
@@ -89,7 +102,7 @@ async def test_submit_with_approve_posts_then_approves(tmp_path):
     manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
     async with client:
         await manager.get(sid).submit(SaveDraft(highlight_id=None, body="looks good"), Origin.BROWSER)
-        r = await client.post(f"/api/sessions/{sid}/submit-review", json={"approve": True})
+        r = await submit(client, sid, approve=True)
         data = r.json()
     assert data["approved"] is True and data["posted"] == 1
     assert writer.calls[-1] == ("approve",)
@@ -100,7 +113,7 @@ async def test_approve_only_with_no_drafts(tmp_path):
     writer = StubWriter()
     manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
     async with client:
-        r = await client.post(f"/api/sessions/{sid}/submit-review", json={"approve": True})
+        r = await submit(client, sid, approve=True)
         data = r.json()
     assert data["approved"] is True and data["posted"] == 0 and data["total"] == 0
     assert writer.calls == [("approve",)]
@@ -175,7 +188,7 @@ async def test_submit_surfaces_posted_thread_into_state(tmp_path):
                                         line_range=LineRange(start=5, end=6)), Origin.BROWSER)
         hid = actor.snapshot().highlights[0].id
         await actor.submit(SaveDraft(highlight_id=hid, body="prefer a guard"), Origin.BROWSER)
-        await client.post(f"/api/sessions/{sid}/submit-review", json={})
+        await submit(client, sid)
     threads = manager.get(sid).snapshot().threads
     assert [t.id for t in threads] == ["disc-new"] and threads[0].anchor is not None   # resolvable inline
     await manager.shutdown()
@@ -191,7 +204,7 @@ async def test_submit_composes_suggestion_and_captures_thread_id(tmp_path):
         hid = actor.snapshot().highlights[0].id
         await actor.submit(SaveDraft(highlight_id=hid, body="prefer a guard",
                                      suggestion="if x is not None:"), Origin.BROWSER)
-        r = await client.post(f"/api/sessions/{sid}/submit-review", json={})
+        r = await submit(client, sid)
         assert r.json()["posted"] == 1
     # the posted body carries prose + a fenced suggestion block spanning the highlight (span=1)
     kind, body = writer.calls[-1]
@@ -222,23 +235,26 @@ async def test_whoami_returns_reviewer_username(tmp_path):
     await manager.shutdown()
 
 
-async def test_review_status_and_mark_reviewed(tmp_path):
+async def test_the_version_a_review_is_at_and_marking_it_read(tmp_path):
     manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
     kb = manager._test_kb
     async with client:
-        assert (await client.get(f"/api/sessions/{sid}/review-status")).json()["behind"] is False
+        assert (await version_of(manager, sid))["behind"] is False
         kb.set_watermark(MR.host, MR.project, MR.iid, "old-sha")   # a prior review at an older head
-        st = (await client.get(f"/api/sessions/{sid}/review-status")).json()
-        assert st["behind"] is True and st["watermark"] == "old-sha" and st["head"] == "s"
-        assert (await client.post(f"/api/sessions/{sid}/mark-reviewed", json={})).json()["watermark"] == "s"
+        version = await version_of(manager, sid)
+        assert version["behind"] is True
+        assert version["watermark"] == "old-sha" and version["head"] == "s"
+        marked = await client.post("/api/cmd", json={"cmd": "review.mark_reviewed",
+                                                     "args": {"session": sid}})
+        assert marked.json()["watermark"] == "s"
         assert kb.get_watermark(MR.host, MR.project, MR.iid) == "s"
-        assert (await client.get(f"/api/sessions/{sid}/review-status")).json()["behind"] is False
+        assert (await version_of(manager, sid))["behind"] is False
     await manager.shutdown()
 
 
 async def test_refresh_resyncs_advanced_head(tmp_path):
     """Refresh re-pulls MR metadata, so a head that advanced since session creation is noticed:
-    review-status flips to 'behind' the watermark from the earlier review (diff-versions). Without
+    the review scope flips to 'behind' the watermark from the earlier review (diff-versions). Without
     this, the session's head stayed frozen and 'Since last review' never engaged."""
     from review_mate.seams import MRPayload
 
@@ -251,10 +267,9 @@ async def test_refresh_resyncs_advanced_head(tmp_path):
     kb = manager._test_kb
     async with client:
         kb.set_watermark(MR.host, MR.project, MR.iid, "s")           # reviewed up to the opening head
-        assert (await client.get(f"/api/sessions/{sid}/review-status")).json()["behind"] is False
+        assert (await version_of(manager, sid))["behind"] is False
         assert (await client.post(f"/api/sessions/{sid}/refresh-threads", json={})).json()["head"] == "head-2"
-        st = (await client.get(f"/api/sessions/{sid}/review-status")).json()
-        assert st == {"head": "head-2", "watermark": "s", "behind": True}
+        assert await version_of(manager, sid) == {"head": "head-2", "watermark": "s", "behind": True}
     assert manager.get(sid).snapshot().mr.sha == "head-2"            # session now reflects the new head
     await manager.shutdown()
 
@@ -264,7 +279,7 @@ async def test_submit_advances_watermark(tmp_path):
     kb = manager._test_kb
     async with client:
         kb.set_watermark(MR.host, MR.project, MR.iid, "old-sha")
-        await client.post(f"/api/sessions/{sid}/submit-review", json={})
+        await submit(client, sid)
         assert kb.get_watermark(MR.host, MR.project, MR.iid) == "s"   # submitting advances it
     await manager.shutdown()
 

@@ -132,7 +132,7 @@ async def test_session_list_carries_mr_and_progress_counts(tmp_path):
 
 async def test_submit_review_unavailable_without_writer(client):
     sid = (await client.post("/api/sessions")).json()["id"]
-    r = await client.post(f"/api/sessions/{sid}/submit-review")
+    r = await client.post("/api/cmd", json={"cmd": "review.submit", "args": {"session": sid}})
     assert r.status_code == 400  # no host writer configured (self-contained baseline)
 
 
@@ -162,7 +162,8 @@ async def test_submit_review_posts_drafts_and_reports_partial_failure(tmp_path):
         await actor.submit(SaveDraft(highlight_id=hids[0], body="good comment"), Origin.BROWSER)
         await actor.submit(SaveDraft(highlight_id=hids[1], body="boom comment"), Origin.BROWSER)
 
-        data = (await c.post(f"/api/sessions/{sid}/submit-review")).json()
+        data = (await c.post("/api/cmd", json={"cmd": "review.submit",
+                                               "args": {"session": sid}})).json()
         assert data["posted"] == 1 and data["total"] == 2
         snap = actor.snapshot()
         posted = [d for d in snap.drafts if d.status.value == "posted"]

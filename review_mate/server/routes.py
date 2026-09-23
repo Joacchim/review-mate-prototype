@@ -26,7 +26,7 @@ ACTIVITY_TIMEOUT = 50.0
 
 
 def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broker=None,
-                 writeback=None, activity_broker=None, kb=None, submitter=None) -> list:
+                 writeback=None, activity_broker=None) -> list:
     async def create_session(request: Request) -> JSONResponse:
         body = await _maybe_json(request)
         raw = body.get("ref") if isinstance(body, dict) else None
@@ -155,54 +155,6 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         if not result.ok:
             return JSONResponse({"ok": False, "reason": result.reason}, status_code=400)
         return JSONResponse({"ok": True, "seq": result.seq})
-
-    async def submit_review(request: Request) -> JSONResponse:
-        """Post the prepared review. The sequence lives in `ReviewSubmitter`, which the
-        `review.submit` command runs too — so the terminal and the browser send the same review."""
-        if submitter is None:
-            return JSONResponse({"error": "review posting unavailable"}, status_code=400)
-        body = await _maybe_json(request)
-        approve = bool(isinstance(body, dict) and body.get("approve"))
-        result = await submitter.submit(request.path_params["id"], approve=approve)
-        if "error" in result:
-            return JSONResponse(result,
-                                status_code=404 if result["error"] == "unknown session" else 400)
-        return JSONResponse(result)
-
-    async def mark_reviewed(request: Request) -> JSONResponse:
-        """Advance the reviewed watermark to the current head without submitting (diff-versions)."""
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        snap = actor.snapshot()
-        if snap.mr is None or kb is None:
-            return JSONResponse({"error": "unavailable"}, status_code=400)
-        kb.set_watermark(snap.mr.host, snap.mr.project, snap.mr.iid, snap.mr.sha)
-        return JSONResponse({"ok": True, "watermark": snap.mr.sha})
-
-    async def review_status(request: Request) -> JSONResponse:
-        """Whether the MR advanced past the reviewer's watermark (diff-versions awareness)."""
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        snap = actor.snapshot()
-        if snap.mr is None:
-            return JSONResponse({"behind": False, "watermark": None, "head": None})
-        wm = kb.get_watermark(snap.mr.host, snap.mr.project, snap.mr.iid) if kb is not None else None
-        return JSONResponse({"head": snap.mr.sha, "watermark": wm,
-                             "behind": bool(wm and wm != snap.mr.sha)})
-
-    async def approval_status(request: Request) -> JSONResponse:
-        """Whether the reviewer (and who else) has approved this MR. Greyed where unsupported."""
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        snap = actor.snapshot()
-        cap = snap.mr and (snap.mr.capabilities or {}).get("approvals", False)
-        if snap.mr is None or provider is None or not hasattr(provider, "approvals") or not cap:
-            return JSONResponse({"available": False})
-        ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
-        return JSONResponse({"available": True, **(await provider.approvals(ref))})
 
     async def commits(request: Request) -> JSONResponse:
         """The MR's commits, for per-commit review. Greyed (available:False) where unsupported."""
@@ -373,15 +325,11 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/sessions/{id}", get_session, methods=["GET"]),
         Route("/api/sessions/{id}", end_session, methods=["DELETE"]),
         Route("/api/sessions/{id}/commands", submit_command, methods=["POST"]),
-        Route("/api/sessions/{id}/submit-review", submit_review, methods=["POST"]),
         Route("/api/sessions/{id}/threads/{tid}/reply", reply_thread, methods=["POST"]),
         Route("/api/sessions/{id}/threads/{tid}/resolve", resolve_thread, methods=["POST"]),
         Route("/api/sessions/{id}/threads/{tid}/notes/{nid}/edit", edit_note, methods=["POST"]),
         Route("/api/sessions/{id}/threads/{tid}/notes/{nid}/delete", delete_note, methods=["POST"]),
         Route("/api/sessions/{id}/refresh-threads", refresh_threads, methods=["POST"]),
-        Route("/api/sessions/{id}/mark-reviewed", mark_reviewed, methods=["POST"]),
-        Route("/api/sessions/{id}/review-status", review_status, methods=["GET"]),
-        Route("/api/sessions/{id}/approval-status", approval_status, methods=["GET"]),
         Route("/api/sessions/{id}/commits", commits, methods=["GET"]),
         Route("/api/me", whoami, methods=["GET"]),
         WebSocketRoute("/api/sessions/{id}/stream", stream),
