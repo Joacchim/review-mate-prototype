@@ -1345,8 +1345,13 @@ function renderFileView(el, path) {
   el.appendChild(table);
 }
 // click a line = toggle its highlight (dedupe + discard-by-reclick); drag = select a block
+// The line a selection started on, kept outside the table it started in. A frame arriving between
+// the press and the release rebuilds the diff, and a start held on the old table would go with it —
+// the reviewer's drag silently doing nothing. Which scopes republish decides how often that
+// happens, so it must not be what decides whether a selection works.
+let dragStart = null;
+
 function wireSelection(table, path) {
-  let dragStart = null;
   const lineOf = (target) => {
     let el = target;
     while (el && el !== table) { if (el.dataset && el.dataset.line) return parseInt(el.dataset.line, 10); el = el.parentElement; }

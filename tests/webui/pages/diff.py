@@ -61,10 +61,17 @@ class DiffPage:
 
     def ask_about(self, first: int, last: int | None = None) -> None:
         """Click a line, or drag from one to another — what commits a highlight."""
-        self.line(first).hover()
-        self.page.mouse.down()
+        self.press_line(first)
         if last is not None and last != first:
             self.line(last).hover()
+        self.release()
+
+    def press_line(self, number: int) -> None:
+        """Begin a selection and leave it open, so a test can interleave something with it."""
+        self.line(number).hover()
+        self.page.mouse.down()
+
+    def release(self) -> None:
         self.page.mouse.up()
 
     # --- the highlight overlay ----------------------------------------------

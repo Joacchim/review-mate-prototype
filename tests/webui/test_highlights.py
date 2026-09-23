@@ -159,3 +159,20 @@ def test_dismissing_an_insight_removes_it(diff, rail, staged):
     expect(rail.insights).to_have_count(1)
     rail.dismiss_insight()
     expect(rail.insights).to_have_count(0)
+
+
+def test_a_selection_survives_a_frame_arriving_mid_drag(diff, rail, staged, as_agent):
+    """The diff is rebuilt whenever a scope it shows republishes, and a reviewer holding the mouse
+    down has no say in when that happens. Losing the selection to it looks like the drag doing
+    nothing — silently, and more often the more scopes a review watches."""
+    from review_mate.session.commands import EmitCard
+
+    staged.put(two_file_review("s1"))
+    diff.load("s1")
+
+    diff.press_line(45)
+    as_agent("s1", EmitCard(highlight_id=None, body="something to say about the change"))
+    expect(rail.insights).to_have_count(1)        # the frame has landed and the diff re-rendered
+    diff.release()
+
+    expect(rail.rows).to_have_count(1)
