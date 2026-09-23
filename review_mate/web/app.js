@@ -41,8 +41,7 @@ let me = null;                       // the reviewer's own host username (to mar
 const suggBuf = {};                  // draft key -> in-progress suggested-change text
 const suggOpen = {};                 // draft key -> whether the suggestion editor is open
 const noteEdit = {};                 // note_id -> in-progress edit text (null/absent = not editing)
-let reviewStatus = null;             // {behind, watermark, head} — diff-versions awareness
-let approvalStatus = null;           // {available, you_approved, approved_by} — your approval state
+// the review bar is the server's: what is prepared, whether this moved on, who has approved
 let commitsMode = false;             // per-commit review: the diff pane shows one commit at a time
 let commitList = null;               // [{sha, short_id, title, message, …}] oldest→newest, or null
 let currentCommit = null;            // sha of the commit being reviewed
@@ -149,6 +148,24 @@ function setStatus(msg) { $("status").textContent = msg || ""; }
 // definition, and an ask nobody is listening for is not a slow answer. The rule — including why an
 // agent's own question back is not an ask — lives in review_mate/view/asks.py. The browser renders
 // the word it is given.
+
+// what this review has prepared to send, and what it would take to send it
+function reviewView() {
+  const view = scopeViews[`review:${SID}`];
+  return view && view.state === "ready" ? view : null;
+}
+
+// `checked` is not the same as "nobody has approved": until the host has been asked, the bar must
+// not claim either way, which is why this returns null rather than an empty answer
+function reviewApproval() {
+  const view = reviewView();
+  return view && view.approval && view.approval.checked ? view.approval : null;
+}
+
+function reviewVersion() {
+  const view = reviewView();
+  return view ? view.version : null;
+}
 
 // this session's conversations, and the agent state they add up to
 function chatIndex() {
@@ -290,11 +307,11 @@ function diffMode() {
 }
 
 // the scopes the review page reads: the file list, the file being shown, any whole file it needs,
-// the rail, and the chat index that carries the agent's state
+// the rail, the chat index that carries the agent's state, and the review it is preparing
 function diffScopes() {
   const mode = diffMode();
   const listing = `diff:${SID}:${mode}`;
-  const scopes = [listing, `rail:${SID}`, `chat:${SID}`];
+  const scopes = [listing, `rail:${SID}`, `chat:${SID}`, `review:${SID}`];
   if (currentFile) scopes.push(`${listing}:${currentFile}`);
   if (selected) scopes.push(conversationScope(selected));   // only the conversation on screen
   blobWanted.forEach((path) => scopes.push(`blob:${SID}:${mode}:${path}`));
@@ -419,7 +436,7 @@ async function cmd(name, args) {
   if (!r.ok || !data.ok) {
     return { ok: false, status: r.status, reason: data.reason || `${name} failed (${r.status})` };
   }
-  return { ok: true, status: r.status, session: data.session };
+  return { ok: true, status: r.status, ...data };
 }
 
 // the queue page doubles as the session hub: resume or close an in-flight review
@@ -660,10 +677,6 @@ async function loadRef(ref) {
 async function load() {
   state = await fetch(`/api/sessions/${SID}`).then((r) => r.json());
   if (!currentFile && state.files.length) currentFile = state.files[0].path;   // the session's own list seeds it
-  try { reviewStatus = await fetch(`/api/sessions/${SID}/review-status`).then((r) => r.json()); }
-  catch (e) { reviewStatus = null; }
-  try { approvalStatus = await fetch(`/api/sessions/${SID}/approval-status`).then((r) => r.json()); }
-  catch (e) { approvalStatus = null; }
   render();
 }
 
@@ -677,11 +690,8 @@ function toggleSinceLast() {
 
 async function markReviewed() {
   setStatus("marking reviewed…");
-  try {
-    await fetch(`/api/sessions/${SID}/mark-reviewed`, { method: "POST" });
-    setStatus("marked reviewed up to the current version");
-    await load();
-  } catch (e) { setStatus("✕ " + e); }
+  const result = await cmd("review.mark_reviewed", { session: SID });
+  setStatus(result.ok ? "marked reviewed up to the current version" : "✕ " + result.reason);
 }
 
 let wsTimer = null;
@@ -1086,7 +1096,7 @@ function renderCommitView(el) {
   const c = commitList[i];
   // pair with the reviewed watermark: commits at/before it (in oldest→newest order) are reviewed,
   // the rest are new since your last review. -1 when there's no watermark or it isn't in this list.
-  const wm = reviewStatus && reviewStatus.watermark;
+  const wm = (reviewVersion() || {}).watermark;
   const wmIndex = wm ? commitList.findIndex((x) => x.sha === wm) : -1;
   const reviewed = (k) => wmIndex >= 0 && k <= wmIndex;
 
@@ -2111,10 +2121,11 @@ function threadConversationBlock(t) {
 }
 
 function renderVersionBanner(el) {
-  if (!reviewStatus) return;
+  const version = reviewVersion();
+  if (!version) return;
   const cap = state.mr && (state.mr.capabilities || {}).diff_versions === true;
   if (!cap) return;
-  if (reviewStatus.behind) {
+  if (version.behind) {
     // the MR advanced past the reviewed watermark — offer the interdiff + advance the watermark
     const bar = document.createElement("div");
     bar.className = "verbanner";
@@ -2128,7 +2139,7 @@ function renderVersionBanner(el) {
     controls.appendChild(btn("Mark reviewed", "btn ghost", markReviewed));
     bar.appendChild(controls);
     el.appendChild(bar);
-  } else if (!reviewStatus.watermark) {
+  } else if (!version.watermark) {
     // no baseline yet → let the reviewer set one, so incremental review can engage on later pushes
     // (this is the only entry point to the *first* watermark; submitting a review also sets it)
     const bar = document.createElement("div");
@@ -2147,17 +2158,19 @@ function renderVersionBanner(el) {
 }
 
 function renderReviewBar(el) {
-  const pending = state.drafts.filter((d) => d.status !== "posted");
-  const posted = state.drafts.filter((d) => d.status === "posted");
-  const canApprove = state.mr && (state.mr.capabilities || {}).approvals !== false;
+  const review = reviewView();
+  if (!review) return;                      // nothing to say until the scope arrives
+  const approval = reviewApproval();
+  const { pending, posted } = review;
+  const canApprove = (review.approval || {}).available;
   // the bar is worth showing when there is something to submit or an approval to give
-  if (!pending.length && !posted.length && !canApprove) return;
+  if (!pending && !posted && !canApprove) return;
 
-  const alreadyApproved = !!(approvalStatus && approvalStatus.you_approved);
+  const alreadyApproved = !!(approval && approval.you_approved);
   const bar = document.createElement("div");
   bar.className = "reviewbar";
   const lbl = document.createElement("span");
-  lbl.textContent = `Your review · ${pending.length} pending${posted.length ? ` · ${posted.length} posted` : ""}`;
+  lbl.textContent = `Your review · ${pending} pending${posted ? ` · ${posted} posted` : ""}`;
   bar.appendChild(lbl);
   if (alreadyApproved) {   // your prior review approved this MR — a right-aligned status marker
     const ap = document.createElement("span");
@@ -2175,10 +2188,10 @@ function renderReviewBar(el) {
   }
   // a submit button only when there's an action to take: drafts to post, an approve toggled on, or an
   // approval still available. Once approved with nothing pending, the bar is pure status (no dead button).
-  if (pending.length || approveToggle || (canApprove && !alreadyApproved)) {
-    const label = pending.length ? "Submit review" : (approveToggle ? "Approve MR" : "Submit review");
+  if (pending || approveToggle || (canApprove && !alreadyApproved)) {
+    const label = pending ? "Submit review" : (approveToggle ? "Approve MR" : "Submit review");
     const b = btn(label, "btn primary", submitReview);
-    if (!pending.length && !approveToggle) b.disabled = true;
+    if (!pending && !approveToggle) b.disabled = true;
     bar.appendChild(b);
   }
   el.appendChild(bar);
@@ -2186,22 +2199,16 @@ function renderReviewBar(el) {
 
 async function submitReview() {
   setStatus(approveToggle ? "submitting review…" : "posting review…");
-  try {
-    const r = await fetch(`/api/sessions/${SID}/submit-review`, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ approve: approveToggle }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) { setStatus("✕ " + (data.error || "submit failed")); return; }
-    const failed = (data.results || []).filter((x) => !x.ok);
-    const parts = [];
-    if (data.total) parts.push(failed.length ? `posted ${data.posted}/${data.total} — ${failed.length} failed`
-                                             : `posted ${data.posted} comment${data.posted === 1 ? "" : "s"}`);
-    if (data.approved) parts.push("approved");
-    else if (data.approve_error) parts.push("approve failed: " + data.approve_error);
-    setStatus(parts.join(" · ") || "nothing to submit");
-    approveToggle = false;
-  } catch (e) { setStatus("✕ " + e); }
+  const data = await cmd("review.submit", { session: SID, approve: approveToggle });
+  if (!data.ok) { setStatus("✕ " + data.reason); return; }
+  const failed = (data.results || []).filter((x) => !x.ok);
+  const parts = [];
+  if (data.total) parts.push(failed.length ? `posted ${data.posted}/${data.total} — ${failed.length} failed`
+                                           : `posted ${data.posted} comment${data.posted === 1 ? "" : "s"}`);
+  if (data.approved) parts.push("approved");
+  else if (data.approve_error) parts.push("approve failed: " + data.approve_error);
+  setStatus(parts.join(" · ") || "nothing to submit");
+  approveToggle = false;
 }
 
 // escalate a highlight to the agent tier (D21) — separate from the review-comment box (D14):

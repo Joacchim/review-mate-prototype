@@ -43,8 +43,13 @@ class DetailPage:
         return self.page.locator("#detail textarea.draftbox")
 
     def save_draft(self, text: str) -> None:
+        """Write the comment and commit it.
+
+        The control is taken by position, not by label: it reads `Save` until a comment exists for
+        this subject and `Update` afterwards, so editing one is the case a label match misses.
+        """
         self.draft_box.fill(text)
-        self.page.locator("#detail .draftbtns .btn", has_text="Save").first.click()
+        self.page.locator("#detail .draftbtns .btn").first.click()
 
     @property
     def messages(self):

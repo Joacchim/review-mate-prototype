@@ -71,11 +71,42 @@ def review_kb(tmp_path_factory):
     return ReviewKB(root=tmp_path_factory.mktemp("kb"))
 
 
+class StubWriter:
+    """The host a submitted review reaches. Records what it was sent, so a test can name it."""
+
+    def __init__(self) -> None:
+        self.posted: list[str] = []
+        self.approved = False
+
+    def capabilities(self) -> dict:
+        from review_mate.host.base import GITLAB_CAPABILITIES
+        return dict(GITLAB_CAPABILITIES)
+
+    async def post_comment(self, ref, position, body):
+        self.posted.append(body)
+        return {"id": "disc-1", "notes": [{"id": 11}]}
+
+    async def post_mr_comment(self, ref, body):
+        self.posted.append(body)
+        return {"id": 12}
+
+    async def approve(self, ref):
+        self.approved = True
+        return {}
+
+
 @pytest.fixture(scope="session")
-def staged_app(fake_manager, stub_host, stub_workspace, review_kb):
+def stub_writer() -> StubWriter:
+    return StubWriter()
+
+
+@pytest.fixture(scope="session")
+def staged_app(fake_manager, stub_host, stub_workspace, review_kb, stub_writer):
     """The production application over a manager, a host and a workspace a test can set."""
+    from review_mate.writeback.service import Writeback
     fake_manager._workspace = stub_workspace
     return create_app(manager=fake_manager, provider=stub_host, with_mcp=False, kb=review_kb,
+                      writeback=Writeback(fake_manager, stub_writer),
                       resolve_ref=lambda raw: MRRef(host="gitlab",
                                                     project="platform/virtu/control-plane",
                                                     iid=137))
@@ -114,7 +145,7 @@ def as_agent(_fixture_server, fake_manager):
 
 
 @pytest.fixture(autouse=True)
-def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app):
+def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app, stub_writer):
     """Reset the staged state between tests, so a scenario is the only thing a test relies on.
 
     Every scope caches what it read, for the life of the application — correctly, since content at
@@ -133,6 +164,8 @@ def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app):
     stub_host.issues = []
     stub_workspace.calls = []
     stub_workspace.clean = True
+    stub_writer.posted.clear()
+    stub_writer.approved = False
     review_kb._data.watermarks = {}
     for scope in (staged_app.state.hub, staged_app.state.diff_scopes, staged_app.state.blob_scopes,
                   staged_app.state.rail_scope):
