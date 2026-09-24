@@ -17,10 +17,12 @@ from conftest import HostStub
 from review_mate.seams import MRRef
 from review_mate.server.app import create_app
 from review_mate.session.commands import (
-    AddHighlight, ApplyMRMetadata, EmitCard, LabelCard, RequestInsights, SaveDraft,
+    AddHighlight, ApplyMRMetadata, EmitCard, LabelCard, RecordAddressed, RequestInsights, SaveDraft,
 )
 from review_mate.session.manager import SessionManager
-from review_mate.session.state import Criticality, Label, LineRange, Origin, Side, Theme
+from review_mate.session.state import (
+    Criticality, Label, LineRange, Origin, Side, Subject, SubjectKind, Theme,
+)
 from review_mate.view.rail import RailScope
 
 
@@ -390,3 +392,54 @@ async def test_a_corrected_label_says_whose_it_is_now(session):
         theme=Theme.STYLE, criticality=Criticality.LOW)), Origin.BROWSER)
     label = (await scope.build(sid))["insights"][0]["label"]
     assert label["theme"] == "style" and label["by"] == "browser"
+
+
+# --- the agent changing the code, not just explaining it -----------------------
+
+async def test_a_highlight_the_agent_fixed_says_what_it_became(session):
+    manager, sid, provider = session
+    scope = rail_for(manager, provider)
+    actor = manager.get(sid)
+    await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+                                    line_range=LineRange(start=1, end=1)), Origin.BROWSER)
+    hid = actor.snapshot().highlights[0].id
+    await actor.submit(RecordAddressed(subject=Subject(kind=SubjectKind.HIGHLIGHT, id=hid),
+                                       sha="def456", summary="bounded the retry at five"),
+                       Origin.AGENT)
+    row = (await scope.build(sid))["highlights"][0]
+    assert row["addressed"]["sha"] == "def456"
+    assert row["addressed"]["summary"] == "bounded the retry at five"
+
+
+async def test_a_highlight_nobody_fixed_carries_nothing(session):
+    """Absent, so a client cannot mistake "not yet" for "done"."""
+    manager, sid, provider = session
+    scope = rail_for(manager, provider)
+    await manager.get(sid).submit(AddHighlight(file="a.py", side=Side.NEW,
+                                               line_range=LineRange(start=1, end=1)),
+                                  Origin.BROWSER)
+    assert (await scope.build(sid))["highlights"][0]["addressed"] is None
+
+
+async def test_where_a_subject_stands_is_the_last_answer_not_the_first(session):
+    """A subject answered twice was answered badly the first time."""
+    manager, sid, provider = session
+    scope = rail_for(manager, provider)
+    actor = manager.get(sid)
+    await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+                                    line_range=LineRange(start=1, end=1)), Origin.BROWSER)
+    subject = Subject(kind=SubjectKind.HIGHLIGHT, id=actor.snapshot().highlights[0].id)
+    for sha in ("aaa111", "bbb222"):
+        await actor.submit(RecordAddressed(subject=subject, sha=sha), Origin.AGENT)
+    assert (await scope.build(sid))["highlights"][0]["addressed"]["sha"] == "bbb222"
+
+
+async def test_the_agent_can_fix_its_own_finding(session):
+    manager, sid, provider = session
+    scope = rail_for(manager, provider)
+    actor = manager.get(sid)
+    await actor.submit(EmitCard(highlight_id=None, body="the retry is unbounded"), Origin.AGENT)
+    cid = actor.snapshot().cards[0].id
+    await actor.submit(RecordAddressed(subject=Subject(kind=SubjectKind.INSIGHT, id=cid),
+                                       sha="ccc333"), Origin.AGENT)
+    assert (await scope.build(sid))["insights"][0]["addressed"]["sha"] == "ccc333"

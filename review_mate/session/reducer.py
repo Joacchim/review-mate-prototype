@@ -59,6 +59,8 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
         s.messages = [m for m in s.messages
                       if not (m.anchor is not None and m.anchor.kind is SubjectKind.INSIGHT
                               and m.anchor.id == event.card_id)]
+    elif isinstance(event, ev.SubjectAddressed):
+        s.addressed.append(event.record)
     elif isinstance(event, ev.CardLabelled):
         for c in s.cards:
             if c.id == event.card_id:

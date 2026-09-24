@@ -19,7 +19,7 @@ from contextlib import suppress
 from pydantic import BaseModel, Field
 
 from review_mate.seams import serves
-from review_mate.session.state import DraftStatus, SessionStatus
+from review_mate.session.state import DraftStatus, SessionStatus, SubjectKind
 
 
 class RailLabel(BaseModel):
@@ -37,6 +37,7 @@ class RailCard(BaseModel):
     citations: list[str] = Field(default_factory=list)
     status: str = ""
     label: RailLabel | None = None   # absent means nobody classified it, never "unimportant"
+    addressed: "RailAddressed | None" = None   # set when the agent changed the code over it
     created_at: str = ""
 
 
@@ -45,6 +46,18 @@ class RailContext(BaseModel):
     blame: list[dict] = Field(default_factory=list)
     linked_issues: list[dict] = Field(default_factory=list)
     error: str = ""
+
+
+class RailAddressed(BaseModel):
+    """What the agent changed in answer to a subject, and when.
+
+    The reason a highlight's `stale` is not the whole story. A head that moved with one of these
+    against it moved *because* this was answered; a head that moved without one is the old warning
+    that these lines may not be where they were. Clients read the pair, never `stale` alone.
+    """
+    sha: str
+    summary: str = ""
+    at: str = ""
 
 
 class RailHighlight(BaseModel):
@@ -60,6 +73,7 @@ class RailHighlight(BaseModel):
     context_requested: bool = False  # escalated past the cheap tier, so an answer is expected
     context_requested_at: str = ""   # when they escalated — a client ages the "working" cue from it
     stale: bool = False          # made against an earlier head, so its lines may have moved
+    addressed: "RailAddressed | None" = None   # the agent changed the code in answer to this
     comment_state: str = "context"   # context | comment | posted
     created_at: str = ""
     context: RailContext = Field(default_factory=RailContext)
@@ -87,6 +101,19 @@ class RailView(BaseModel):
     highlights: list[RailHighlight] = Field(default_factory=list)
     insights: list[RailCard] = Field(default_factory=list)
     review_pass: ReviewPass = Field(default_factory=ReviewPass)
+
+
+def _addressed(snapshot, kind, ident) -> RailAddressed | None:
+    """The last change the agent made in answer to a subject, if it made one.
+
+    The last rather than all of them: a subject answered twice was answered badly the first time,
+    and what a reviewer needs to see is where it stands now. The whole sequence is in the log for
+    anyone who wants it.
+    """
+    for record in reversed(snapshot.addressed or []):
+        if record.subject.kind is kind and record.subject.id == ident:
+            return RailAddressed(sha=record.sha, summary=record.summary, at=record.at)
+    return None
 
 
 class RailScope:
@@ -124,13 +151,14 @@ class RailScope:
                 context_requested=bool(highlight.context_requested),
                 context_requested_at=highlight.context_requested_at,
                 stale=bool(highlight.created_sha and head and highlight.created_sha != head),
+                addressed=_addressed(snapshot, SubjectKind.HIGHLIGHT, highlight.id),
                 comment_state=("context" if draft is None else
                                "posted" if draft.status is DraftStatus.POSTED else "comment"),
                 created_at=highlight.created_at,
                 context=self._context_for(snapshot, highlight, session_id),
                 card=self._card(by_highlight.get(highlight.id)),
             ))
-        insights = [self._card(c) for c in snapshot.cards if not c.highlight_id]
+        insights = [self._card(c, snapshot) for c in snapshot.cards if not c.highlight_id]
         return RailView(session=session_id, highlights=rows,
                         insights=[c for c in insights if c],
                         review_pass=self._pass(snapshot, head)).model_dump(mode="json")
@@ -146,13 +174,15 @@ class RailScope:
                           stale=stale, available=stale)
 
     @staticmethod
-    def _card(card) -> RailCard | None:
+    def _card(card, snapshot=None) -> RailCard | None:
         if card is None:
             return None
         label = card.label
         return RailCard(
             id=card.id, body=card.body, citations=list(card.citations),
             status=getattr(card.status, "value", ""), created_at=card.created_at,
+            addressed=(None if snapshot is None
+                       else _addressed(snapshot, SubjectKind.INSIGHT, card.id)),
             label=None if label is None else RailLabel(
                 theme=label.theme.value, criticality=label.criticality.value,
                 about=label.about, by=getattr(label.by, "value", str(label.by))))

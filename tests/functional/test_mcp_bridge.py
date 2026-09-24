@@ -265,3 +265,21 @@ async def test_it_can_reclassify_what_it_already_posted(setup):
                             about="reachable from the public API")
     label = bridge.snapshot(sid).cards[0].label
     assert label.theme.value == "security" and label.about == "reachable from the public API"
+
+
+async def test_the_agent_records_what_it_changed_and_against_what(setup):
+    manager, bridge, sid = setup
+    await _add_highlight(manager, sid)
+    hid = bridge.snapshot(sid).highlights[0].id
+    await bridge.record_addressed(sid, "highlight", hid, "def456", "bounded the retry at five")
+    record = bridge.snapshot(sid).addressed[0]
+    assert record.subject.id == hid and record.sha == "def456"
+    assert record.summary == "bounded the retry at five"
+
+
+async def test_the_agent_can_record_a_fix_to_its_own_finding(setup):
+    manager, bridge, sid = setup
+    await bridge.emit_card(sid, None, "the retry is unbounded")
+    cid = bridge.snapshot(sid).cards[0].id
+    await bridge.record_addressed(sid, "insight", cid, "ccc333")
+    assert bridge.snapshot(sid).addressed[0].subject.id == cid

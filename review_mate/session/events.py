@@ -11,8 +11,8 @@ from typing import Annotated, Literal, Union
 from pydantic import BaseModel, Field, TypeAdapter
 
 from review_mate.session.state import (
-    AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, CheckRequest, DraftComment,
-    FileEntry, Grant, Highlight, Label, MRMetadata, Origin, ReviewThread, Subject,
+    AccessRequest, AccessStatus, Addressed, Card, CardStatus, ChatMessage, CheckRequest,
+    DraftComment, FileEntry, Grant, Highlight, Label, MRMetadata, Origin, ReviewThread, Subject,
 )
 
 
@@ -73,6 +73,11 @@ class CardUpdated(_EventBase):
 class CardRemoved(_EventBase):
     type: Literal["card_removed"] = "card_removed"
     card_id: str
+
+
+class SubjectAddressed(_EventBase):
+    type: Literal["subject_addressed"] = "subject_addressed"
+    record: Addressed
 
 
 class CardLabelled(_EventBase):
@@ -156,7 +161,7 @@ Event = Annotated[
         SessionCreated, MRMetadataApplied, CheckoutSet, FilesApplied,
         HighlightAdded, HighlightRemoved, ContextRequested,
         CardEmitted, CardUpdated, CardRemoved,
-        CardLabelled, AccessRequested, AccessDecided, AccessGrantChanged,
+        CardLabelled, SubjectAddressed, AccessRequested, AccessDecided, AccessGrantChanged,
         ThreadApplied, ThreadsReplaced, InsightsRequested, CheckRequested, MessagePosted,
         ChatCleared,
         DraftSaved, DraftRemoved, DraftPosted, SessionEnded,

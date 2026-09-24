@@ -111,6 +111,27 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
                                        about=about)).model_dump()
 
     @mcp.tool()
+    async def record_addressed(session_id: str, subject_kind: str, subject_id: str, sha: str,
+                               summary: str = "") -> dict:
+        """Say that you changed the code in answer to something, and what it became.
+
+        The other kind of answer. When a reviewer writes "this retry is unbounded" they usually mean
+        fix it, and a card explaining that it is unbounded is not that. Commit the change, then
+        record it here against the subject it answers, with the new sha and one line saying what you
+        did.
+
+        Recording it is what makes the change legible. Five open comments and one new commit is a
+        matching exercise the reviewer should not have to do — and it is what stops their rail
+        filling with stale warnings about their own progress, because a subject whose code moved
+        with one of these against it moved *because* you fixed it.
+
+        `subject_kind` is `highlight`, `insight` or `thread`. Answer in the conversation as well if
+        there is anything to say; the record is not a substitute for talking to them.
+        """
+        return (await bridge.record_addressed(session_id, subject_kind, subject_id, sha,
+                                              summary)).model_dump()
+
+    @mcp.tool()
     async def label_card(session_id: str, card_id: str, theme: str, criticality: str,
                          about: str = "") -> dict:
         """Classify an insight you already posted, or change how you classified it.

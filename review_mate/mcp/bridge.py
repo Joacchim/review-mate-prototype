@@ -11,7 +11,7 @@ from review_mate.seams import LocalRef
 
 from review_mate.session.actor import CommandResult
 from review_mate.session.commands import (
-    AddHighlight, EmitCard, LabelCard, PostMessage, RequestAccess, UpdateCard,
+    AddHighlight, EmitCard, LabelCard, PostMessage, RecordAddressed, RequestAccess, UpdateCard,
 )
 from review_mate.session.events import (
     AccessDecided, AccessGrantChanged, HighlightAdded, MessagePosted,
@@ -19,7 +19,7 @@ from review_mate.session.events import (
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import (
     CardStatus, Criticality, FileEntry, Label, LineRange, Origin, Side, SessionState,
-    SessionSummary, Subject, Theme,
+    SessionSummary, Subject, SubjectKind, Theme,
 )
 
 
@@ -139,6 +139,13 @@ class AgentBridge:
         hid = new[-1].id if new else None
         card = await self.emit_card(session_id, hid, body, citations)
         return {"highlight_id": hid, "card": card.model_dump()}
+
+    async def record_addressed(self, session_id: str, subject_kind: str, subject_id: str,
+                               sha: str, summary: str = "") -> CommandResult:
+        return await self._actor(session_id).submit(
+            RecordAddressed(subject=Subject(kind=SubjectKind(subject_kind), id=subject_id),
+                            sha=sha, summary=summary),
+            Origin.AGENT)
 
     async def label_card(self, session_id: str, card_id: str, theme: str, criticality: str,
                          about: str = "") -> CommandResult:

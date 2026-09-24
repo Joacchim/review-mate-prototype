@@ -49,7 +49,7 @@ def test_core_does_not_import_the_layers_above_it(py):
 
 def test_session_state_is_exactly_the_contract_set():  # AC-13
     doc_fields = {"mr", "files", "highlights", "cards", "access_requests", "threads",
-                  "messages", "drafts", "checks"}
+                  "messages", "drafts", "checks", "addressed"}
     counters = {"highlights_created"}   # monotonic, so a "#N" reference survives a removal
     # the MR-level escalation, as a highlight's context_requested pair is the per-range one. The
     # sha is which code was asked about, so a pass the change moved past reads as stale rather

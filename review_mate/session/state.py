@@ -143,6 +143,24 @@ class Card(BaseModel):
     created_at: str = ""
 
 
+class Addressed(BaseModel):
+    """The agent changed the code in answer to something the reviewer said.
+
+    The other kind of answer. A card explains, a message replies, and neither is what a reviewer
+    means when they say "this retry is unbounded" — they mean fix it. Recording the change against
+    the subject it answers is what lets the rail say *addressed at abc123* instead of leaving five
+    open comments and one new commit for the reviewer to match up themselves.
+
+    It is also what keeps a moving head readable. Elsewhere `created_sha != head` means "these lines
+    may have moved, read warily"; here the head moved *because* the agent fixed it. Same fact,
+    opposite meaning, and the record is what tells them apart.
+    """
+    subject: "Subject"
+    sha: str                           # what the code became
+    summary: str = ""                  # one line: what was changed, in the agent's words
+    at: str = ""
+
+
 class Grant(BaseModel):
     """What an approval actually produced: a checkout on disk, or why there is none yet.
 
@@ -270,6 +288,7 @@ class SessionState(BaseModel):
     insights_requested_at: str = ""
     insights_requested_sha: str | None = None
     checks: list[CheckRequest] = Field(default_factory=list)
+    addressed: list[Addressed] = Field(default_factory=list)
     drafts: list[DraftComment] = Field(default_factory=list)
 
 

@@ -44,6 +44,8 @@ def _sample(cmd_type: str):
         "remove_draft": cmd.RemoveDraft(highlight_id="x"),
         "mark_draft_posted": cmd.MarkDraftPosted(highlight_id="x"),
         "record_grant": cmd.RecordGrant(request_id="x", grant=Grant()),
+        "record_addressed": cmd.RecordAddressed(
+            subject=Subject(kind=SubjectKind.HIGHLIGHT, id="x"), sha="abc"),
         "label_card": cmd.LabelCard(card_id="x", label=Label(
             theme=Theme.BUG, criticality=Criticality.HIGH)),
     }[cmd_type]
@@ -413,3 +415,50 @@ def test_a_theme_outside_the_vocabulary_is_not_a_command():
     import pydantic
     with pytest.raises(pydantic.ValidationError):
         Label(theme="cleanliness", criticality=Criticality.LOW)
+
+
+# --- the agent changing the code, rather than explaining it --------------------
+
+def test_a_fix_is_recorded_against_what_it_answers():
+    """Five open comments and one new commit is a matching exercise nobody should have to do."""
+    s = _with_highlight()
+    hid = s.highlights[0].id
+    subject = Subject(kind=SubjectKind.HIGHLIGHT, id=hid)
+    s = fold(s, handle(s, cmd.RecordAddressed(subject=subject, sha="def456",
+                                              summary="bounded the retry at five"), Origin.AGENT))
+    record = s.addressed[0]
+    assert record.subject.id == hid and record.sha == "def456"
+    assert record.summary == "bounded the retry at five"
+
+
+def test_a_fix_needs_the_sha_the_code_became():
+    """Without it there is nothing to tell a fixed subject from one whose lines merely moved."""
+    s = _with_highlight()
+    out = handle(s, cmd.RecordAddressed(
+        subject=Subject(kind=SubjectKind.HIGHLIGHT, id=s.highlights[0].id), sha=""), Origin.AGENT)
+    assert isinstance(out, Rejection) and "sha" in out.reason
+
+
+def test_a_fix_for_something_that_is_not_there_is_rejected():
+    s = _with_mr()
+    out = handle(s, cmd.RecordAddressed(
+        subject=Subject(kind=SubjectKind.HIGHLIGHT, id="nope"), sha="abc"), Origin.AGENT)
+    assert isinstance(out, Rejection) and "no such highlight" in out.reason
+
+
+def test_the_reviewer_does_not_report_a_fix_on_the_agents_behalf():
+    """A claim that something was fixed is worth exactly as much as who made it."""
+    s = _with_highlight()
+    out = handle(s, cmd.RecordAddressed(
+        subject=Subject(kind=SubjectKind.HIGHLIGHT, id=s.highlights[0].id), sha="abc"),
+        Origin.BROWSER)
+    assert isinstance(out, Rejection) and "may not issue" in out.reason
+
+
+def test_a_subject_can_be_addressed_more_than_once():
+    """A fix that did not land the first time is answered again, and both attempts are the record."""
+    s = _with_highlight()
+    subject = Subject(kind=SubjectKind.HIGHLIGHT, id=s.highlights[0].id)
+    for sha in ("aaa111", "bbb222"):
+        s = fold(s, handle(s, cmd.RecordAddressed(subject=subject, sha=sha), Origin.AGENT))
+    assert [r.sha for r in s.addressed] == ["aaa111", "bbb222"]

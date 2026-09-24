@@ -16,8 +16,8 @@ from pydantic import BaseModel, Field, TypeAdapter
 from review_mate.session import events as ev
 from review_mate.session.state import (
     AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, CheckRequest, DraftComment, DraftStatus,
-    FileEntry, Grant, Highlight, Label, LineRange, MRMetadata, Origin, ReviewThread, Side, Subject,
-    SubjectKind,
+    Addressed, FileEntry, Grant, Highlight, Label, LineRange, MRMetadata, Origin, ReviewThread,
+    Side, Subject, SubjectKind,
 )
 
 
@@ -125,6 +125,18 @@ class ClearChat(BaseModel):
     anchor: Subject | None = None      # clears that conversation only
 
 
+class RecordAddressed(BaseModel):
+    """The agent reporting that it changed the code in answer to a subject.
+
+    Agent-only: the reviewer does not report on the agent's behalf, and a claim that something was
+    fixed is worth exactly as much as who made it.
+    """
+    type: Literal["record_addressed"] = "record_addressed"
+    subject: Subject
+    sha: str
+    summary: str = ""
+
+
 class RecordGrant(BaseModel):
     """The server reporting what an approved request is producing. Not a reviewer's move."""
     type: Literal["record_grant"] = "record_grant"
@@ -174,8 +186,8 @@ class EndSession(BaseModel):
 
 Command = Union[
     AddHighlight, RemoveHighlight, RequestContext, RequestInsights, EmitCard, UpdateCard, RemoveCard,
-    RequestAccess, DecideAccess, RecordGrant, LabelCard, ApplyMRMetadata, SetCheckout, ApplyFiles,
-    ApplyThread,
+    RequestAccess, DecideAccess, RecordGrant, RecordAddressed, LabelCard, ApplyMRMetadata,
+    SetCheckout, ApplyFiles, ApplyThread,
     ReplaceThreads,
     PostMessage, ClearChat, RequestCheck, SaveDraft, RemoveDraft, MarkDraftPosted, EndSession,
 ]
@@ -206,7 +218,9 @@ AUTHORITY: dict[str, set[Origin]] = {
     "request_check": {Origin.BROWSER},     # verifying something said is the reviewer's to ask for
     "remove_card": {Origin.BROWSER},
     # the agent classifies what it found; the reviewer corrects a claim they disagree with
-    "label_card": {Origin.BROWSER, Origin.AGENT},   # the reviewer dismisses an insight card
+    "label_card": {Origin.BROWSER, Origin.AGENT},
+    # the agent reports what it changed; nobody reports a fix on its behalf
+    "record_addressed": {Origin.AGENT},   # the reviewer dismisses an insight card
     "decide_access": {Origin.BROWSER},
     "record_grant": {Origin.SYSTEM},       # what an approval produced is the server's to report
     "end_session": {Origin.BROWSER},
@@ -314,6 +328,15 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
     if isinstance(command, RequestAccess):
         req = AccessRequest(id=_id(), repo=command.repo, reason=command.reason)
         return emit(ev.AccessRequested, request=req)
+
+    if isinstance(command, RecordAddressed):
+        missing = _absent_subject(state, command.subject)
+        if missing is not None:
+            return Rejection(reason=missing)
+        if not command.sha:
+            return Rejection(reason="an addressed subject needs the sha the code became")
+        return emit(ev.SubjectAddressed, record=Addressed(
+            subject=command.subject, sha=command.sha, summary=command.summary, at=ts))
 
     if isinstance(command, RecordGrant):
         req = next((r for r in state.access_requests if r.id == command.request_id), None)
