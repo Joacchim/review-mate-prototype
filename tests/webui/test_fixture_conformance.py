@@ -25,4 +25,4 @@ def test_the_fixture_app_is_the_production_app(staged_app):
     """Not a copy of it: the scope families come from create_app, so they cannot be a subset."""
     bus = staged_app.state.bus
     assert bus.scopes == {"hub"}
-    assert bus.families == {"diff", "blob", "rail", "chat", "review", "threads"}
+    assert bus.families == {"diff", "blob", "rail", "chat", "review", "threads", "access"}

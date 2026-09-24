@@ -113,6 +113,7 @@ follows posting rather than racing it.
 | `chat:<sid>:<kind>:<id>` | one subject's conversation — kind is highlight, insight or thread |
 | `review:<sid>` | the comments prepared to send, whether the change moved on, and who has approved |
 | `threads:<sid>` | the discussions already on the merge request, and which comments are the reviewer's |
+| `access:<sid>` | repositories Claude has asked to read, and what the reviewer decided |
 
 A file's scope name is the list's name with a path appended, so a client concatenates rather than
 assembling a second name. Names are validated: a path may contain a colon, a session id and a mode
