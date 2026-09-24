@@ -126,13 +126,22 @@ mis-rendered a correct view or rendered a wrong one faithfully.
 Browser tests cover **what only a browser can**: that a view renders, that an interaction sends the
 right command, and that a pushed update repaints. Review logic is the protocol suite's job.
 
-| surface | covered here |
-|---|---|
-| Hub | open reviews and their state chips, the queue, track, close, check-for-updates, queue loading and failure, links resolving to a review |
-| Diff | file list and selection, unified and side-by-side, token classes present, hunk headers, gaps, unfold from the blob scope, markdown toggle, mode switch (full / since / commit), `head_aligned` read-only banner |
-| Highlights | drag-selecting a range, the cheap-context card, escalation, cards arriving, dismissing an insight, the cross-repo consent prompt |
-| Review | drafting per highlight and at MR level, editing a draft, batch submit, approve, thread list, filter to unresolved, jump to line, reply, resolve |
-| Protocol edges | `loading` / `error` / `unavailable` / `unknown-session` / `malformed-name` states, a dropped socket and its reconnect, a scope republished under an open view |
+| surface | file | covered here |
+|---|---|---|
+| Hub | `test_hub.py` | open reviews and their state chips, the queue and its filter, track, close, unsubmitted drafts, check-for-updates, a failing queue read, a review as a real link |
+| Diff | `test_diff.py` | file tree and selection, side and line numbering, what is selectable, syntax colour, unfold from the blob scope, side-by-side, markdown toggle, since-last and per-commit modes, a conflicted replay warning, the read-only repo browser |
+| Highlights | `test_highlights.py` | drag-selecting a range, the number the session gave a row, a stale highlight, marks in the diff, the cheap-context tier, escalation, a card arriving, dismissing an insight, a selection surviving a frame mid-drag |
+| Channels | `test_channels.py` | the two channels as tabs, that neither can leave by the other, the review as a subject like any other, one conversation at a time, and doubting a claim — Claude's or your own |
+| Agent state | `test_agent_state.py` | what the server says is outstanding, and what it says once answered |
+| Review | `test_review.py` | drafting per highlight and at MR level, editing one, the counts, batch submit and what landed, approve, the discussion list and its filter, jump to line, reply, resolve, and the review-pass control in all three of its states |
+| Consent | `test_consent.py` | what a cross-repo ask shows, allowing, refusing, an already-decided ask, and each repository answered on its own |
+| Full view | `test_full_view.py` | the panel taking the window, reading width, the toggle both ways, and what survives the mode |
+| Rail zones | `test_rail_zones.py` | the pin outside the scroller, its cap, and the index still reachable past a run of insights |
+| Protocol edges | `test_protocol_edges.py` | a scope republished under an open view repaints it and nothing else |
+
+The edge states — `error`, `unknown-session`, `malformed-name` — and a dropped socket and its
+reconnect have **no browser test**. They are protocol-suite facts today; what a browser would add is
+that the page renders each without blanking, which nothing yet asserts.
 
 Not tested here, because another gate already proves it:
 

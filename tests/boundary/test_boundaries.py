@@ -58,3 +58,16 @@ def test_session_state_is_exactly_the_contract_set():  # AC-13
     envelope = {"id", "status", "created_at", "seq"}
     workspace = {"checkout_path"}   # the on-disk MR checkout (code-graph / LSP / grep)
     assert set(SessionState.model_fields) == doc_fields | envelope | workspace | counters | asks
+
+
+def test_the_browser_suites_map_lists_every_file_in_it():
+    """docs/testing/web-ui.md is the map of that suite, and a map that omits a surface is worse
+    than none — a reader trusts it and stops looking. The table has twice drifted behind the
+    tests it describes, so the half that can be checked mechanically is.
+
+    Only omissions are caught. A row claiming coverage that does not exist still needs a reader.
+    """
+    doc = (CORE.parent / "docs" / "testing" / "web-ui.md").read_text()
+    files = {py.name for py in (CORE.parent / "tests" / "webui").glob("test_*.py")}
+    missing = sorted(name for name in files if name not in doc)
+    assert not missing, f"not described in docs/testing/web-ui.md: {missing}"
