@@ -10,7 +10,7 @@ from review_mate.seams import MRRef, MRSource
 
 
 PROJECT = {"path_with_namespace": "group/proj", "http_url_to_repo": "https://gitlab/group/proj.git",
-           "ssh_url_to_repo": "git@gitlab:group/proj.git"}
+           "ssh_url_to_repo": "git@gitlab:group/proj.git", "default_branch": "main"}
 MR = {"iid": 42, "title": "Add thing", "source_branch": "feat", "target_branch": "main",
       "sha": "deadbeef", "author": {"username": "dev"}, "web_url": "https://gitlab/group/proj/-/merge_requests/42"}
 CHANGES = {"changes": [
@@ -400,3 +400,26 @@ async def test_load_keeps_the_collapsed_rows_if_the_raw_read_returns_nothing():
     provider, _ = _changes_provider(COLLAPSED_CHANGES, {"changes": []})
     payload = await provider.load(MRRef(host="gitlab", project="group/proj", iid=42))
     assert [f.path for f in payload.files] == ["docs/arch.md", "a.py"]
+
+
+# --- locating a repository to clone -------------------------------------------
+
+async def test_a_bare_name_locates_the_repository(provider):
+    """The agent reads an import, not a full path — the same resolution MR lookup already does."""
+    found = await provider.locate_repo("proj")
+    assert found == {"host": "gitlab", "project": "group/proj",
+                     "clone_url": "https://gitlab/group/proj.git", "ref": "main"}
+
+
+async def test_a_full_path_locates_it_too(provider):
+    assert (await provider.locate_repo("group/proj"))["project"] == "group/proj"
+
+
+async def test_a_name_nothing_answers_to_is_not_guessed(provider):
+    """A consent decision about the wrong repository is worse than none, so this reports nothing."""
+    assert await provider.locate_repo("not-a-real-project") is None
+
+
+async def test_it_clones_by_the_protocol_the_reviewer_chose(provider):
+    provider.git_protocol = "ssh"
+    assert (await provider.locate_repo("proj"))["clone_url"] == "git@gitlab:group/proj.git"

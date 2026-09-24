@@ -128,6 +128,27 @@ class GitLabProvider:
                 break
         return paths
 
+    async def locate_repo(self, name: str) -> dict | None:
+        """Where a repository named `name` can be cloned from, and at which ref.
+
+        `name` is whatever the agent asked for — a full path, or a bare project name it read in an
+        import. Resolution is the same one MR lookup uses, so a name that finds a repository here
+        finds the same one there, and the membership scoping that keeps a common name from matching
+        an unrelated public project applies equally.
+
+        Returns None when nothing resolves. The caller reports that to the reviewer rather than
+        guessing: a consent decision about the wrong repository is worse than none.
+        """
+        paths = await self._resolve_projects(name, limit=1)
+        if not paths:
+            return None
+        proj = await self._get(f"/projects/{quote(paths[0], safe='')}")
+        clone_url = _clone_url(proj, self.git_protocol)
+        if not clone_url:
+            return None
+        return {"host": self.host, "project": proj.get("path_with_namespace", paths[0]),
+                "clone_url": clone_url, "ref": proj.get("default_branch") or "HEAD"}
+
     async def get_file(self, project: str, path: str, ref: str) -> str:
         """Raw content of one file at `ref` (for viewing related, non-diff code)."""
         pid = quote(project, safe="")
