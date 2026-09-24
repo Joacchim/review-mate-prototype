@@ -110,6 +110,7 @@ follows posting rather than racing it.
 | `chat:<sid>:review` | the conversation about the change as a whole |
 | `chat:<sid>:<kind>:<id>` | one subject's conversation — kind is highlight, insight or thread |
 | `review:<sid>` | the comments prepared to send, whether the change moved on, and who has approved |
+| `threads:<sid>` | the discussions already on the merge request, and which comments are the reviewer's |
 
 A file's scope name is the list's name with a path appended, so a client concatenates rather than
 assembling a second name. Names are validated: a path may contain a colon, a session id and a mode
@@ -139,6 +140,12 @@ definition. "Is my ask being worked on" is the join, and no client performs it:
 `stale` qualifies `working`: an agent is attached, but the ask has sat long enough that "being
 worked on" is no longer the likely explanation — the case a restart strands, since the activity
 stream is ephemeral.
+
+A thread that vanishes on a host re-sync keeps its conversation. The host reconciling is not the
+reviewer discarding — a discussion can leave because someone resolved and deleted it, or because a
+system note was filtered — and what the reviewer wrote about it privately is still theirs. The
+conversation is then reachable on the wire and not from any rail, which costs an orphan and is the
+cheaper mistake of the two.
 
 An agent's own question back to the reviewer is not an ask. Nothing distinguishes a question from a
 statement in a message body, and inventing the distinction would report the reviewer's silence as

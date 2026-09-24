@@ -39,7 +39,7 @@ PRESENCE_TICK = 5.0
 
 # The scope families named after a session, rather than after the fleet. A review's lifetime is
 # decided by whether any of these is being read, so a new one belongs here and nowhere else.
-SESSION_FAMILIES = ("diff", "blob", "rail", "chat", "review")
+SESSION_FAMILIES = ("diff", "blob", "rail", "chat", "review", "threads")
 
 
 def build_manager_from_env(activity_broker=None):
@@ -97,6 +97,7 @@ def create_app(manager: SessionManager | None = None,
     from review_mate.view.diffscope import BlobScopes, DiffScopes
     from review_mate.view.rail import RailScope
     from review_mate.view.review import ReviewScope
+    from review_mate.view.threads import ThreadsScope
     from review_mate.writeback.submit import ReviewSubmitter
     from review_mate.view.hub import HubScope
     from review_mate.view.protocol import HUB
@@ -223,6 +224,8 @@ def create_app(manager: SessionManager | None = None,
     bus.register_family("chat", chat_scopes.build)
     review_scope = ReviewScope(manager, provider=provider, kb=kb)
     bus.register_family("review", review_scope.build)
+    threads_scope = ThreadsScope(manager, user=getattr(provider, "username", "") or "")
+    bus.register_family("threads", threads_scope.build)
 
     async def _warm_approval(session_id: str) -> None:
         """Ask the host who approved, then republish so the bar stops saying it does not know.
