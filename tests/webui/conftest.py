@@ -180,6 +180,7 @@ def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app, stub_
     stub_host.versions = []
     stub_host.commit_list = []
     stub_host.commit_files = {}
+    stub_host.repo_tree = []
     stub_host.blame_lines = []
     stub_host.issues = []
     stub_workspace.calls = []

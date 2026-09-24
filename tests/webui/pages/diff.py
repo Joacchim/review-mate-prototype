@@ -82,6 +82,10 @@ class DiffPage:
 
     # --- toggles ------------------------------------------------------------
 
+    def show_all_repo_files(self) -> None:
+        """The file browser: every path in the repository, not only the changed ones."""
+        self.page.locator(".treehdr input[type=checkbox]").click()
+
     def toggle_side_by_side(self) -> None:
         self.page.locator("#t-split").click()
 

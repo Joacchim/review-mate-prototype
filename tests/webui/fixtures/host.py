@@ -13,6 +13,7 @@ class StubHost:
         self.versions: list[dict] = []
         self.commit_list: list[dict] = []
         self.commit_files: dict[str, list] = {}
+        self.repo_tree: list[str] = []
         self.fail_with: Exception | None = None
         self.calls = 0
 
@@ -42,6 +43,10 @@ class StubHost:
 
     async def linked_issues(self, project: str, iid):
         return list(self.issues)
+
+    async def get_repo_tree(self, project: str, ref: str, max_pages: int = 30) -> list[str]:
+        """Every path in the repository, for browsing beyond the diff."""
+        return list(self.repo_tree)
 
     async def get_file(self, project: str, path: str, ref: str) -> str:
         """Whole-file content, which unfolding context and the markdown view both read."""

@@ -186,3 +186,19 @@ def test_a_clean_replay_carries_no_warning(diff, staged, stub_host, review_kb):
     diff.show_since_last()
     expect(diff.table).to_contain_text("added since you last looked")
     expect(diff.page.locator(".sincenote")).to_have_count(0)
+
+
+def test_the_file_browser_is_read_only_while_it_is_open(diff, page, staged, stub_host):
+    """The repository listing costs a host read, so it is subscribed while the browser is open and
+    not otherwise — a reviewer who never opens it never pays for it."""
+    staged.put(two_file_review("s1"))
+    stub_host.repo_tree = ["scheduler/capacity.py", "scheduler/config.py", "README.md"]
+    diff.load("s1")
+    assert page.evaluate("Object.keys(scopeViews).filter(s => /^tree:/.test(s))") == []
+
+    diff.show_all_repo_files()
+    page.wait_for_function("() => Object.keys(scopeViews).some(s => /^tree:/.test(s))")
+    expect(diff.files.filter(has_text="README.md")).to_have_count(1)
+
+    diff.show_all_repo_files()                       # off again
+    page.wait_for_function("() => !wantedScopes.some(s => /^tree:/.test(s))")

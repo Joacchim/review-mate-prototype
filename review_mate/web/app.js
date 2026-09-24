@@ -9,7 +9,6 @@ const collapsedDirs = new Set();
 let splitMode = localStorage.getItem("rm-split") === "1";
 const draftBuffers = {};   // highlight_id -> in-progress review-comment text (survives re-render)
 let focusedDraft = null;   // highlight_id of the focused draft textarea, to restore after render
-let repoTree = null;                 // all repo paths (lazy-loaded when "show all" is on)
 let showAll = localStorage.getItem("rm-showall") === "1";
 const scopeViews = {};               // scope name -> the view the server folded, whole
 let viewSocket = null;
@@ -42,7 +41,6 @@ const suggOpen = {};                 // draft key -> whether the suggestion edit
 const noteEdit = {};                 // note_id -> in-progress edit text (null/absent = not editing)
 // the review bar is the server's: what is prepared, whether this moved on, who has approved
 let commitsMode = false;             // per-commit review: the diff pane shows one commit at a time
-let commitList = null;               // [{sha, short_id, title, message, …}] oldest→newest, or null
 let currentCommit = null;            // sha of the commit being reviewed
 let sinceLast = false;               // showing the rebase-aware "since last review" interdiff
 
@@ -143,6 +141,27 @@ function setStatus(msg) { $("status").textContent = msg || ""; }
 // definition, and an ask nobody is listening for is not a slow answer. The rule — including why an
 // agent's own question back is not an ask — lives in review_mate/view/asks.py. The browser renders
 // the word it is given.
+
+// every file in the repository at this change's sha — subscribed only while the browser is open,
+// so a reviewer who never opens it never pays for the read
+function treeView() {
+  return scopeViews[`tree:${SID}`] || null;
+}
+
+function repoPaths() {
+  const view = treeView();
+  return view && view.state === "ready" ? view.paths : [];
+}
+
+// the commits this change is made of, subscribed only while reviewing one at a time
+function commitsView() {
+  return scopeViews[`commits:${SID}`] || null;
+}
+
+function commitRows() {
+  const view = commitsView();
+  return view && view.state === "ready" ? view.commits : [];
+}
 
 // what Claude has asked to read, and what was decided
 function accessView() {
@@ -322,8 +341,18 @@ function watchScopes(scopes) {
 
 // which version of the change is being read. It lives in the scope name, so switching is a
 // subscription rather than a fetch — and there is no second place for it to be recorded.
+// which commit is being read. The list arrives on its own scope, so this derives rather than
+// waits: the moment the commits are known the mode names one, and the file scope follows in the
+// same render instead of a frame later.
+function currentCommitSha() {
+  const rows = commitRows();
+  if (currentCommit && rows.some((c) => c.sha === currentCommit)) return currentCommit;
+  return rows.length ? rows[0].sha : null;
+}
+
 function diffMode() {
-  if (commitsMode && currentCommit) return `commit@${currentCommit}`;
+  const sha = commitsMode ? currentCommitSha() : null;
+  if (sha) return `commit@${sha}`;
   return sinceLast ? "since" : "full";
 }
 
@@ -336,6 +365,8 @@ function diffScopes() {
   const scopes = [listing, `rail:${SID}`, `chat:${SID}`, `review:${SID}`, `threads:${SID}`,
                   `access:${SID}`];
   if (currentFile) scopes.push(`${listing}:${currentFile}`);
+  if (showAll) scopes.push(`tree:${SID}`);        // the file browser, only while it is open
+  if (commitsMode) scopes.push(`commits:${SID}`); // and the commit list, only while reviewing one
   if (selected) scopes.push(conversationScope(selected));   // only the conversation on screen
   blobWanted.forEach((path) => scopes.push(`blob:${SID}:${mode}:${path}`));
   return scopes;
@@ -891,17 +922,10 @@ function buildTree(entries) {
   return root;
 }
 
-async function loadRepoTree() {
-  try {
-    const t = await fetch(`/api/sessions/${SID}/repo-tree`).then((r) => r.json());
-    repoTree = Array.isArray(t) ? t : [];
-  } catch (e) { repoTree = []; }
-}
-
 function renderTree() {
   const el = $("files");
   el.innerHTML = "";
-  const inCommits = commitsMode && commitList && currentCommit;
+  const inCommits = commitsMode && currentCommitSha();
   const inSince = sinceLast;
   if (inCommits) {   // the tree lists the current commit's files
     const hdr = document.createElement("label");
@@ -915,10 +939,12 @@ function renderTree() {
     const hdr = document.createElement("label");
     hdr.className = "treehdr";
     hdr.innerHTML = `<input type="checkbox" ${showAll ? "checked" : ""}> show all repo files`;
-    hdr.querySelector("input").onchange = async (e) => {
+    hdr.querySelector("input").onchange = (e) => {
       showAll = e.target.checked;
       localStorage.setItem("rm-showall", showAll ? "1" : "0");
-      if (showAll && repoTree === null) { hdr.lastChild.textContent = " loading repo…"; await loadRepoTree(); }
+      // opening the browser is a subscription, and closing it drops one — the repository listing
+      // is read while it is being looked at and not otherwise
+      watchScopes(diffScopes());
       renderTree();
     };
     el.appendChild(hdr);
@@ -928,8 +954,8 @@ function renderTree() {
   const diffPaths = new Set(files.map((f) => f.path));
   const entries = files.map((f) => ({ path: f.path, old_path: f.old_path,
                                      change_type: f.change_type, diff: true }));
-  if (!inSince && !inCommits && showAll && repoTree) {
-    repoTree.forEach((p) => { if (!diffPaths.has(p)) entries.push({ path: p, diff: false }); });
+  if (!inSince && !inCommits && showAll) {
+    repoPaths().forEach((p) => { if (!diffPaths.has(p)) entries.push({ path: p, diff: false }); });
   }
   if (!entries.length) {
     el.appendChild(empty(inCommits ? "this commit changed no files" : inSince ? "no changes since your last review" : "no files"));
@@ -1087,14 +1113,6 @@ async function toggleCommits() {
   $("t-commits").classList.toggle("on", commitsMode);
   if (commitsMode) {
     sinceLast = false; viewingPath = null;   // one diff mode at a time; both are diff views
-    if (commitList === null) {
-      render();   // show "loading commits…" while the list is fetched
-      try {
-        const d = await fetch(`/api/sessions/${SID}/commits`).then((r) => r.json());
-        commitList = Array.isArray(d.commits) ? d.commits : [];
-      } catch (e) { commitList = []; }
-      if (commitList.length && !currentCommit) currentCommit = commitList[0].sha;
-    }
   }
   currentFile = null;
   render();
@@ -1106,30 +1124,41 @@ function selectCommit(sha) {
 }
 
 function stepCommit(delta) {
-  if (!commitList || !commitList.length) return;
-  const i = commitList.findIndex((c) => c.sha === currentCommit);
-  const j = Math.min(commitList.length - 1, Math.max(0, (i < 0 ? 0 : i) + delta));
-  if (commitList[j]) selectCommit(commitList[j].sha);
+  const rows = commitRows();
+  if (!rows.length) return;
+  const i = rows.findIndex((c) => c.sha === currentCommitSha());
+  const j = Math.min(rows.length - 1, Math.max(0, (i < 0 ? 0 : i) + delta));
+  if (rows[j]) selectCommit(rows[j].sha);
 }
 
 function renderCommitView(el) {
-  if (commitList === null) { el.appendChild(empty("loading commits…")); return; }
-  if (!commitList.length) { el.appendChild(empty("no commits on this MR")); return; }
-  const i = Math.max(0, commitList.findIndex((c) => c.sha === currentCommit));
-  const c = commitList[i];
+  const listed = commitsView();
+  const rows = commitRows();
+  if (!listed || listed.state === "idle" || listed.state === "loading") {
+    el.appendChild(empty("loading commits…")); return;
+  }
+  if (listed.state === "unavailable") {
+    el.appendChild(empty("this host cannot list commits")); return;
+  }
+  if (listed.state === "error") {
+    el.appendChild(empty("✕ " + (listed.error || "commits failed"))); return;
+  }
+  if (!rows.length) { el.appendChild(empty("no commits on this MR")); return; }
+  const i = Math.max(0, rows.findIndex((c) => c.sha === currentCommitSha()));
+  const c = rows[i];
   // pair with the reviewed watermark: commits at/before it (in oldest→newest order) are reviewed,
   // the rest are new since your last review. -1 when there's no watermark or it isn't in this list.
   const wm = (reviewVersion() || {}).watermark;
-  const wmIndex = wm ? commitList.findIndex((x) => x.sha === wm) : -1;
+  const wmIndex = wm ? rows.findIndex((x) => x.sha === wm) : -1;
   const reviewed = (k) => wmIndex >= 0 && k <= wmIndex;
 
   const bar = document.createElement("div");
   bar.className = "commitbar";
   const prev = btn("◀", "btn ghost", () => stepCommit(-1)); if (i <= 0) prev.disabled = true;
-  const next = btn("▶", "btn ghost", () => stepCommit(1)); if (i >= commitList.length - 1) next.disabled = true;
-  const pos = document.createElement("span"); pos.className = "cpos"; pos.textContent = `commit ${i + 1}/${commitList.length}`;
+  const next = btn("▶", "btn ghost", () => stepCommit(1)); if (i >= rows.length - 1) next.disabled = true;
+  const pos = document.createElement("span"); pos.className = "cpos"; pos.textContent = `commit ${i + 1}/${rows.length}`;
   const sel = document.createElement("select"); sel.className = "csel";
-  commitList.forEach((x, k) => {
+  rows.forEach((x, k) => {
     const o = document.createElement("option");
     const mark = wmIndex < 0 ? "" : (reviewed(k) ? "✓ " : "○ ");
     o.value = x.sha; o.textContent = `${mark}${k + 1}. ${(x.short_id || x.sha.slice(0, 8))} — ${x.title}`;
