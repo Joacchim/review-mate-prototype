@@ -27,7 +27,7 @@ from review_mate.session.commands import (
 from review_mate.session.eventlog import EventLog
 from review_mate.session.reducer import fold
 from review_mate.session.state import (
-    DraftStatus, Origin, SessionState, SessionStatus, SessionSummary,
+    AccessStatus, DraftStatus, Origin, SessionState, SessionStatus, SessionSummary,
 )
 
 
@@ -89,8 +89,8 @@ class SessionManager:
 
         async def _pump() -> None:
             async for event in actor.subscribe(since=since):
-                if event.origin is not Origin.BROWSER:
-                    continue  # agent actions must not wake the agent
+                if event.origin is Origin.AGENT:
+                    continue  # the agent's own writes must not wake it back up
                 # a bare highlight gets the cheap tier and spends no agent turn (D21); every
                 # *explicit* ask wakes the agent, because each one is the reviewer waiting.
                 if isinstance(event, ev.ContextRequested):
@@ -101,6 +101,13 @@ class SessionManager:
                     broker.publish("insights_requested", session_id=sid)
                 elif isinstance(event, ev.CheckRequested):
                     broker.publish("check_requested", session_id=sid)
+                # consent, once it reaches something the agent can act on. An approval on its own is
+                # not that: the repository is still being cloned and the path does not exist yet.
+                elif isinstance(event, ev.AccessDecided) and event.status is AccessStatus.DENIED:
+                    broker.publish("access_settled", session_id=sid)
+                elif (isinstance(event, ev.AccessGrantChanged)
+                      and event.grant.state in ("ready", "failed")):
+                    broker.publish("access_settled", session_id=sid)
 
         task = asyncio.create_task(_pump())
         task.add_done_callback(self._on_republisher_done)

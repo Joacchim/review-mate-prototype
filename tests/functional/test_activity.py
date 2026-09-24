@@ -9,9 +9,10 @@ from review_mate.activity.broker import ActivityBroker
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
 from review_mate.session.commands import (
-    AddHighlight, EmitCard, PostMessage, RequestCheck, RequestContext, RequestInsights,
+    AddHighlight, DecideAccess, EmitCard, PostMessage, RecordGrant, RequestAccess, RequestCheck,
+    RequestContext, RequestInsights,
 )
-from review_mate.session.state import Side, LineRange, Origin, Subject, SubjectKind
+from review_mate.session.state import Grant, Side, LineRange, Origin, Subject, SubjectKind
 
 HL = dict(file="a.py", side=Side.NEW, line_range=LineRange(start=1, end=1))
 HL_CMD = {"type": "add_highlight", "file": "a.py", "side": "new",
@@ -235,4 +236,92 @@ async def test_outstanding_clears_once_the_agent_answers(tmp_path):
             == ["conversation"]
         await actor.submit(PostMessage(body="had a look"), Origin.AGENT)   # trailing role → agent
         assert (await c.get("/api/outstanding")).json() == {"sessions": [], "total": 0}
+    await mgr.shutdown()
+
+
+# --- consent, once the agent can act on it ------------------------------------
+
+async def _asked_and_decided(mgr, sid, approve):
+    actor = mgr.get(sid)
+    await actor.submit(RequestAccess(repo="g/sibling", reason="the contract"), Origin.AGENT)
+    rid = actor.snapshot().access_requests[-1].id
+    await actor.submit(DecideAccess(request_id=rid, approve=approve), Origin.BROWSER)
+    return actor, rid
+
+
+async def test_asking_for_access_does_not_wake_the_agent(tmp_path):
+    """It is the agent's own move. Waking it for its own write is the loop this filter exists for."""
+    broker = ActivityBroker()
+    mgr = SessionManager(root=tmp_path / "s", activity_broker=broker)
+    sid = await mgr.create()
+    await mgr.get(sid).submit(RequestAccess(repo="g/x", reason="r"), Origin.AGENT)
+    assert await broker.wait(since=0, timeout=0.2) is None
+    await mgr.shutdown()
+
+
+async def test_an_approval_alone_does_not_wake_the_agent(tmp_path):
+    """There is nothing to act on yet — the repository is still being cloned and has no path."""
+    broker = ActivityBroker()
+    mgr = SessionManager(root=tmp_path / "s", activity_broker=broker)
+    sid = await mgr.create()
+    await _asked_and_decided(mgr, sid, approve=True)
+    assert await broker.wait(since=0, timeout=0.2) is None
+    await mgr.shutdown()
+
+
+async def test_a_host_resync_does_not_wake_the_agent(tmp_path):
+    """The filter admits SYSTEM writes so a grant can wake the agent — and admitting the origin is
+    not admitting everything on it. Host reconciliation is the server's bookkeeping, not work."""
+    from review_mate.session.commands import ApplyFiles, ApplyMRMetadata
+    from review_mate.session.state import ChangeType, FileEntry, MRMetadata
+    broker = ActivityBroker()
+    mgr = SessionManager(root=tmp_path / "s", activity_broker=broker)
+    sid = await mgr.create()
+    await mgr.get(sid).submit(ApplyMRMetadata(mr=MRMetadata(
+        host="gitlab", project="g/p", iid=1, title="t", source_branch="x", target_branch="main",
+        sha="abc", author="d", url="u")), Origin.SYSTEM)
+    await mgr.get(sid).submit(ApplyFiles(files=[FileEntry(
+        path="a.py", change_type=ChangeType.MODIFIED, hunks=[])]), Origin.SYSTEM)
+    assert await broker.wait(since=0, timeout=0.2) is None
+    await mgr.shutdown()
+
+
+async def test_a_refusal_wakes_the_agent(tmp_path):
+    """A no is actionable: stop waiting on it and say what could not be checked."""
+    broker = ActivityBroker()
+    mgr = SessionManager(root=tmp_path / "s", activity_broker=broker)
+    sid = await mgr.create()
+    await _asked_and_decided(mgr, sid, approve=False)
+    event = await broker.wait(since=0, timeout=1)
+    assert event is not None and event.kind == "access_settled" and event.session_id == sid
+    await mgr.shutdown()
+
+
+async def test_the_repository_landing_wakes_the_agent(tmp_path):
+    """The case that was silent: a worker asked, timed out, parked, and the clone then finished."""
+    broker = ActivityBroker()
+    mgr = SessionManager(root=tmp_path / "s", activity_broker=broker)
+    sid = await mgr.create()
+    actor, rid = await _asked_and_decided(mgr, sid, approve=True)
+    await actor.submit(RecordGrant(request_id=rid, grant=Grant(state="materializing")),
+                       Origin.SYSTEM)
+    assert await broker.wait(since=0, timeout=0.2) is None, "a clone starting is not yet news"
+
+    await actor.submit(RecordGrant(request_id=rid, grant=Grant(state="ready", path="/tmp/x")),
+                       Origin.SYSTEM)
+    event = await broker.wait(since=0, timeout=1)
+    assert event is not None and event.kind == "access_settled"
+    await mgr.shutdown()
+
+
+async def test_a_grant_that_failed_wakes_the_agent_too(tmp_path):
+    """Otherwise it waits forever on a repository that is never coming."""
+    broker = ActivityBroker()
+    mgr = SessionManager(root=tmp_path / "s", activity_broker=broker)
+    sid = await mgr.create()
+    actor, rid = await _asked_and_decided(mgr, sid, approve=True)
+    await actor.submit(RecordGrant(request_id=rid, grant=Grant(state="failed", error="no repo")),
+                       Origin.SYSTEM)
+    event = await broker.wait(since=0, timeout=1)
+    assert event is not None and event.kind == "access_settled"
     await mgr.shutdown()

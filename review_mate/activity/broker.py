@@ -29,7 +29,7 @@ from pydantic import BaseModel
 
 class ActivityEvent(BaseModel):
     seq: int                           # global monotonic; the agent's wait offset
-    kind: str                          # one per ask the reviewer can raise, plus lookup_opened
+    kind: str                          # one per ask the reviewer can raise, plus consent and lookup
     session_id: str | None = None      # set for every kind but lookup_opened
     lookup_id: str | None = None       # set for lookup_opened
     query: str | None = None           # the lookup query, carried so the agent answers from the event
