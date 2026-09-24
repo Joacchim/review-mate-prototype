@@ -479,6 +479,30 @@ function railInsights() {
   return view && view.state === "ready" ? view.insights : [];
 }
 
+// The lens: read the change by what matters rather than by the order Claude happened to find it in.
+// Unlabelled sorts last, not lowest — nobody classified it, which is not the same as deciding it is
+// unimportant, and burying it under the lows would make that decision silently.
+const CRITICALITY_RANK = { high: 0, medium: 1, low: 2 };
+let insightTheme = "";          // "" = every theme
+
+function sortedInsights() {
+  const rows = railInsights().filter((c) => !insightTheme
+                                    || (c.label && c.label.theme === insightTheme));
+  return rows.slice().sort((a, b) => {
+    const ra = a.label ? CRITICALITY_RANK[a.label.criticality] : 3;
+    const rb = b.label ? CRITICALITY_RANK[b.label.criticality] : 3;
+    return ra - rb;
+  });
+}
+
+function insightThemes() {
+  const seen = [];
+  railInsights().forEach((c) => {
+    if (c.label && !seen.includes(c.label.theme)) seen.push(c.label.theme);
+  });
+  return seen.sort();
+}
+
 function railHighlight(id) {
   return railHighlights().find((h) => h.id === id) || null;
 }
@@ -1578,11 +1602,28 @@ function renderMrZone() {
                                       : "The merge request"));
   zone.appendChild(reviewPassRow());
   renderMrRow(zone);
+  const themes = insightThemes();
+  if (themes.length > 1) zone.appendChild(themeFilter(themes));
   const box = document.createElement("div");
   box.className = "railinsights";
-  insights.forEach((c) => box.appendChild(insightRow(c)));
+  sortedInsights().forEach((c) => box.appendChild(insightRow(c)));
   zone.appendChild(box);
   return zone;
+}
+
+// Narrow the findings to one kind. Only offered once there is more than one kind to choose between
+// — a filter with a single option is a control that cannot do anything.
+function themeFilter(themes) {
+  const wrap = document.createElement("div");
+  wrap.className = "themes";
+  const chip = (value, text) => {
+    const b = btn(text, "btn chipbtn" + (insightTheme === value ? " on" : ""),
+                  () => { insightTheme = value; renderRail(); });
+    return b;
+  };
+  wrap.appendChild(chip("", "all"));
+  themes.forEach((t) => wrap.appendChild(chip(t, t)));
+  return wrap;
 }
 
 // Asking Claude for a pass over the whole change. The control is disabled rather than hidden while
@@ -1712,9 +1753,17 @@ function insightRow(c) {
   const active = selected && selected.kind === "insight" && selected.id === c.id;
   const row = document.createElement("div");
   row.className = "hrow agent" + (active ? " active" : "");
+  const l = c.label;
+  // a corrected label reads differently from one nobody questioned — it is the reviewer's word now
+  const mine = l && l.by === "browser";
+  const label = l
+    ? `<span class="chip crit ${esc(l.criticality)}" title="${mine ? "you set this" : "Claude's assessment"}">` +
+      `${esc(l.theme)} · ${esc(l.criticality)}${mine ? " ✓" : ""}</span>`
+    : "";
   row.innerHTML =
     `<button class="x" title="dismiss">×</button>` +
-    `<div class="top"><span class="chip insight">MR-level</span></div>` +
+    `<div class="top"><span class="chip insight">MR-level</span>${label}</div>` +
+    (l && l.about ? `<div class="about">${esc(l.about)}</div>` : "") +
     `<div class="prev">${esc(firstLine(c.body))}</div>`;
   const mark = owedMarker({ kind: "insight", id: c.id });
   if (mark) row.querySelector(".top").appendChild(mark);
@@ -1943,7 +1992,44 @@ function cardBlock(card) {
   const acts = document.createElement("div"); acts.className = "noteacts";
   acts.appendChild(doubtControl(card.body, "double-check this"));
   wrap.appendChild(acts);
+  wrap.appendChild(labelControl(card));
   return wrap;
+}
+
+const THEMES = ["bug", "security", "performance", "test", "docs", "style", "naming", "complexity"];
+const CRITICALITIES = ["low", "medium", "high"];
+
+// Disagreeing with how Claude classified a finding, without losing the finding. A label that reads
+// `bug · high` on something that is a naming preference costs the reviewer attention every time
+// they scan the list, and dismissing the card to be rid of the label throws away the content too.
+function labelControl(card) {
+  const row = document.createElement("div");
+  row.className = "labelrow";
+  const l = card.label || {};
+  const pick = (name, values, current) => {
+    const sel = document.createElement("select");
+    sel.className = "labelpick"; sel.setAttribute("aria-label", name);
+    if (!current) sel.appendChild(new Option("—", ""));
+    values.forEach((v) => sel.appendChild(new Option(v, v, false, v === current)));
+    return sel;
+  };
+  const theme = pick("theme", THEMES, l.theme);
+  const crit = pick("criticality", CRITICALITIES, l.criticality);
+  const send = () => {
+    if (!theme.value || !crit.value) return;   // half a label is not one
+    post({ type: "label_card", card_id: card.id,
+           label: { theme: theme.value, criticality: crit.value, about: l.about || "" } });
+  };
+  theme.onchange = send;
+  crit.onchange = send;
+  row.appendChild(theme);
+  row.appendChild(crit);
+  if (l.by === "browser") {
+    const note = document.createElement("span");
+    note.className = "labelnote"; note.textContent = "your label";
+    row.appendChild(note);
+  }
+  return row;
 }
 
 // one subject's conversation with Claude: the messages, and the box that adds to them

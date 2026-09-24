@@ -71,6 +71,27 @@ class DetailPage:
     def checking(self):
         return self.panel.locator(".checkwait")
 
+    # --- disagreeing with how Claude classified it ---------------------------
+
+    @property
+    def label_theme(self):
+        return self.panel.locator('.labelrow select[aria-label="theme"]')
+
+    @property
+    def label_criticality(self):
+        return self.panel.locator('.labelrow select[aria-label="criticality"]')
+
+    @property
+    def label_note(self):
+        """Shown once the label is the reviewer's rather than Claude's."""
+        return self.panel.locator(".labelrow .labelnote")
+
+    def relabel(self, theme: str | None = None, criticality: str | None = None) -> None:
+        if theme is not None:
+            self.label_theme.select_option(theme)
+        if criticality is not None:
+            self.label_criticality.select_option(criticality)
+
     def close(self) -> None:
         self.page.locator("#detail .dclose").click()
 

@@ -252,6 +252,18 @@
   .req{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px}
   .req .repo{font-family:var(--mono);font-size:12px} .req .why{color:var(--fg2);font-size:12px;margin:4px 0 8px}
   .req button{margin-right:6px} button.ok{border-color:var(--postline);color:var(--addfg)} button.no{border-color:var(--delline);color:var(--delfg)}
+  .hrow .chip.crit{text-transform:none}
+  .hrow .chip.crit.high{background:var(--delline);color:var(--delfg)}
+  .hrow .chip.crit.medium{background:var(--panel2);color:var(--warnfg)}
+  .hrow .chip.crit.low{background:var(--panel2);color:var(--fg2)}
+  .hrow .about{font-size:11px;color:var(--fg2);margin:1px 0 2px}
+  .themes{display:flex;gap:4px;flex-wrap:wrap;margin:4px 0 6px}
+  .themes .chipbtn{font-size:10.5px;padding:1px 6px}
+  .themes .chipbtn.on{border-color:var(--accent);color:var(--accent)}
+  .labelrow{display:flex;gap:6px;align-items:center;margin:-2px 0 10px}
+  .labelrow .labelpick{background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+    border-radius:6px;font-size:10.5px;padding:1px 4px;font-family:inherit}
+  .labelrow .labelnote{font-size:10px;color:var(--accent)}
   .req.decided{opacity:.8} .req .grant{font-size:11.5px;margin-top:2px}
   .req .grant.ok{color:var(--addfg)} .req .grant.no{color:var(--delfg)}
   .req .grant.work{color:var(--warnfg)} .req .grant.warn{color:var(--warnfg)}

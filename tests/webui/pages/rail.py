@@ -46,6 +46,25 @@ class RailPage:
     def pinned_insights(self):
         return self.page.locator(".railpin .railinsights .hrow")
 
+    # --- reading the findings by what matters --------------------------------
+
+    @property
+    def insight_labels(self):
+        """The theme·criticality chip on each insight, in the order the rail lists them."""
+        return self.page.locator(".railpin .railinsights .hrow .chip.crit")
+
+    @property
+    def insight_abouts(self):
+        return self.page.locator(".railpin .railinsights .hrow .about")
+
+    @property
+    def theme_filter(self):
+        """Offered only once there is more than one kind of finding to choose between."""
+        return self.page.locator(".railpin .themes .chipbtn")
+
+    def narrow_to(self, theme: str) -> None:
+        self.page.locator(".railpin .themes .chipbtn", has_text=theme).first.click()
+
     @property
     def index_rows(self):
         """Every row in the scrolling zone, including the threads `rows` deliberately leaves out."""
