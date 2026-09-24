@@ -21,7 +21,7 @@ from review_mate.view.protocol import HUB, ScopeError, Subscribe, parse_client_m
 
 
 def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
-                      review=None, kb=None, threads=None) -> list:
+                      review=None, kb=None, threads=None, browse=None) -> list:
     async def _publish_hub() -> None:
         await bus.publish(HUB)
 
@@ -189,9 +189,12 @@ def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
         if "error" in result:
             return JSONResponse({"ok": False, "reason": result["error"]},
                                 status_code=404 if result["error"] == "unknown session" else 400)
+        if browse is not None:
+            # the commit list belongs to a head, and this is where a head moves
+            browse.forget_commits(sid)
         for scope in bus.watched(f"diff:{sid}:") | bus.watched(f"blob:{sid}:"):
             await bus.publish(scope)
-        for scope in (f"threads:{sid}", f"rail:{sid}", f"review:{sid}"):
+        for scope in (f"threads:{sid}", f"rail:{sid}", f"review:{sid}", f"commits:{sid}"):
             await bus.publish(scope)
         await _publish_hub()
         return JSONResponse({"ok": True, **result})

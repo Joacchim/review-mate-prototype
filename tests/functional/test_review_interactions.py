@@ -446,3 +446,33 @@ async def test_the_resync_command_reads_the_change_again(tmp_path):
         assert r.json() == {"ok": True, "head": "s", "threads": 1}
     assert [t.id for t in manager.get(sid).snapshot().threads] == ["d9"]
     await manager.shutdown()
+
+
+async def test_resyncing_drops_the_commit_list_it_read(tmp_path):
+    """The list belongs to a head. Re-syncing is where a head moves, so what was read stops being
+    an answer — and a reviewer must not be shown the old change's steps as this one's."""
+    from review_mate.view.browse import BrowseScopes
+
+    class Counting(StubProvider):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        async def commits(self, ref):
+            self.calls += 1
+            return [{"sha": "c1", "short_id": "c1", "title": "t", "message": "m",
+                     "author": "a", "created_at": ""}]
+
+    provider = Counting()
+    manager, sid, client = await _app_client(tmp_path, StubWriter(), provider)
+    async with client:
+        actor = manager.get(sid)
+        await actor.submit(ApplyMRMetadata(
+            mr=MR.model_copy(update={"capabilities": {"commits": True}})), Origin.SYSTEM)
+        scopes = BrowseScopes(manager, provider=provider)
+        await scopes.fetch_commits(sid)
+        assert (await scopes.build_commits(sid))["state"] == "ready" and provider.calls == 1
+
+        scopes.forget_commits(sid)
+        assert (await scopes.build_commits(sid))["state"] == "idle"
+    await manager.shutdown()

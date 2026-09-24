@@ -114,6 +114,13 @@ follows posting rather than racing it.
 | `review:<sid>` | the comments prepared to send, whether the change moved on, and who has approved |
 | `threads:<sid>` | the discussions already on the merge request, and which comments are the reviewer's |
 | `access:<sid>` | repositories Claude has asked to read, and what the reviewer decided |
+| `tree:<sid>` | every file in the repository at the change's sha, for browsing beyond the diff |
+| `commits:<sid>` | the commits the change is made of, for reviewing one at a time |
+
+`tree` and `commits` each cost a host read, so both are fetched when someone starts watching and
+never while nobody is — which a route cannot arrange, because a route is asked whether anyone is
+looking or not. Until the answer lands the view says `loading`, so a client shows that rather than
+waiting on it.
 
 A file's scope name is the list's name with a path appended, so a client concatenates rather than
 assembling a second name. Names are validated: a path may contain a colon, a session id and a mode

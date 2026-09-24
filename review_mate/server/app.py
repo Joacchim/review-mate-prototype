@@ -39,7 +39,8 @@ PRESENCE_TICK = 5.0
 
 # The scope families named after a session, rather than after the fleet. A review's lifetime is
 # decided by whether any of these is being read, so a new one belongs here and nowhere else.
-SESSION_FAMILIES = ("diff", "blob", "rail", "chat", "review", "threads", "access")
+SESSION_FAMILIES = ("diff", "blob", "rail", "chat", "review", "threads", "access",
+                    "tree", "commits")
 
 
 def build_manager_from_env(activity_broker=None):
@@ -98,6 +99,7 @@ def create_app(manager: SessionManager | None = None,
     from review_mate.view.rail import RailScope
     from review_mate.view.review import ReviewScope
     from review_mate.view.access import AccessScope
+    from review_mate.view.browse import BrowseScopes
     from review_mate.view.threads import ThreadsScope
     from review_mate.writeback.submit import ReviewSubmitter
     from review_mate.writeback.threads import ThreadVerbs
@@ -171,6 +173,11 @@ def create_app(manager: SessionManager | None = None,
     def _on_first_watch(scope: str) -> None:
         if _carries_presence(scope):
             _ensure_ticker()
+        # both browse scopes cost a host read, so they are asked for exactly while someone looks
+        if scope.startswith("tree:") and scope.count(":") == 1:
+            asyncio.create_task(_quietly(browse.fetch_tree(scope.partition(":")[2])))
+        if scope.startswith("commits:") and scope.count(":") == 1:
+            asyncio.create_task(_quietly(browse.fetch_commits(scope.partition(":")[2])))
         if scope.startswith("review:") and scope.count(":") == 1:
             # who approved is a host fact the bar shows, so it is worth asking for exactly while
             # someone is reading it — and once, rather than on every rebuild
@@ -230,6 +237,14 @@ def create_app(manager: SessionManager | None = None,
     bus.register_family("threads", threads_scope.build)
     access_scope = AccessScope(manager)
     bus.register_family("access", access_scope.build)
+    browse = BrowseScopes(manager, provider=provider, publish=bus.publish)
+    bus.register_family("tree", browse.build_tree)
+    bus.register_family("commits", browse.build_commits)
+
+    async def _quietly(coro) -> None:
+        """A background read that reports its own failure through the view it is filling."""
+        with suppress(Exception):
+            await coro
 
     async def _warm_approval(session_id: str) -> None:
         """Ask the host who approved, then republish so the bar stops saying it does not know.
@@ -274,7 +289,7 @@ def create_app(manager: SessionManager | None = None,
     # registered before the static mount so `/api/stream` and `/api/cmd` are never shadowed by the UI
     routes.extend(build_view_routes(manager, bus, hub, resolve_ref=resolve_ref,
                                     submitter=submitter, review=review_scope, kb=kb,
-                                    threads=thread_verbs))
+                                    threads=thread_verbs, browse=browse))
 
     mcp_app = None
     if with_mcp:
