@@ -270,9 +270,9 @@ def chat_index(state="watching", stale=False, conversations=None):
                       "parked": False, "last_seen": None, "asks": []}}
 
 
-def conversation(messages, owed=False, kind="review", ident=""):
+def conversation(messages, owed=False, kind="review", ident="", checking=False):
     return {"session": "s1", "state": "ready", "kind": kind, "id": ident, "owed": owed,
-            "messages": messages}
+            "checking": checking, "messages": messages}
 
 
 def message(role, body):
@@ -314,6 +314,32 @@ def test_an_ask_that_has_sat_says_so():
     screen = DiffScreen(StubClient({"diff:s1:full": listing([row("a.py")]),
                                     "chat:s1": chat_index("working", stale=True)}), "s1")
     assert "no answer yet" in text_of(screen)
+
+
+def test_a_doubt_is_raised_about_whatever_the_cursor_is_on():
+    screen = screen_with([hl(n=1)])
+    screen.focus = "rail"
+    assert screen.check_command() == {"type": "request_check",
+                                      "subject": {"kind": "highlight", "id": "h1"}}
+
+
+def test_the_review_as_a_whole_is_not_something_to_double_check():
+    """A doubt is about a claim, and "the whole change" is not one — that is the pass."""
+    screen = screen_with([hl(n=1)])
+    screen.focus = "body"
+    assert screen.check_command() is None
+
+
+def test_a_doubt_being_checked_says_so_rather_than_waiting_on_claude():
+    """Both are silences. Only one of them says what the silence is about."""
+    screen = DiffScreen(StubClient({
+        "diff:s1:full": listing([row("a.py")]),
+        "chat:s1": chat_index(),
+        "chat:s1:review": conversation([message("user", "are you sure?")],
+                                       owed=True, checking=True)}), "s1")
+    rendered = text_of(screen)
+    assert "Claude is double-checking this" in rendered
+    assert "waiting on Claude" not in rendered
 
 
 def test_the_rail_cursor_picks_whose_conversation_is_shown():

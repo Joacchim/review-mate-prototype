@@ -606,7 +606,9 @@ class DiffScreen:
             style = "class:info" if message["role"] == "user" else "class:ok"
             out.append((style, f"   {who:<7}"))
             out.append(("", _one_line(message["body"]) + "\n"))
-        if view.get("owed"):
+        if view.get("checking"):
+            out.append(("class:attention", "   Claude is double-checking this\n"))
+        elif view.get("owed"):
             out.append(("class:muted", "   waiting on Claude\n"))
         return out
 
@@ -616,11 +618,11 @@ class DiffScreen:
         if self.focus == "body":
             return "\n tab pane   j/k line   v select   n/p file   m mode   b back   q quit\n"
         if self.focus == "rail":
-            return ("\n tab pane   j/k move   a ask Claude   c write   d comment   S send"
-                    "   b back   q quit\n")
+            return ("\n tab pane   j/k move   a ask Claude   D double-check   c write   d comment"
+                    "   S send   b back   q quit\n")
         if self.focus == "threads":
             return ("\n tab pane   j/k move   enter go to it   f open/all   c ask Claude"
-                    "   R reply   V resolve   b back   q quit\n")
+                    "   D double-check   R reply   V resolve   b back   q quit\n")
         return ("\n tab pane   j/k move   i review pass   o browse repo   c write   d comment"
                 "   S send   b back   q quit\n")
 
@@ -690,6 +692,18 @@ class DiffScreen:
         self.anchor = None
         return {"type": "add_highlight", "file": self.current["path"], "side": "new",
                 "line_range": {"start": low, "end": high}}
+
+    def check_command(self) -> dict | None:
+        """Ask Claude to verify what has been claimed about whatever the cursor is on.
+
+        The subject is the one the chat pane is already about, so the doubt lands where the answer
+        will be read. Nothing is offered for the review as a whole: a doubt has to be about a
+        claim, and "the whole change" is not one — that is what a review pass is for.
+        """
+        subject = self.subject()
+        if subject is None:
+            return None
+        return {"type": "request_check", "subject": subject}
 
     def cancel_selection(self) -> None:
         self.anchor = None

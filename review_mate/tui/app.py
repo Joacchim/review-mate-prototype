@@ -459,6 +459,16 @@ class Shell:
                 return
             spawn(self.client.session_command(self.diff.session, command))
 
+        @kb.add("D")
+        def _double_check(event) -> None:
+            """Doubt what has been said about this — yours or Claude's — and ask it to verify."""
+            if self.diff is None:
+                return
+            command = self.diff.check_command()
+            if command is None:
+                return
+            spawn(self.client.session_command(self.diff.session, command))
+
         @kb.add("n")
         def _next_file(event) -> None:
             if self.diff is not None:
