@@ -89,7 +89,8 @@ async def test_tracking_moves_an_mr_into_open_reviews(hub: HubPage):
     await expect(hub.queue.row("g/p!7")).to_have_count(0)
 ```
 
-One page object per surface: `HubPage`, `DiffPage`, `RailPage`, `ShellPage`, `DetailPage`, `ReviewBarPage`. Each exposes
+One page object per surface: `HubPage`, `DiffPage`, `RailPage`, `ShellPage`, `DetailPage`,
+`ReviewBarPage`, `ThreadsPage`. Each exposes
 intent (`track`, `unfold`, `highlight_lines`, `submit`), not clicks.
 
 Use Playwright's web-first assertions (`expect(...).to_*`) rather than reading values and asserting

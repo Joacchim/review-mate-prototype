@@ -77,6 +77,10 @@ class StubWriter:
     def __init__(self) -> None:
         self.posted: list[str] = []
         self.approved = False
+        self.replied: list[tuple] = []
+        self.resolved: list[tuple] = []
+        self.edited: list[tuple] = []
+        self.deleted: list[tuple] = []
 
     def capabilities(self) -> dict:
         from review_mate.host.base import GITLAB_CAPABILITIES
@@ -92,6 +96,22 @@ class StubWriter:
 
     async def approve(self, ref):
         self.approved = True
+        return {}
+
+    async def reply(self, ref, thread_id, body):
+        self.replied.append((thread_id, body))
+        return {"id": "note-new"}
+
+    async def resolve(self, ref, thread_id, resolved=True):
+        self.resolved.append((thread_id, resolved))
+        return {}
+
+    async def edit_note(self, ref, thread_id, note_id, body):
+        self.edited.append((thread_id, note_id, body))
+        return {}
+
+    async def delete_note(self, ref, thread_id, note_id):
+        self.deleted.append((thread_id, note_id))
         return {}
 
 
@@ -166,6 +186,9 @@ def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app, stub_
     stub_workspace.clean = True
     stub_writer.posted.clear()
     stub_writer.approved = False
+    for recorded in (stub_writer.replied, stub_writer.resolved,
+                     stub_writer.edited, stub_writer.deleted):
+        recorded.clear()
     review_kb._data.watermarks = {}
     for scope in (staged_app.state.hub, staged_app.state.diff_scopes, staged_app.state.blob_scopes,
                   staged_app.state.rail_scope):

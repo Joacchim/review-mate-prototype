@@ -29,11 +29,6 @@ class ReviewBarPage:
     def submit(self):
         return self.bar.locator("button.primary")
 
-    @property
-    def status(self):
-        """The header line the submit result is reported on."""
-        return self.page.locator("#status")
-
     # --- the version banner, which shares the bar's facts --------------------
 
     @property

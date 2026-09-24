@@ -17,6 +17,8 @@ from webui.pages.detail import DetailPage
 from webui.pages.diff import DiffPage
 from webui.pages.rail import RailPage
 from webui.pages.reviewbar import ReviewBarPage
+from webui.pages.shell import ShellPage
+from webui.pages.threads import ThreadsPage
 
 
 @pytest.fixture
@@ -37,6 +39,16 @@ def detail(page) -> DetailPage:
 @pytest.fixture
 def review(page) -> ReviewBarPage:
     return ReviewBarPage(page)
+
+
+@pytest.fixture
+def threads(page) -> ThreadsPage:
+    return ThreadsPage(page)
+
+
+@pytest.fixture
+def shell(page) -> ShellPage:
+    return ShellPage(page)
 
 
 def _approvable(state):
@@ -121,19 +133,19 @@ def test_submitting_posts_every_prepared_comment(diff, review, staged, stub_writ
     assert stub_writer.approved is False
 
 
-def test_submitting_reports_what_landed(diff, review, staged):
+def test_submitting_reports_what_landed(diff, review, shell, staged):
     staged.put(_with_draft())
     diff.load("s1")
     review.submit.click()
-    expect(review.status).to_contain_text("posted 1 comment")
+    expect(shell.status).to_contain_text("posted 1 comment")
 
 
-def test_approving_travels_with_the_submission(diff, review, staged, stub_writer):
+def test_approving_travels_with_the_submission(diff, review, shell, staged, stub_writer):
     staged.put(_with_draft("reads well overall"))
     diff.load("s1")
     review.approve.check()
     review.submit.click()
-    expect(review.status).to_contain_text("approved")
+    expect(shell.status).to_contain_text("approved")
     assert stub_writer.approved is True
     assert stub_writer.posted == ["reads well overall"]
 
@@ -143,3 +155,78 @@ def test_an_mr_the_host_cannot_approve_offers_no_approval(diff, review, staged):
     staged.put(review_with_highlights("s1"))       # no capabilities reported
     diff.load("s1")
     expect(review.approve).to_have_count(0)
+
+
+# --- the discussions already on the merge request ----------------------------
+# The last of this surface. Every fact here is the server's: which comments are the reviewer's own,
+# how many are still open, what a re-sync left behind. The page compared usernames for the first of
+# those and fetched its own identity to do it.
+
+def _discussed(*rows, session_id="s1"):
+    from review_mate.session.state import ReviewThread, ThreadComment
+    state = review_with_highlights(session_id)
+    state.threads = [
+        ReviewThread(id=r["id"], resolved=r.get("resolved", False), anchor=r.get("anchor"),
+                     comments=[ThreadComment(id=str(i), author=a, body=b)
+                               for i, (a, b) in enumerate(r.get("said", []))])
+        for r in rows]
+    return state
+
+
+AT_LINE = {"file": "scheduler/capacity.py", "side": "new", "line": 45}
+
+
+def test_the_discussions_are_listed_with_what_was_said(diff, threads, staged):
+    staged.put(_discussed({"id": "d1", "anchor": AT_LINE,
+                           "said": [("eric", "prefer a guard here")]}))
+    diff.load("s1")
+    expect(threads.heading).to_be_visible()
+    expect(threads.row("prefer a guard here")).to_be_visible()
+
+
+def test_the_filter_starts_on_what_is_still_open(diff, threads, staged):
+    staged.put(_discussed({"id": "d1", "said": [("eric", "still open")]},
+                          {"id": "d2", "resolved": True, "said": [("eric", "settled already")]}))
+    diff.load("s1")
+    expect(threads.row("still open")).to_be_visible()
+    expect(threads.row("settled already")).to_have_count(0)
+    threads.show("All")
+    expect(threads.row("settled already")).to_be_visible()
+
+
+def test_a_discussions_location_takes_the_diff_to_it(diff, threads, page, staged):
+    staged.put(_discussed({"id": "d1", "anchor": AT_LINE, "said": [("eric", "prefer a guard")]}))
+    diff.load("s1")
+    threads.jump_from("prefer a guard")
+    expect(page.locator("table.hunk tr.flash")).to_have_count(1)
+
+
+def test_only_the_reviewers_own_comments_offer_edit_and_delete(diff, threads, staged):
+    """The server says whose a comment is. The page used to fetch its own identity and compare."""
+    staged.put(_discussed({"id": "d1", "anchor": AT_LINE,
+                           "said": [("someone-else", "not yours"), ("reviewer", "yours")]}))
+    diff.load("s1")
+    threads.row("not yours").click()
+    expect(threads.comments).to_have_count(2)
+    expect(threads.actions_on("yours")).to_have_count(2)        # edit + delete
+    expect(threads.actions_on("not yours")).to_have_count(0)    # and none on someone else's
+
+
+def test_replying_reaches_the_host(diff, threads, staged, stub_writer):
+    staged.put(_discussed({"id": "d1", "anchor": AT_LINE, "said": [("eric", "prefer a guard")]}))
+    diff.load("s1")
+    threads.row("prefer a guard").click()
+    threads.reply("fixed in the next push")
+    expect(threads.reply_box).to_have_value("")        # the box clears once it has gone
+    assert stub_writer.replied == [("d1", "fixed in the next push")]
+
+
+def test_resolving_a_discussion_settles_it(diff, threads, shell, staged, stub_writer):
+    staged.put(_discussed({"id": "d1", "anchor": AT_LINE, "said": [("eric", "prefer a guard")]}))
+    diff.load("s1")
+    threads.row("prefer a guard").click()
+    threads.resolve()
+    # the report is what says the round trip finished; what the list then shows is whatever the
+    # host answers with, which this fixture decides rather than the resolve does
+    expect(shell.status).to_have_text("resolved")
+    assert stub_writer.resolved == [("d1", True)]

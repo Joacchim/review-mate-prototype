@@ -37,7 +37,6 @@ const threadReplyBuf = {};           // thread_id -> in-progress reply text (sur
 let threadReplyFocused = null;       // thread_id of the focused reply textarea, to restore after render
 const askBuf = {};                   // highlight_id -> in-progress "ask Claude" question text
 let askFocused = null;               // highlight_id of the focused ask-context input, to restore after render
-let me = null;                       // the reviewer's own host username (to mark "your" notes)
 const suggBuf = {};                  // draft key -> in-progress suggested-change text
 const suggOpen = {};                 // draft key -> whether the suggestion editor is open
 const noteEdit = {};                 // note_id -> in-progress edit text (null/absent = not editing)
@@ -102,7 +101,6 @@ async function boot() {
   if (!SID && params.get("ref")) return openRef(params.get("ref"));
   if (!SID) return showLanding();
   $("sid").textContent = SID.slice(0, 8);
-  try { me = (await fetch("/api/me").then((r) => r.json())).username; } catch (e) { me = null; }
   connectViews(diffScopes());   // the change is read through the view protocol
   await load();          // paint fast from stored state
   connectWS();           // the session's own event stream, for highlights, cards and threads
@@ -114,12 +112,9 @@ async function boot() {
 // so a branch that advanced since you last looked (the hub's "git update") engages the since-last
 // feature in-session instead of the stored, stale head hiding it. Background — the page already painted.
 async function syncFromHost() {
-  try {
-    const r = await fetch(`/api/sessions/${SID}/refresh-threads`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
-    });
-    if (r.ok) await load();
-  } catch (e) { /* keep the stored view; the ↻ button re-syncs on demand */ }
+  // the same re-sync the ↻ button runs, on the way in. Quiet on failure: the stored view is still
+  // worth reading, and the button is there to try again
+  if ((await cmd("session.resync", { session: SID })).ok) await load();
 }
 
 // the new-side content of a highlighted line range, pulled from the diff hunks (for suggestion pre-fill)
@@ -148,6 +143,21 @@ function setStatus(msg) { $("status").textContent = msg || ""; }
 // definition, and an ask nobody is listening for is not a slow answer. The rule — including why an
 // agent's own question back is not an ask — lives in review_mate/view/asks.py. The browser renders
 // the word it is given.
+
+// the discussions on the merge request, as the host last reported them
+function threadsView() {
+  const view = scopeViews[`threads:${SID}`];
+  return view && view.state === "ready" ? view : null;
+}
+
+function allThreads() {
+  const view = threadsView();
+  return view ? view.threads : [];
+}
+
+function threadById(id) {
+  return allThreads().find((t) => t.id === id) || null;
+}
 
 // what this review has prepared to send, and what it would take to send it
 function reviewView() {
@@ -307,11 +317,12 @@ function diffMode() {
 }
 
 // the scopes the review page reads: the file list, the file being shown, any whole file it needs,
-// the rail, the chat index that carries the agent's state, and the review it is preparing
+// the rail, the chat index that carries the agent's state, the review it is preparing, and the
+// discussions already on the merge request
 function diffScopes() {
   const mode = diffMode();
   const listing = `diff:${SID}:${mode}`;
-  const scopes = [listing, `rail:${SID}`, `chat:${SID}`, `review:${SID}`];
+  const scopes = [listing, `rail:${SID}`, `chat:${SID}`, `review:${SID}`, `threads:${SID}`];
   if (currentFile) scopes.push(`${listing}:${currentFile}`);
   if (selected) scopes.push(conversationScope(selected));   // only the conversation on screen
   blobWanted.forEach((path) => scopes.push(`blob:${SID}:${mode}:${path}`));
@@ -973,7 +984,7 @@ function highlightLines(path) {
 // new-side lines carrying a host discussion (GitLab thread), for a distinct diff overlay
 function threadLines(path) {
   const set = new Set();
-  (state.threads || []).forEach((t) => {
+  allThreads().forEach((t) => {
     if (t.anchor && t.anchor.file === path && t.anchor.line != null) set.add(t.anchor.line);
   });
   return set;
@@ -1641,7 +1652,7 @@ function detailSubject() {
     return card ? { kind: "insight", card } : null;
   }
   if (selected.kind === "thread") {
-    const thread = (state.threads || []).find((x) => x.id === selected.id);
+    const thread = threadById(selected.id);
     return thread ? { kind: "thread", thread } : null;
   }
   const hl = railHighlight(selected.id);
@@ -1732,7 +1743,7 @@ function hostThread(subject) {
   if (subject.kind === "thread") return subject.thread;
   const draft = subjectDraft(subject);
   if (!(draft && draft.status === "posted" && draft.thread_id)) return null;
-  return (state.threads || []).find((x) => x.id === draft.thread_id) || null;
+  return threadById(draft.thread_id);
 }
 
 function hostCount(subject) {
@@ -1954,7 +1965,7 @@ function renderThreads(el) {
   const ownPosted = new Set((state.drafts || [])
     .filter((d) => d.status === "posted" && d.thread_id)
     .map((d) => d.thread_id));
-  const threads = (state.threads || []).filter((t) => !ownPosted.has(t.id));
+  const threads = allThreads().filter((t) => !ownPosted.has(t.id));
   const head = document.createElement("div");
   head.className = "chathdr";
   head.appendChild(h3("Discussions"));
@@ -1963,7 +1974,8 @@ function renderThreads(el) {
   if (!threads.length) { el.appendChild(empty("no discussions on this MR")); return; }
 
   const seg = document.createElement("div");
-  seg.className = "seg";
+  // named apart from the index's own filter: both sit in the same scroller and read alike
+  seg.className = "seg threadseg";
   const unresolved = threads.filter((t) => !t.resolved).length;
   [["unresolved", `Unresolved ${unresolved}`], ["all", `All ${threads.length}`]].forEach(([k, label]) => {
     seg.appendChild(btn(label, "btn" + (threadFilter === k ? " on" : ""),
@@ -2017,50 +2029,47 @@ function matchingHighlight(t) {
   return hl ? { hl, n: hl.n } : null;
 }
 
-async function threadAction(path, body, okMsg) {
+// Every thread verb is the same command shape and the same report. None of them reloads the
+// session afterwards: the server republishes the discussions it changed, so the panel repaints
+// from the scope rather than from whatever this guessed the host would say.
+async function threadCmd(name, args, okMsg) {
   setStatus("…");
-  try {
-    const r = await fetch(`/api/sessions/${SID}/${path}`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) { setStatus("✕ " + (data.error || "failed")); return false; }
-    setStatus(okMsg || "");
-    return true;
-  } catch (e) { setStatus("✕ " + e); return false; }
+  const result = await cmd(name, { session: SID, ...args });
+  setStatus(result.ok ? (okMsg || "") : "✕ " + result.reason);
+  return result.ok;
 }
 
 async function refreshThreads() {
-  // re-syncs the whole MR from the host (head + diff + discussions), not just threads — so an
-  // updated MR is noticed and the "Since last review" banner can appear (diff-versions)
-  if (await threadAction("refresh-threads", {}, "re-synced with host")) await load();
+  // a full re-read of the change, not just its discussions — an updated head is what lets the
+  // "Since last review" banner appear at all. The session fetch still carries the file list, so
+  // that one is reloaded here until it has a scope of its own.
+  if (await threadCmd("session.resync", {}, "re-synced with host")) await load();
 }
 
 async function replyThread(tid) {
   const body = (threadReplyBuf[tid] || "").trim();
   if (!body) return;
-  if (await threadAction(`threads/${tid}/reply`, { body }, "reply posted")) {
-    delete threadReplyBuf[tid]; await load();
+  if (await threadCmd("thread.reply", { thread: tid, body }, "reply posted")) {
+    delete threadReplyBuf[tid]; renderRail();
   }
 }
 
 async function resolveThread(tid, resolved) {
-  if (await threadAction(`threads/${tid}/resolve`, { resolved }, resolved ? "resolved" : "reopened")) {
-    await load();
-  }
+  await threadCmd("thread.resolve", { thread: tid, resolved },
+                  resolved ? "resolved" : "reopened");
 }
 
 async function submitNoteEdit(tid, nid) {
   const body = (noteEdit[nid] || "").trim();
   if (!body) return;
-  if (await threadAction(`threads/${tid}/notes/${nid}/edit`, { body }, "edited")) {
-    delete noteEdit[nid]; await load();
+  if (await threadCmd("thread.edit_note", { thread: tid, note: nid, body }, "edited")) {
+    delete noteEdit[nid]; renderRail();
   }
 }
 
 async function deleteNote(tid, nid) {
   if (!confirm("Delete this comment?")) return;
-  if (await threadAction(`threads/${tid}/notes/${nid}/delete`, {}, "deleted")) await load();
+  await threadCmd("thread.delete_note", { thread: tid, note: nid }, "deleted");
 }
 
 // the conversation for a thread — notes (edit/delete on your own) + reply + resolve.
@@ -2084,7 +2093,7 @@ function threadConversationBlock(t) {
       d.appendChild(ta); d.appendChild(row);
     } else {
       d.innerHTML = `<div class="who">${esc(c.author)}</div><div class="md">${md(c.body)}</div>`;
-      if (canThreads && me && c.author === me) {    // your own note → edit / delete
+      if (canThreads && c.mine) {    // your own note → edit / delete
         const acts = document.createElement("div"); acts.className = "noteacts";
         acts.appendChild(btn("edit", "btn ghost", () => { noteEdit[c.id] = c.body; renderRail(); }));
         acts.appendChild(btn("delete", "btn ghost", () => deleteNote(t.id, c.id)));

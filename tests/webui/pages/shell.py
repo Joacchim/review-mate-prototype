@@ -14,6 +14,11 @@ class ShellPage:
         return self.page.locator("#agent")
 
     @property
+    def status(self):
+        """What the last action reported — the header line every command writes its outcome to."""
+        return self.page.locator("#status")
+
+    @property
     def agent_label(self):
         """The word beside it — shown only when the state needs the reviewer's eye."""
         return self.page.locator("#agent .alab")
