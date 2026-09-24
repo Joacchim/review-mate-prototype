@@ -121,3 +121,54 @@ def test_closing_the_panel_drops_the_conversation_it_was_watching(diff, rail, de
     page.wait_for_function("() => !Object.keys(scopeViews).some(s => /^chat:s1:/.test(s))")
     assert page.evaluate("Object.keys(scopeViews).filter(s => /^chat:s1:/.test(s))") == []
     assert page.evaluate("wantedScopes.filter(s => /^chat:s1:/.test(s))") == []
+
+
+# --- doubting what was said ---------------------------------------------------
+
+def test_doubting_claudes_answer_records_it_against_the_subject(diff, rail, detail, staged):
+    """The claim travels as a note; the subject is what the answer will come back on."""
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    _open_first(rail, detail)
+    detail.doubt_card()
+    expect(detail.checking).to_have_count(1)     # the scope came back, so the command landed
+
+    sent = _commands(staged)
+    check = next(c for name, c in sent if name == "RequestCheck")
+    assert check.subject.kind.value == "highlight" and check.subject.id == "h1"
+    assert check.note == "`_legacy` is the pre-fleet queue."
+    assert "PostMessage" not in [name for name, _ in sent], "a doubt is not a message"
+
+
+def test_doubting_your_own_words_is_offered_too(diff, rail, detail, staged):
+    """Either side's claim can be wrong, so the control is on the message, not on the author."""
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    _open_first(rail, detail)
+    detail.ask("the legacy queue is unused")
+    expect(detail.messages).to_have_count(1)
+    detail.doubt(0)
+    expect(detail.checking).to_have_count(1)
+
+    check = next(c for name, c in _commands(staged) if name == "RequestCheck")
+    assert check.note == "the legacy queue is unused"
+
+
+def test_a_doubt_says_it_is_being_checked_rather_than_going_quiet(diff, rail, detail, staged):
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    _open_first(rail, detail)
+    expect(detail.checking).to_have_count(0)
+    detail.doubt_card()
+    expect(detail.checking).to_have_text("Claude is double-checking this")
+
+
+def test_the_review_as_a_whole_offers_no_per_message_doubt(diff, rail, detail, staged):
+    """An MR-wide message is anchored to nothing, and a doubt has to be recorded against something."""
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    rail.mr_row.click()
+    expect(detail.panel).to_be_visible()
+    detail.ask("anything else worth knowing?")
+    expect(detail.messages).to_have_count(1)
+    expect(detail.messages.first.locator(".noteacts")).to_have_count(0)

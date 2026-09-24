@@ -1841,9 +1841,7 @@ function claudeChannel(subject) {
     if (!posted) {
       frag.appendChild(cheapContextBlock(hl));
       if (hl.card) {
-        const c = document.createElement("div");
-        c.className = "card md"; c.innerHTML = md(hl.card.body);
-        frag.appendChild(c);
+        frag.appendChild(cardBlock(hl.card));
       } else if (hl.context_requested) {
         frag.appendChild(agentWaitLine(hl.context_requested_at || hl.created_at));
       } else {
@@ -1851,12 +1849,40 @@ function claudeChannel(subject) {
       }
     }
   } else if (subject.kind === "insight") {
-    const c = document.createElement("div");
-    c.className = "card md"; c.innerHTML = md(subject.card.body);
-    frag.appendChild(c);
+    frag.appendChild(cardBlock(subject.card));
   }
   frag.appendChild(conversationBlock(subject));
   return frag;
+}
+
+// Doubting something that was said, and asking Claude to verify it. The claim travels as a note
+// because a message is not a subject the protocol knows — the doubt is recorded against the
+// subject the claim was made about, which is also where the answer will appear.
+function doubtControl(claim, label) {
+  return btn(label || "double-check", "btn ghost", () => post({
+    type: "request_check", subject: subjectAnchor(selected), note: claim || "",
+  }));
+}
+
+// Whether Claude owes this conversation a verification. Server-side fact, same list the agent
+// works from, so what is shown waiting and what is actually owed cannot disagree.
+function beingChecked(sel) {
+  const view = scopeViews[conversationScope(sel)];
+  return !!(view && view.state === "ready" && view.checking);
+}
+
+// An answer Claude gave, with the means to doubt it. The control sits on the claim rather than in
+// the header because that is what is being doubted — and Claude's own words are the ones a reviewer
+// most often wants a second pass over.
+function cardBlock(card) {
+  const wrap = document.createElement("div");
+  const c = document.createElement("div");
+  c.className = "card md"; c.innerHTML = md(card.body);
+  wrap.appendChild(c);
+  const acts = document.createElement("div"); acts.className = "noteacts";
+  acts.appendChild(doubtControl(card.body, "double-check this"));
+  wrap.appendChild(acts);
+  return wrap;
 }
 
 // one subject's conversation with Claude: the messages, and the box that adds to them
@@ -1886,11 +1912,21 @@ function conversationBlock(subject) {
     const d = document.createElement("div");
     d.className = "msg " + (m.role === "user" ? "user" : "agent");
     d.innerHTML = `<div class="who">${esc(m.role)}</div><div class="md">${md(m.body)}</div>`;
+    if (subject.kind !== "mr") {     // a doubt needs a subject to be recorded against
+      const acts = document.createElement("div"); acts.className = "noteacts";
+      acts.appendChild(doubtControl(m.body));
+      d.appendChild(acts);
+    }
     msgs.appendChild(d);
   });
   // your turn is still unanswered — say whether it's being worked on or nothing picked it up
   const last = messages[messages.length - 1];
-  if (last && last.role === "user") msgs.appendChild(agentWaitLine(last.created_at));
+  if (beingChecked(selected)) {
+    const line = document.createElement("div");
+    line.className = "checkwait";
+    line.textContent = "Claude is double-checking this";
+    msgs.appendChild(line);
+  } else if (last && last.role === "user") msgs.appendChild(agentWaitLine(last.created_at));
   wrap.appendChild(msgs);
 
   const box = document.createElement("div");

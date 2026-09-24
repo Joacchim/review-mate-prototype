@@ -57,6 +57,20 @@ class DetailPage:
         a message made the round trip, not a delay."""
         return self.page.locator("#detail .msgs .msg")
 
+    # --- doubting what was said ----------------------------------------------
+
+    def doubt(self, index: int = 0) -> None:
+        """Ask Claude to verify the claim in one message of the conversation."""
+        self.messages.nth(index).locator(".noteacts .btn", has_text="double-check").click()
+
+    def doubt_card(self) -> None:
+        """Ask Claude to verify its own answer — the claim above the conversation."""
+        self.panel.locator(".noteacts .btn", has_text="double-check this").click()
+
+    @property
+    def checking(self):
+        return self.panel.locator(".checkwait")
+
     def close(self) -> None:
         self.page.locator("#detail .dclose").click()
 
