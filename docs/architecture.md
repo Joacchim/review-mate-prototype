@@ -239,7 +239,13 @@ there is one representation of a review and not one per audience. That is what s
 outstanding-asks predicate being worked out in three places, and it is why the agent's backlog is
 read from `chat.asks` rather than derived.
 
-Two things it is not given. The diff has its own call — it is large and moves on a different clock.
+Two things it is not given. The diff has its own call, and that call answers with a *map* — which
+files changed and by how much — rather than the change itself. The agent has the merge request on
+disk: `checkout_path` is a real worktree off the bare mirror, and `mr.diff_refs` carries the base
+and head shas, so it can read any file at head, recover any old side with `git show`, and compute
+any range it wants without asking. What it cannot cheaply work out is where to look, and that is
+what the map is for. One file's unified diff text is still reachable by path, for the session whose
+checkout failed to materialize and is running over the host API alone.
 And the reviewer's unposted drafts are absent at every stage: a draft is private prose until they
 post it, at which point it is a discussion and the agent reads it in `threads` like everyone else.
 No filter enforces that; the review scope is simply not part of the agent's view.

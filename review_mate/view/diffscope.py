@@ -309,6 +309,26 @@ class DiffScopes:
             with suppress(asyncio.CancelledError):
                 await task
 
+    async def raw_file(self, session_id: str, path: str, mode: str = FULL) -> dict:
+        """One file's unified diff text — the fold a reader wants, not the one a renderer does.
+
+        The clients get `build_hunks`: rows with token spans, because they draw pixels. An agent
+        reads text. Same resolution underneath either way, so this is one source folded twice for
+        two audiences rather than a second copy of the change.
+        """
+        snapshot = self._snapshot(session_id)
+        if snapshot is None:
+            return {"state": "unknown-session", "path": path}
+        state, files, error = self._files_for(session_id, mode, snapshot)
+        if state != "ready":
+            return {"state": state, "path": path, "error": error}
+        entry = next((f for f in files if f.path == path), None)
+        if entry is None:
+            return {"state": "unknown-file", "path": path}
+        return {"state": "ready", "path": entry.path, "old_path": entry.old_path,
+                "change_type": getattr(entry.change_type, "value", "") or "",
+                "language": entry.language, "diff": _diff_text(entry)}
+
     def forget(self, session_id: str) -> None:
         """Drop everything resolved for one session, when that session is over.
 

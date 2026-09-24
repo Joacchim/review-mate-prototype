@@ -28,12 +28,35 @@ from review_mate.session.state import SessionStatus
 class AgentView:
     """Builds the agent's read of a session. Owns no state — the scopes it composes own theirs."""
 
-    def __init__(self, manager, rail=None, chat=None, threads=None, access=None) -> None:
+    def __init__(self, manager, rail=None, chat=None, threads=None, access=None,
+                 diffs=None) -> None:
         self._manager = manager
         self._rail = rail
         self._chat = chat
         self._threads = threads
         self._access = access
+        self._diffs = diffs
+
+    async def diff(self, session_id: str, path: str | None = None) -> dict:
+        """The change map, or one file's text.
+
+        The map is the point. A checkout of the merge request is on disk at `checkout_path` — a
+        real worktree off the mirror — so the agent can read any file at head, recover any old side
+        with `git show <base>:<path>`, and diff any pair itself; `mr.diff_refs` carries the shas to
+        do it with. What none of that gives cheaply is *where to look*, which needs the base sha and
+        a shell out before the agent knows anything. So that is what this answers by default.
+
+        Asking for a `path` returns that file's unified diff. It exists for the case where there is
+        no checkout — materialization is best-effort and a clone or auth failure leaves it unset,
+        with the review still working over the host API. Reaching for it while a checkout exists
+        buys a worse copy of what is already on disk: no surrounding lines, nothing greppable, and
+        it costs context whether or not it is read.
+        """
+        if self._diffs is None:
+            return {"state": "unavailable"}
+        if path is not None:
+            return await self._diffs.raw_file(session_id, path)
+        return await self._diffs.build(f"{session_id}:full")
 
     async def build(self, session_id: str) -> dict:
         actor = self._manager.get(session_id)

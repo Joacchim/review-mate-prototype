@@ -42,9 +42,21 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
         return await bridge.view(session_id)
 
     @mcp.tool()
-    def get_diff(session_id: str) -> list[dict]:
-        """Get the session's changed files (the diff)."""
-        return [f.model_dump(mode="json") for f in bridge.diff(session_id)]
+    async def get_diff(session_id: str, path: str | None = None) -> dict:
+        """What changed in this merge request: the file list with per-file line counts.
+
+        This is a map, not the change itself. `get_session` gives you `checkout_path` — a real git
+        worktree of the merge request at its head — so read the files there, with their imports and
+        their callers around them, rather than from a diff. `mr.diff_refs` carries the base and head
+        shas, so from that checkout you can also recover any old side (`git show <base>:<path>`) or
+        diff any pair yourself, including "what arrived since the reviewer last looked".
+
+        Pass `path` for one file's unified diff text. That is the fallback for a session with no
+        checkout — materialization is best-effort and a clone or auth failure leaves it unset. With
+        a checkout in hand it is a worse copy of what is already on disk: no surrounding lines,
+        nothing greppable, and it costs context whether or not you read it.
+        """
+        return await bridge.diff(session_id, path=path)
 
     @mcp.tool()
     async def wait_for_highlight(session_id: str, since: int = 0,

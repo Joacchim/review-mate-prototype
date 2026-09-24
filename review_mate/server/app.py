@@ -330,7 +330,7 @@ def create_app(manager: SessionManager | None = None,
         # the agent reads the same folded scopes the clients do — the same instances, so it shares
         # their caches and cannot drift from what the reviewer is looking at
         agent_view = AgentView(manager, rail=rail_scope, chat=chat_scopes,
-                               threads=threads_scope, access=access_scope)
+                               threads=threads_scope, access=access_scope, diffs=diff_scopes)
         bridge = AgentBridge(manager, broker=broker, provider=provider, view=agent_view)
         mcp_app = build_mcp_server(bridge, mountable=True).streamable_http_app()
         routes.append(Mount("/mcp", app=mcp_app))  # the agent seam (shares this manager)

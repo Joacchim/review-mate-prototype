@@ -22,9 +22,9 @@ anything. You do your work and **return** — the coordinator resumes you on the
 
 ## The bounded loop (one wake = one drain)
 
-1. **Load context once.** `get_session(session_id)` and `get_diff(session_id)`; open the changed
-   files in the local checkout. On a `SendMessage` resume your context is still warm — skip what you
-   already hold.
+1. **Load context once.** `get_session(session_id)` and `get_diff(session_id)` — the second is a
+   **map** (which files changed, how much), not the change itself. Read the code from the checkout.
+   On a `SendMessage` resume your context is still warm — skip what you already hold.
 2. **Read the backlog — do not compute it.** `get_session` returns `chat.asks`: what the reviewer is
    waiting on you for, already worked out, one entry per ask with its `kind` and `subject`.
    - `context` — a highlight escalated past the cheap tier with no card yet. (A bare highlight the
@@ -48,11 +48,20 @@ anything. You do your work and **return** — the coordinator resumes you on the
 
 For the highlighted `file` + `line_range` (and the reviewer's optional `question`):
 
-- **Read the change in place.** `get_diff` for the hunk; then open the surrounding code, not just
-  the diff. `get_session` returns **`checkout_path`** — an on-disk worktree of the MR (materialized
-  on load). Use it as the **root** for `Read`/`Grep`/`Glob`, LSP, and the code-graph CLI
-  (`--repo <checkout_path>`). If `checkout_path` is null (checkout unavailable), fall back to
-  `get_file` over the API.
+- **Read the change in place — from the checkout, not from a diff.** `get_session` returns
+  **`checkout_path`**: a real git worktree of the MR at its head, off the bare mirror. It is the
+  **root** for `Read`/`Grep`/`Glob`, LSP, and the code-graph CLI (`--repo <checkout_path>`). A diff
+  shows you changed lines with no imports, no callers and no tests around them; the file on disk
+  shows you the code. Use the map from `get_diff` to know *where*, then open the file.
+  - **It is a worktree, so its history is there too.** `mr.diff_refs` carries the base, start and
+    head shas. `git -C <checkout_path> show <base_sha>:<path>` recovers any old side;
+    `git -C <checkout_path> diff <a> <b> -- <path>` gives any range you want, including what
+    arrived since a sha the reviewer already read. You do not need the server for any of it.
+  - The mirror is cloned blobless, so reading an *old* blob may fetch from the forge — cheap and
+    cached, but not free, and it fails with no network. Reading the worktree itself never does.
+  - **If `checkout_path` is null**, materialization failed (no clone URL, or auth) and the review is
+    running over the host API alone. Then, and only then: `get_diff(session_id, path=...)` for one
+    file's unified diff text, and `get_file` for whole-file content.
 - **Investigate structure in strict priority order — code-graph → LSP → grep.** Reach for the
   cheaper, structural tool first and only fall back when it can't answer:
   1. **Code-graph utilities** — a code-review-graph MCP (`mcp__code-review-graph__*`) or its CLI, when

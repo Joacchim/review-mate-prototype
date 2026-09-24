@@ -50,8 +50,10 @@ class AgentBridge:
             raise RuntimeError("this server was built without an agent view")
         return await self._view.build(session_id)
 
-    def diff(self, session_id: str) -> list[FileEntry]:
-        return self._actor(session_id).snapshot().files
+    async def diff(self, session_id: str, path: str | None = None) -> dict:
+        if self._view is None:
+            raise RuntimeError("this server was built without an agent view")
+        return await self._view.diff(session_id, path=path)
 
     # --- watch --------------------------------------------------------------
 
