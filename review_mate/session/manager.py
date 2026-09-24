@@ -147,7 +147,18 @@ class SessionManager:
     async def _materialize_checkout(self, session_id, actor, payload) -> None:
         """Eagerly check out the MR on disk (a worktree off the bare mirror) so the agent can run
         code-graph / LSP / grep against real files, not just the API. Best-effort: a clone/auth
-        failure leaves checkout_path unset and the review still works over the host API."""
+        failure leaves checkout_path unset and the review still works over the host API.
+
+        A payload that names its own checkout is already on disk and is taken at its word — a branch
+        being reviewed before it leaves this machine is being *edited* while it is reviewed, so a
+        detached copy at a fixed sha would be the one thing the agent must not be given.
+        """
+        if payload.checkout_path:
+            # nothing is stored in `_checkouts`, so closing the session releases nothing: the
+            # repository was borrowed, and removing a worktree we did not create would take the
+            # reviewer's own working copy with it
+            await actor.submit(SetCheckout(path=payload.checkout_path), Origin.SYSTEM)
+            return
         clone_url = payload.clone_url or payload.mr.clone_url
         if self._workspace is None or not clone_url or not payload.mr.sha:
             return

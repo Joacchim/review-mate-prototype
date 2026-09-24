@@ -8,7 +8,7 @@ on them (AC-12). The agent seam (`mcp-bridge`) is simply the in-process `Session
 """
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol, Union, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -22,12 +22,33 @@ class MRRef(BaseModel):
     iid: int
 
 
+class LocalRef(BaseModel):
+    """A branch in a repository on this machine, reviewed against where it left its base.
+
+    The other kind of thing worth reviewing. It is not an MRRef with the fields left blank: a branch
+    has no merge-request number, and inventing one would put a fiction in the hub, the logs and the
+    watermark key where it would read as a real one. What identifies it is the repository it lives
+    in and its name.
+
+    `base` is the branch it will eventually merge into. Empty means the repository's default, which
+    is what a reviewer means when they do not say.
+    """
+    path: str                    # the working repository — not a checkout of it
+    branch: str
+    base: str = ""
+
+
+# What a session can be about. A provider handles the kind it understands and no other.
+SessionRef = Union[MRRef, LocalRef]
+
+
 class MRPayload(BaseModel):
     """What a host returns for an MR — the data the loader applies into a session."""
     mr: MRMetadata
     files: list[FileEntry]
     threads: list[ReviewThread] = []
     clone_url: str = ""   # so workspace-manager can materialize the checkout
+    checkout_path: str = ""   # the code is already on disk here — do not materialize a copy of it
 
 
 class RepoRef(BaseModel):
