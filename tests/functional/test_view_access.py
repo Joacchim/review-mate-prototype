@@ -9,9 +9,9 @@ import pytest
 
 from conftest import HostStub
 from review_mate.seams import MRRef
-from review_mate.session.commands import DecideAccess, RequestAccess
+from review_mate.session.commands import DecideAccess, RecordGrant, RequestAccess
 from review_mate.session.manager import SessionManager
-from review_mate.session.state import Origin
+from review_mate.session.state import Grant, Origin
 from review_mate.view.access import AccessScope
 
 
@@ -83,3 +83,49 @@ async def test_a_session_that_is_not_there_says_unknown_session(access):
     manager, _sid, scope = await access()
     assert (await scope.build("no-such-session"))["state"] == "unknown-session"
     await manager.shutdown()
+
+
+# --- what an approval produced -------------------------------------------------
+
+async def _record(manager, sid, rid, grant):
+    await manager.get(sid).submit(RecordGrant(request_id=rid, grant=grant), Origin.SYSTEM)
+
+
+async def test_an_approval_nothing_has_acted_on_carries_no_grant(access):
+    """The shape that must stay distinguishable: approved, and nothing is cloning anything."""
+    manager, sid, scope = await access()
+    rid = await ask(manager, sid, "g/sibling")
+    await manager.get(sid).submit(DecideAccess(request_id=rid, approve=True), Origin.BROWSER)
+    view = await scope.build(sid)
+    assert view["requests"][0]["status"] == "approved"
+    assert view["requests"][0]["grant"] is None and view["working"] == 0
+
+
+async def test_a_clone_under_way_says_so(access):
+    manager, sid, scope = await access()
+    rid = await ask(manager, sid, "g/sibling")
+    await manager.get(sid).submit(DecideAccess(request_id=rid, approve=True), Origin.BROWSER)
+    await _record(manager, sid, rid, Grant(state="materializing"))
+    view = await scope.build(sid)
+    assert view["requests"][0]["grant"]["state"] == "materializing" and view["working"] == 1
+
+
+async def test_a_ready_grant_carries_where_it_landed(access):
+    manager, sid, scope = await access()
+    rid = await ask(manager, sid, "g/sibling")
+    await manager.get(sid).submit(DecideAccess(request_id=rid, approve=True), Origin.BROWSER)
+    await _record(manager, sid, rid, Grant(state="ready", path="/tmp/checkouts/sibling"))
+    view = await scope.build(sid)
+    assert view["requests"][0]["grant"] == {"state": "ready", "path": "/tmp/checkouts/sibling",
+                                            "error": ""}
+    assert view["working"] == 0
+
+
+async def test_a_failed_grant_carries_why(access):
+    """An approval that could not be honoured is the reviewer's business, not just a log line."""
+    manager, sid, scope = await access()
+    rid = await ask(manager, sid, "g/sibling")
+    await manager.get(sid).submit(DecideAccess(request_id=rid, approve=True), Origin.BROWSER)
+    await _record(manager, sid, rid, Grant(state="failed", error="LookupError: no such repository"))
+    row = (await scope.build(sid))["requests"][0]
+    assert row["grant"]["state"] == "failed" and "no such repository" in row["grant"]["error"]

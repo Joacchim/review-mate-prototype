@@ -73,6 +73,29 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
         return (await bridge.request_access(session_id, repo, reason)).model_dump()
 
     @mcp.tool()
+    async def access_state(session_id: str) -> list[dict]:
+        """What you asked to read, what the reviewer answered, and where it landed.
+
+        One row per request: `status` is theirs (pending / approved / denied) and `state` is what
+        the approval produced (materializing / ready / failed, or null if nothing has started).
+        Read `path` only when `state` is "ready" — that is the checkout you may read, and the only
+        one. A denied repository stays denied; asking again for what was refused is a worse move
+        than working without it, and says so to the reviewer.
+        """
+        return bridge.access_state(session_id)
+
+    @mcp.tool()
+    async def wait_for_access(session_id: str, since: int = 0,
+                              timeout: float | None = 30.0) -> dict | None:
+        """Wait for a consent request to move — decided, or materialized. Null on timeout.
+
+        Returns as readily on a refusal as on an approval. Do not treat a timeout as a no: it means
+        nobody has answered yet, and the reviewer may be mid-review. Say what you can without the
+        repository rather than waiting on it.
+        """
+        return await bridge.wait_for_access(session_id, since=since, timeout=timeout)
+
+    @mcp.tool()
     async def post_message(session_id: str, body: str, anchor_kind: str | None = None,
                            anchor_id: str | None = None) -> dict:
         """Post a chat message to the reviewer (the agent side of the conversation).

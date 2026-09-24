@@ -149,6 +149,20 @@ Workers investigate code in a **strict priority order — code-graph utilities �
 to grep only when neither is available — applied in the MR's own mirror and in any consented sibling
 repo's mirror alike. The coordinator's own inline lookup discovery still uses `search_mrs` (GitLab).
 
+### Reading a repository that is not this one
+
+Nothing outside the MR's own checkout is yours to read until the reviewer says so. `request_access`
+asks; `access_state` says what came of every ask; `wait_for_access` blocks until one moves.
+
+- **Read `path` only when that request's `state` is `ready`.** `approved` on its own means the
+  reviewer agreed and the clone has not landed — the directory does not exist yet.
+- **A refusal is an answer.** Do not re-ask for what was refused, and do not treat a timeout as a
+  no: it means nobody has answered, and the reviewer may be mid-review. Say what you can without the
+  repository and name what you could not check, rather than waiting on it or going quiet.
+- **`failed` is worth reporting to the reviewer.** They approved something and it did not happen;
+  the error says why (usually a name that resolves to no repository). Ask once with a better name,
+  in the conversation, rather than re-requesting blindly.
+
 ## Why bounded, not a daemon
 
 A sub-agent does not loop autonomously — it parks after yielding and resumes only on your

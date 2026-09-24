@@ -12,7 +12,9 @@ from review_mate.session.actor import CommandResult
 from review_mate.session.commands import (
     AddHighlight, EmitCard, PostMessage, RequestAccess, UpdateCard,
 )
-from review_mate.session.events import HighlightAdded, MessagePosted
+from review_mate.session.events import (
+    AccessDecided, AccessGrantChanged, HighlightAdded, MessagePosted,
+)
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import (
     CardStatus, FileEntry, LineRange, Origin, Side, SessionState, SessionSummary, Subject,
@@ -110,6 +112,55 @@ class AgentBridge:
         return await self._actor(session_id).submit(
             RequestAccess(repo=repo, reason=reason), Origin.AGENT,
         )
+
+    def access_state(self, session_id: str) -> list[dict]:
+        """Every repository asked about, what the reviewer said, and what that produced.
+
+        The agent's half of consent. Asking and then having no way to learn the answer is how a
+        request becomes a guess: an agent that cannot see a refusal reads its own silence as a
+        maybe, and one that cannot see a path has nothing to do with an approval.
+        """
+        rows = []
+        for req in self._actor(session_id).snapshot().access_requests or []:
+            grant = req.grant
+            rows.append({"id": req.id, "repo": req.repo, "reason": req.reason,
+                         "status": getattr(req.status, "value", str(req.status)),
+                         "state": grant.state if grant else None,
+                         "path": grant.path if grant else None,
+                         "error": grant.error if grant else ""})
+        return rows
+
+    async def wait_for_access(self, session_id: str, since: int = 0,
+                              timeout: float | None = None) -> dict | None:
+        """Wait for the next thing to happen to a consent request — a decision, or what it produced.
+
+        A refusal is an answer worth waiting for too, so this returns on any of them rather than
+        only on success: an agent blocked until an approval that never comes has stopped working
+        with nothing said.
+        """
+        actor = self._actor(session_id)
+
+        async def _wait() -> dict | None:
+            async for event in actor.subscribe(since=since):
+                if isinstance(event, (AccessDecided, AccessGrantChanged)):
+                    req = next((r for r in actor.snapshot().access_requests
+                                if r.id == event.request_id), None)
+                    if req is None:
+                        continue
+                    grant = req.grant
+                    return {"seq": event.seq, "id": req.id, "repo": req.repo,
+                            "status": getattr(req.status, "value", str(req.status)),
+                            "state": grant.state if grant else None,
+                            "path": grant.path if grant else None,
+                            "error": grant.error if grant else ""}
+            return None
+
+        if timeout is None:
+            return await _wait()
+        try:
+            return await asyncio.wait_for(_wait(), timeout)
+        except asyncio.TimeoutError:
+            return None
 
     # --- chat ---------------------------------------------------------------
 

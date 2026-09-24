@@ -6,8 +6,8 @@ import pytest
 from review_mate.mcp.bridge import AgentBridge
 from review_mate.mcp.server import build_mcp_server
 from review_mate.session.manager import SessionManager
-from review_mate.session.commands import AddHighlight
-from review_mate.session.state import Origin, Side, LineRange
+from review_mate.session.commands import AddHighlight, DecideAccess, RecordGrant
+from review_mate.session.state import Grant, LineRange, Origin, Side
 
 
 @pytest.fixture
@@ -101,5 +101,73 @@ async def test_mcp_server_registers_tools(setup):  # AC-6
     tools = await server.list_tools()
     names = {t.name for t in tools}
     for expected in ("list_sessions", "get_session", "wait_for_highlight",
-                     "emit_card", "request_access"):
+                     "emit_card", "request_access", "access_state", "wait_for_access"):
         assert expected in names
+
+
+# --- the agent's half of consent ----------------------------------------------
+
+async def _decide(manager, sid, rid, approve):
+    await manager.get(sid).submit(DecideAccess(request_id=rid, approve=approve), Origin.BROWSER)
+
+
+async def test_the_agent_can_read_what_it_was_refused(setup):
+    """A refusal it cannot see is a refusal it will ask about again."""
+    manager, bridge, sid = setup
+    await bridge.request_access(sid, repo="g/other", reason="contract")
+    rid = bridge.snapshot(sid).access_requests[0].id
+    await _decide(manager, sid, rid, approve=False)
+    row = bridge.access_state(sid)[0]
+    assert row["status"] == "denied" and row["state"] is None and row["path"] is None
+
+
+async def test_the_agent_reads_the_path_only_once_it_is_ready(setup):
+    manager, bridge, sid = setup
+    await bridge.request_access(sid, repo="g/other", reason="contract")
+    rid = bridge.snapshot(sid).access_requests[0].id
+    await _decide(manager, sid, rid, approve=True)
+    assert bridge.access_state(sid)[0] == {
+        "id": rid, "repo": "g/other", "reason": "contract", "status": "approved",
+        "state": None, "path": None, "error": ""}, "approved is not yet readable"
+
+    await manager.get(sid).submit(
+        RecordGrant(request_id=rid, grant=Grant(state="materializing")), Origin.SYSTEM)
+    assert bridge.access_state(sid)[0]["state"] == "materializing"
+    assert bridge.access_state(sid)[0]["path"] is None
+
+    await manager.get(sid).submit(
+        RecordGrant(request_id=rid, grant=Grant(state="ready", path="/tmp/x")), Origin.SYSTEM)
+    row = bridge.access_state(sid)[0]
+    assert row["state"] == "ready" and row["path"] == "/tmp/x"
+
+
+async def test_waiting_on_consent_returns_on_a_refusal_too(setup):
+    """Blocking until an approval that never comes is how an agent stops with nothing said."""
+    manager, bridge, sid = setup
+    await bridge.request_access(sid, repo="g/other", reason="contract")
+    rid = bridge.snapshot(sid).access_requests[0].id
+    waiting = asyncio.create_task(bridge.wait_for_access(sid, since=0, timeout=2))
+    await asyncio.sleep(0)
+    await _decide(manager, sid, rid, approve=False)
+    answer = await waiting
+    assert answer is not None and answer["status"] == "denied"
+
+
+async def test_waiting_on_consent_returns_when_the_repository_lands(setup):
+    manager, bridge, sid = setup
+    await bridge.request_access(sid, repo="g/other", reason="contract")
+    rid = bridge.snapshot(sid).access_requests[0].id
+    await _decide(manager, sid, rid, approve=True)
+    since = manager.get(sid).snapshot().seq
+    waiting = asyncio.create_task(bridge.wait_for_access(sid, since=since, timeout=2))
+    await asyncio.sleep(0)
+    await manager.get(sid).submit(
+        RecordGrant(request_id=rid, grant=Grant(state="ready", path="/tmp/x")), Origin.SYSTEM)
+    answer = await waiting
+    assert answer is not None and answer["state"] == "ready" and answer["path"] == "/tmp/x"
+
+
+async def test_waiting_times_out_rather_than_hanging(setup):
+    manager, bridge, sid = setup
+    await bridge.request_access(sid, repo="g/other", reason="contract")
+    assert await bridge.wait_for_access(sid, since=0, timeout=0.1) is None
