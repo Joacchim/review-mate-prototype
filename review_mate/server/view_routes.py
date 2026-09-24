@@ -21,7 +21,7 @@ from review_mate.view.protocol import HUB, ScopeError, Subscribe, parse_client_m
 
 
 def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
-                      review=None, kb=None, threads=None, browse=None) -> list:
+                      review=None, kb=None, threads=None, browse=None, diffs=None) -> list:
     async def _publish_hub() -> None:
         await bus.publish(HUB)
 
@@ -79,6 +79,10 @@ def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
         except KeyError:
             return JSONResponse({"ok": False, "reason": "unknown session"}, status_code=404)
         hub.forget(sid)
+        if diffs is not None:
+            diffs.forget(sid)      # resolutions are keyed on a head, and this session has no more
+        if browse is not None:
+            browse.forget_commits(sid)
         await _publish_hub()
         return JSONResponse({"ok": True})
 

@@ -540,3 +540,60 @@ def test_since_reports_what_happened_to_each_file(tmp_path):
             assert by_path["test/b/f.py"]["old_path"] == "test/a/f.py"
             assert by_path["added.py"]["change_type"] == "added"
             assert by_path["added.py"]["old_path"] is None
+
+
+# --- what a finished review stops costing --------------------------------------
+
+def _diff_scopes(app):
+    """The one DiffScopes the app built — what holds every resolution for the process lifetime."""
+    return app.state.diff_scopes
+
+
+def test_closing_a_review_drops_what_it_resolved(tmp_path):
+    """A resolution is keyed on a head and nothing invalidates one, so a server that runs for weeks
+    accumulates every head of every review it ever opened."""
+    app, _ = build_versioned(tmp_path)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        scope = f"diff:{sid}:since"
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [scope]})
+            assert settled(ws, scope)["state"] == "ready"
+
+        scopes = _diff_scopes(app)
+        assert [k for k in scopes._resolved if k[0] == sid], "nothing was cached to drop"
+
+        tc.post("/api/cmd", json={"cmd": "session.close", "args": {"id": sid}})
+        for store in (scopes._resolved, scopes._failed, scopes._aligned, scopes._clean):
+            assert [k for k in store if k[0] == sid] == [], store
+
+
+def test_closing_one_review_leaves_another_alone(tmp_path):
+    app, _ = build_versioned(tmp_path)
+    with TestClient(app) as tc:
+        first, second = open_session(tc), open_session(tc)
+        for sid in (first, second):
+            with tc.websocket_connect("/api/stream") as ws:
+                ws.send_json({"action": "subscribe", "scopes": [f"diff:{sid}:since"]})
+                assert settled(ws, f"diff:{sid}:since")["state"] == "ready"
+
+        scopes = _diff_scopes(app)
+        tc.post("/api/cmd", json={"cmd": "session.close", "args": {"id": first}})
+        assert [k for k in scopes._resolved if k[0] == first] == []
+        assert [k for k in scopes._resolved if k[0] == second], "the open review still needs its own"
+
+
+def test_a_failed_resolution_is_dropped_with_the_rest(tmp_path):
+    """Otherwise a closed review's error outlives it, and `_failed` is read before `_resolved`."""
+    app, _ = build_versioned(tmp_path, workspace=StubWorkspace(fail=RuntimeError("git exploded")))
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        scope = f"diff:{sid}:since"
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [scope]})
+            assert settled(ws, scope)["state"] == "error"
+
+        scopes = _diff_scopes(app)
+        assert [k for k in scopes._failed if k[0] == sid]
+        tc.post("/api/cmd", json={"cmd": "session.close", "args": {"id": sid}})
+        assert [k for k in scopes._failed if k[0] == sid] == []

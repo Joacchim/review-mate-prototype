@@ -76,13 +76,22 @@ class WorkspaceManager:
 
         When it does, replaying the reviewed commits onto the current base must reproduce
         new_head's tree — new_head is already that base plus those patches — so the since-diff is
-        empty and the reviewer has nothing new to read. Answering from the packfile costs tens of
-        milliseconds against roughly a second for the worktree replay, and the replay's whole
-        result in that case is "nothing changed".
+        empty and the reviewer has nothing new to read. Answering from the packfile costs 40-150 ms
+        against 150-600 ms for the worktree replay, and the replay's whole result in that case is
+        "nothing changed". Both figures scale with the patch bytes rather than the commit count: a
+        two-commit branch over 174 files costs the same here as an eight-commit one.
 
         Conservative in both directions that matter: a merge in either range, or any difference in
         the patch sets, declines and leaves the real replay to decide. A conflict resolved
         differently during the rebase changes that commit's patch, so it declines too.
+
+        It also declines for a rebase that was perfectly clean, whenever the commits it replayed
+        over touched the same code — the replay then produces a different patch for the same change,
+        which is a real difference in the patch set and not something this can see past. On an
+        active trunk that is ordinary rather than rare, and the decline costs its own work before
+        the replay runs anyway. Measured 2026-09-24 on repositories of 2-23 MB; the numbers above
+        are floors, since `--filter=blob:none` is ignored over a local transport and a real clone
+        pays a lazy blob fetch during the replay's checkout.
         """
         try:
             old = await self._patch_ids(mirror, old_base, old_head)

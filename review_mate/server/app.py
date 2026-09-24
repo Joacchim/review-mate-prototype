@@ -320,7 +320,7 @@ def create_app(manager: SessionManager | None = None,
     # registered before the static mount so `/api/stream` and `/api/cmd` are never shadowed by the UI
     routes.extend(build_view_routes(manager, bus, hub, resolve_ref=resolve_ref,
                                     submitter=submitter, review=review_scope, kb=kb,
-                                    threads=thread_verbs, browse=browse))
+                                    threads=thread_verbs, browse=browse, diffs=diff_scopes))
 
     mcp_app = None
     if with_mcp:
