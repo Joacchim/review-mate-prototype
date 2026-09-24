@@ -195,9 +195,12 @@ class SessionState(BaseModel):
     threads: list[ReviewThread] = Field(default_factory=list)
     messages: list[ChatMessage] = Field(default_factory=list)
     # the MR-level counterpart of Highlight.context_requested: the reviewer asked for insights on
-    # the change as a whole, so an answer is expected without any line range having been marked
+    # the change as a whole, so an answer is expected without any line range having been marked.
+    # The sha says which code was asked about — a pass the change has moved past reads as being
+    # about an earlier version, the way a highlight does, rather than quietly disappearing
     insights_requested: bool = False
     insights_requested_at: str = ""
+    insights_requested_sha: str | None = None
     drafts: list[DraftComment] = Field(default_factory=list)
 
 

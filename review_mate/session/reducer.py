@@ -84,6 +84,7 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
     elif isinstance(event, ev.InsightsRequested):
         s.insights_requested = True
         s.insights_requested_at = event.ts
+        s.insights_requested_sha = event.sha
     elif isinstance(event, ev.DraftSaved):
         replaced = False
         for i, d in enumerate(s.drafts):

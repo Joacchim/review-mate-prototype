@@ -195,3 +195,46 @@ def test_mr_and_files_reduce():
 def test_event_roundtrip_all_types(event):
     back = ev.parse_event(event.model_dump_json())
     assert type(back) is type(event) and back.seq == event.seq
+
+
+# --- a review pass remembers which code it was about --------------------------
+
+def _with_mr(sha="abc123"):
+    s = _state()
+    return fold(s, handle(s, cmd.ApplyMRMetadata(mr=MRMetadata(
+        host="h", project="p", iid=1, title="t", source_branch="x", target_branch="m",
+        sha=sha, author="a", url="u")), Origin.SYSTEM))
+
+
+def test_a_review_pass_records_the_head_it_was_asked_about():
+    """So a pass the change has moved past reads as being about an earlier version, rather than
+    disappearing and leaving the reviewer watching a cue that silently stopped."""
+    s = _with_mr(sha="abc123")
+    s = fold(s, handle(s, cmd.RequestInsights(), Origin.BROWSER))
+    assert s.insights_requested is True and s.insights_requested_sha == "abc123"
+
+
+def test_a_pass_asked_for_with_no_mr_loaded_records_no_head():
+    s = _state()
+    s = fold(s, handle(s, cmd.RequestInsights(), Origin.BROWSER))
+    assert s.insights_requested is True and s.insights_requested_sha is None
+
+
+def test_a_head_that_moves_leaves_the_pass_pointing_at_the_old_one():
+    """It is not cleared: what was asked about is a fact, and losing it is what made the waiting
+    cue vanish with nothing to explain it."""
+    s = _with_mr(sha="abc123")
+    s = fold(s, handle(s, cmd.RequestInsights(), Origin.BROWSER))
+    s = fold(s, handle(s, cmd.ApplyMRMetadata(mr=s.mr.model_copy(update={"sha": "def456"})),
+                       Origin.SYSTEM))
+    assert s.insights_requested is True and s.insights_requested_sha == "abc123"
+
+
+def test_asking_again_restamps_the_head():
+    """Asking about the new code is a new pass, not a repeat of the stale one."""
+    s = _with_mr(sha="abc123")
+    s = fold(s, handle(s, cmd.RequestInsights(), Origin.BROWSER))
+    s = fold(s, handle(s, cmd.ApplyMRMetadata(mr=s.mr.model_copy(update={"sha": "def456"})),
+                       Origin.SYSTEM))
+    s = fold(s, handle(s, cmd.RequestInsights(), Origin.BROWSER))
+    assert s.insights_requested_sha == "def456"

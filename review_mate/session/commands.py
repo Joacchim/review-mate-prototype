@@ -303,7 +303,7 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
         return emit(ev.MessagePosted, message=msg)
 
     if isinstance(command, RequestInsights):
-        return emit(ev.InsightsRequested)
+        return emit(ev.InsightsRequested, sha=state.mr.sha if state.mr else None)
 
     if isinstance(command, SaveDraft):
         if command.highlight_id is not None and \

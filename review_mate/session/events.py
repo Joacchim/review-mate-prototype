@@ -99,6 +99,7 @@ class ThreadsReplaced(_EventBase):
 
 class InsightsRequested(_EventBase):
     type: Literal["insights_requested"] = "insights_requested"
+    sha: str | None = None       # the head the pass was asked about
 
 
 class MessagePosted(_EventBase):
