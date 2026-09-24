@@ -125,12 +125,12 @@ def test_rereading_one_file_leaves_the_others_untouched(tmp_path):
                 assert read_scope(ws, scope)["seq"] == 0
 
             host.diffs["a.py"] = DIFF_A_EDITED
-            tc.post(f"/api/sessions/{sid}/refresh-threads", json={})
+            tc.post("/api/cmd", json={"cmd": "session.resync", "args": {"session": sid}})
             moved = json.loads(ws.receive_text())
             assert moved["scope"] == f"diff:{sid}:full:a.py" and moved["seq"] == 1
 
             host.diffs["pkg/b.py"] = DIFF_B_EDITED
-            tc.post(f"/api/sessions/{sid}/refresh-threads", json={})
+            tc.post("/api/cmd", json={"cmd": "session.resync", "args": {"session": sid}})
             moved = json.loads(ws.receive_text())
             # its own counter: b.py moves to 1 while a.py stays where it was
             assert moved["scope"] == f"diff:{sid}:full:pkg/b.py" and moved["seq"] == 1
@@ -273,7 +273,7 @@ def test_one_host_read_serves_repeated_builds(tmp_path):
             assert seen[blob]["state"] == "ready"
 
             provider.diffs["a.py"] = DIFF_A_EDITED
-            tc.post(f"/api/sessions/{sid}/refresh-threads", json={})
+            tc.post("/api/cmd", json={"cmd": "session.resync", "args": {"session": sid}})
             moved = json.loads(ws.receive_text())
             assert moved["scope"] == open_file          # the blob rebuilt identically, so it stayed
             assert provider.reads.count(("g/p", "a.py", "abc")) == 1

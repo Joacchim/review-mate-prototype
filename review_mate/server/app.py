@@ -267,8 +267,7 @@ def create_app(manager: SessionManager | None = None,
     submitter = ReviewSubmitter(manager, writeback, provider=provider, kb=kb)
     thread_verbs = ThreadVerbs(manager, writeback, provider=provider)
     routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider, broker=broker,
-                          writeback=writeback, activity_broker=activity_broker,
-                          threads=thread_verbs)
+                          activity_broker=activity_broker)
     # registered before the static mount so `/api/stream` and `/api/cmd` are never shadowed by the UI
     routes.extend(build_view_routes(manager, bus, hub, resolve_ref=resolve_ref,
                                     submitter=submitter, review=review_scope, kb=kb,

@@ -58,6 +58,11 @@ class StubProvider:
         return list(self.threads)
 
 
+async def _cmd(client, name, **args):
+    """Every write goes the one way now — a named command with its arguments."""
+    return await client.post("/api/cmd", json={"cmd": name, "args": args})
+
+
 async def submit(client, sid, approve=False):
     """Send the prepared review, the one way there is to send it."""
     return await client.post("/api/cmd", json={"cmd": "review.submit",
@@ -127,7 +132,7 @@ async def test_reply_posts_and_remirrors(tmp_path):
     writer = StubWriter()
     manager, sid, client = await _app_client(tmp_path, writer, StubProvider(threads=after))
     async with client:
-        r = await client.post(f"/api/sessions/{sid}/threads/disc1/reply", json={"body": "fixed"})
+        r = await _cmd(client, "thread.reply", session=sid, thread="disc1", body="fixed")
         assert r.json()["ok"] is True
     assert writer.calls[-1] == ("reply", "disc1", "fixed")
     threads = manager.get(sid).snapshot().threads
@@ -141,7 +146,7 @@ async def test_resolve_remirrors_resolved_state(tmp_path):
     writer = StubWriter()
     manager, sid, client = await _app_client(tmp_path, writer, StubProvider(threads=after))
     async with client:
-        r = await client.post(f"/api/sessions/{sid}/threads/disc1/resolve", json={"resolved": True})
+        r = await _cmd(client, "thread.resolve", session=sid, thread="disc1", resolved=True)
         assert r.json() == {"ok": True, "resolved": True}
     assert writer.calls[-1] == ("resolve", "disc1", True)
     assert manager.get(sid).snapshot().threads[0].resolved is True
@@ -152,7 +157,7 @@ async def test_refresh_pulls_threads_into_state(tmp_path):
     fresh = [ReviewThread(id="d9", comments=[ThreadComment(id="9", author="author", body="new")])]
     manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider(threads=fresh))
     async with client:
-        r = await client.post(f"/api/sessions/{sid}/refresh-threads", json={})
+        r = await _cmd(client, "session.resync", session=sid)
         # a re-sync reports the head it read as well as what it mirrored: a head left frozen is
         # what made "since last review" never engage
         assert r.json() == {"ok": True, "head": "s", "threads": 1}
@@ -173,7 +178,7 @@ async def test_refresh_reconciles_and_drops_removed_threads(tmp_path):
         for t in seeded:
             await actor.submit(ApplyThread(thread=t), Origin.SYSTEM)
         assert {t.id for t in actor.snapshot().threads} == {"d1", "d2"}
-        await client.post(f"/api/sessions/{sid}/refresh-threads", json={})
+        await _cmd(client, "session.resync", session=sid)
     assert [t.id for t in manager.get(sid).snapshot().threads] == ["d1"]   # d2 purged
     await manager.shutdown()
 
@@ -221,19 +226,10 @@ async def test_edit_and_delete_note_routes(tmp_path):
     writer = StubWriter()
     manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
     async with client:
-        await client.post(f"/api/sessions/{sid}/threads/disc1/notes/7/edit", json={"body": "reworded"})
+        await _cmd(client, "thread.edit_note", session=sid, thread="disc1", note="7", body="reworded")
         assert writer.calls[-1] == ("edit_note", "disc1", "7", "reworded")
-        await client.post(f"/api/sessions/{sid}/threads/disc1/notes/7/delete", json={})
+        await _cmd(client, "thread.delete_note", session=sid, thread="disc1", note="7")
         assert writer.calls[-1] == ("delete_note", "disc1", "7")
-    await manager.shutdown()
-
-
-async def test_whoami_returns_reviewer_username(tmp_path):
-    class NamedProvider(StubProvider):
-        username = "reviewer-joe"
-    manager, sid, client = await _app_client(tmp_path, StubWriter(), NamedProvider())
-    async with client:
-        assert (await client.get("/api/me")).json() == {"username": "reviewer-joe"}
     await manager.shutdown()
 
 
@@ -270,7 +266,7 @@ async def test_refresh_resyncs_advanced_head(tmp_path):
     async with client:
         kb.set_watermark(MR.host, MR.project, MR.iid, "s")           # reviewed up to the opening head
         assert (await version_of(manager, sid))["behind"] is False
-        assert (await client.post(f"/api/sessions/{sid}/refresh-threads", json={})).json()["head"] == "head-2"
+        assert (await _cmd(client, "session.resync", session=sid)).json()["head"] == "head-2"
         assert await version_of(manager, sid) == {"head": "head-2", "watermark": "s", "behind": True}
     assert manager.get(sid).snapshot().mr.sha == "head-2"            # session now reflects the new head
     await manager.shutdown()
@@ -329,7 +325,7 @@ async def test_reply_capability_missing_returns_400(tmp_path):
     writer = StubWriter(fail="threads")
     manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
     async with client:
-        r = await client.post(f"/api/sessions/{sid}/threads/disc1/reply", json={"body": "x"})
+        r = await _cmd(client, "thread.reply", session=sid, thread="disc1", body="x")
     assert r.status_code == 400
     assert manager.get(sid).snapshot().threads == []   # nothing mirrored on failure
     await manager.shutdown()
@@ -389,10 +385,6 @@ async def test_marking_reviewed_advances_the_watermark_without_posting(tmp_path)
 # --- the same verbs, as named commands --------------------------------------
 # The route and the command run one sequence (`ThreadVerbs`), so what these pin is that the command
 # reaches it and republishes what it changed — not the posting, which the tests above cover.
-
-async def _cmd(client, name, **args):
-    return await client.post("/api/cmd", json={"cmd": name, "args": args})
-
 
 async def test_the_reply_command_posts_and_remirrors(tmp_path):
     after = [ReviewThread(id="disc1", comments=[ThreadComment(id="1", author="rev", body="nit"),

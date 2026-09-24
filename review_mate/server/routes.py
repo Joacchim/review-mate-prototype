@@ -14,9 +14,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from review_mate.seams import MRRef, RepoRef
 from review_mate.view.asks import outstanding as outstanding_asks
-from review_mate.session.commands import (
-    ApplyFiles, ApplyMRMetadata, ReplaceThreads, parse_command,
-)
+from review_mate.session.commands import parse_command
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import Origin, SessionStatus
 
@@ -26,7 +24,7 @@ ACTIVITY_TIMEOUT = 50.0
 
 
 def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broker=None,
-                 writeback=None, activity_broker=None, threads=None) -> list:
+                 activity_broker=None) -> list:
     async def create_session(request: Request) -> JSONResponse:
         body = await _maybe_json(request)
         raw = body.get("ref") if isinstance(body, dict) else None
@@ -168,45 +166,6 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
         return JSONResponse({"available": True, "commits": await provider.commits(ref)})
 
-    def _verb_answer(result: dict) -> JSONResponse:
-        if "error" in result:
-            return JSONResponse(result,
-                                status_code=404 if result["error"] == "unknown session" else 400)
-        return JSONResponse(result)
-
-    async def reply_thread(request: Request) -> JSONResponse:
-        """The sequence lives in `ThreadVerbs`, which `thread.reply` runs too — so whichever client
-        answers a discussion, the same reply lands and the same re-sync follows it."""
-        body = await _maybe_json(request)
-        text = body.get("body", "") if isinstance(body, dict) else ""
-        return _verb_answer(await threads.reply(request.path_params["id"],
-                                                request.path_params["tid"], text))
-
-    async def resolve_thread(request: Request) -> JSONResponse:
-        body = await _maybe_json(request)
-        resolved = bool(body.get("resolved", True)) if isinstance(body, dict) else True
-        return _verb_answer(await threads.resolve(request.path_params["id"],
-                                                  request.path_params["tid"], resolved))
-
-    async def edit_note(request: Request) -> JSONResponse:
-        body = await _maybe_json(request)
-        text = body.get("body", "") if isinstance(body, dict) else ""
-        return _verb_answer(await threads.edit_note(request.path_params["id"],
-                                                    request.path_params["tid"],
-                                                    request.path_params["nid"], text))
-
-    async def delete_note(request: Request) -> JSONResponse:
-        return _verb_answer(await threads.delete_note(request.path_params["id"],
-                                                      request.path_params["tid"],
-                                                      request.path_params["nid"]))
-
-    async def whoami(request: Request) -> JSONResponse:
-        """The reviewer's own host username — so the UI can mark 'your' notes (edit/delete)."""
-        return JSONResponse({"username": getattr(provider, "username", None)})
-
-    async def refresh_threads(request: Request) -> JSONResponse:
-        return _verb_answer(await threads.resync(request.path_params["id"]))
-
     async def end_session(request: Request) -> JSONResponse:
         try:
             await manager.end(request.path_params["id"])
@@ -248,13 +207,7 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/sessions/{id}", get_session, methods=["GET"]),
         Route("/api/sessions/{id}", end_session, methods=["DELETE"]),
         Route("/api/sessions/{id}/commands", submit_command, methods=["POST"]),
-        Route("/api/sessions/{id}/threads/{tid}/reply", reply_thread, methods=["POST"]),
-        Route("/api/sessions/{id}/threads/{tid}/resolve", resolve_thread, methods=["POST"]),
-        Route("/api/sessions/{id}/threads/{tid}/notes/{nid}/edit", edit_note, methods=["POST"]),
-        Route("/api/sessions/{id}/threads/{tid}/notes/{nid}/delete", delete_note, methods=["POST"]),
-        Route("/api/sessions/{id}/refresh-threads", refresh_threads, methods=["POST"]),
         Route("/api/sessions/{id}/commits", commits, methods=["GET"]),
-        Route("/api/me", whoami, methods=["GET"]),
         WebSocketRoute("/api/sessions/{id}/stream", stream),
     ]
 
