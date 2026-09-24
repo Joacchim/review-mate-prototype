@@ -17,10 +17,10 @@ from conftest import HostStub
 from review_mate.seams import MRRef
 from review_mate.server.app import create_app
 from review_mate.session.commands import (
-    AddHighlight, ApplyMRMetadata, EmitCard, RequestInsights, SaveDraft,
+    AddHighlight, ApplyMRMetadata, EmitCard, LabelCard, RequestInsights, SaveDraft,
 )
 from review_mate.session.manager import SessionManager
-from review_mate.session.state import LineRange, Origin, Side
+from review_mate.session.state import Criticality, Label, LineRange, Origin, Side, Theme
 from review_mate.view.rail import RailScope
 
 
@@ -354,3 +354,39 @@ async def test_asking_again_about_the_new_code_is_no_longer_stale(session):
     passed = (await scope.build(sid))["review_pass"]
     assert passed["stale"] is False and passed["available"] is False
     assert passed["sha"] == "moved-on"
+
+
+# --- what an insight is about --------------------------------------------------
+
+async def test_an_insight_carries_its_label(session):
+    manager, sid, provider = session
+    scope = rail_for(manager, provider)
+    await manager.get(sid).submit(EmitCard(
+        highlight_id=None, body="the retry is unbounded",
+        label=Label(theme=Theme.BUG, criticality=Criticality.HIGH, about="the retry path")),
+        Origin.AGENT)
+    label = (await scope.build(sid))["insights"][0]["label"]
+    assert label == {"theme": "bug", "criticality": "high", "about": "the retry path",
+                     "by": "agent"}
+
+
+async def test_an_unclassified_insight_says_nothing_rather_than_low(session):
+    """Absent must not read as unimportant — it means nobody looked at it that way."""
+    manager, sid, provider = session
+    scope = rail_for(manager, provider)
+    await manager.get(sid).submit(EmitCard(highlight_id=None, body="a note"), Origin.AGENT)
+    assert (await scope.build(sid))["insights"][0]["label"] is None
+
+
+async def test_a_corrected_label_says_whose_it_is_now(session):
+    """A client shows a reviewer's correction differently from a claim nobody questioned."""
+    manager, sid, provider = session
+    scope = rail_for(manager, provider)
+    actor = manager.get(sid)
+    await actor.submit(EmitCard(highlight_id=None, body="x", label=Label(
+        theme=Theme.BUG, criticality=Criticality.HIGH)), Origin.AGENT)
+    cid = actor.snapshot().cards[0].id
+    await actor.submit(LabelCard(card_id=cid, label=Label(
+        theme=Theme.STYLE, criticality=Criticality.LOW)), Origin.BROWSER)
+    label = (await scope.build(sid))["insights"][0]["label"]
+    assert label["theme"] == "style" and label["by"] == "browser"

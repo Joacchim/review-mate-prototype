@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 from review_mate.session import events as ev
 from review_mate.session.state import (
     AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, CheckRequest, DraftComment, DraftStatus,
-    FileEntry, Grant, Highlight, LineRange, MRMetadata, Origin, ReviewThread, Side, Subject,
+    FileEntry, Grant, Highlight, Label, LineRange, MRMetadata, Origin, ReviewThread, Side, Subject,
     SubjectKind,
 )
 
@@ -49,6 +49,19 @@ class EmitCard(BaseModel):
     highlight_id: str | None = None    # None = an MR-level insight, anchored to nothing
     body: str
     citations: list[str] = []
+    label: Label | None = None         # carried here so classifying costs no second round trip
+
+
+class LabelCard(BaseModel):
+    """Say what an insight is about and how much it matters — or disagree with what was said.
+
+    Both origins, and the same command for both: the agent's label is a claim, and a reviewer who
+    thinks a finding is a nit dressed as a bug corrects it in place rather than losing the finding
+    to a dismissal. Who said so is taken from the origin, never from the caller.
+    """
+    type: Literal["label_card"] = "label_card"
+    card_id: str
+    label: Label
 
 
 class RemoveCard(BaseModel):
@@ -161,7 +174,8 @@ class EndSession(BaseModel):
 
 Command = Union[
     AddHighlight, RemoveHighlight, RequestContext, RequestInsights, EmitCard, UpdateCard, RemoveCard,
-    RequestAccess, DecideAccess, RecordGrant, ApplyMRMetadata, SetCheckout, ApplyFiles, ApplyThread,
+    RequestAccess, DecideAccess, RecordGrant, LabelCard, ApplyMRMetadata, SetCheckout, ApplyFiles,
+    ApplyThread,
     ReplaceThreads,
     PostMessage, ClearChat, RequestCheck, SaveDraft, RemoveDraft, MarkDraftPosted, EndSession,
 ]
@@ -190,7 +204,9 @@ AUTHORITY: dict[str, set[Origin]] = {
     "request_context": {Origin.BROWSER},   # the reviewer escalates a highlight to the agent tier (D21)
     "request_insights": {Origin.BROWSER},  # ... and the same ask about the change as a whole
     "request_check": {Origin.BROWSER},     # verifying something said is the reviewer's to ask for
-    "remove_card": {Origin.BROWSER},   # the reviewer dismisses an insight card
+    "remove_card": {Origin.BROWSER},
+    # the agent classifies what it found; the reviewer corrects a claim they disagree with
+    "label_card": {Origin.BROWSER, Origin.AGENT},   # the reviewer dismisses an insight card
     "decide_access": {Origin.BROWSER},
     "record_grant": {Origin.SYSTEM},       # what an approval produced is the server's to report
     "end_session": {Origin.BROWSER},
@@ -273,9 +289,16 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
         if command.highlight_id is not None and \
                 not any(h.id == command.highlight_id for h in state.highlights):
             return Rejection(reason=f"no such highlight: {command.highlight_id}")
+        label = command.label.model_copy(update={"by": origin}) if command.label else None
         card = Card(id=_id(), highlight_id=command.highlight_id, body=command.body,
-                    citations=command.citations, author=origin, created_at=ts)
+                    citations=command.citations, author=origin, label=label, created_at=ts)
         return emit(ev.CardEmitted, card=card)
+
+    if isinstance(command, LabelCard):
+        if not any(c.id == command.card_id for c in state.cards):
+            return Rejection(reason=f"no such card: {command.card_id}")
+        return emit(ev.CardLabelled, card_id=command.card_id,
+                    label=command.label.model_copy(update={"by": origin}))
 
     if isinstance(command, UpdateCard):
         if not any(c.id == command.card_id for c in state.cards):

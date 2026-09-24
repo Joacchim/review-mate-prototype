@@ -10,15 +10,26 @@ import asyncio
 
 from review_mate.session.actor import CommandResult
 from review_mate.session.commands import (
-    AddHighlight, EmitCard, PostMessage, RequestAccess, UpdateCard,
+    AddHighlight, EmitCard, LabelCard, PostMessage, RequestAccess, UpdateCard,
 )
 from review_mate.session.events import (
     AccessDecided, AccessGrantChanged, HighlightAdded, MessagePosted,
 )
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import (
-    CardStatus, FileEntry, LineRange, Origin, Side, SessionState, SessionSummary, Subject,
+    CardStatus, Criticality, FileEntry, Label, LineRange, Origin, Side, SessionState,
+    SessionSummary, Subject, Theme,
 )
+
+
+def _label(theme: str | None, criticality: str | None, about: str = "") -> Label | None:
+    """A label needs both halves or it is not one: a theme with no weight cannot be sorted, and a
+    weight with no theme cannot be filtered. Neither given means the card is simply unclassified."""
+    if theme is None and criticality is None:
+        return None
+    if theme is None or criticality is None:
+        raise ValueError("a label needs both a theme and a criticality")
+    return Label(theme=Theme(theme), criticality=Criticality(criticality), about=about)
 
 
 class AgentBridge:
@@ -106,10 +117,20 @@ class AgentBridge:
         card = await self.emit_card(session_id, hid, body, citations)
         return {"highlight_id": hid, "card": card.model_dump()}
 
-    async def emit_card(self, session_id: str, highlight_id: str | None, body: str,
-                        citations: list[str] | None = None) -> CommandResult:
+    async def label_card(self, session_id: str, card_id: str, theme: str, criticality: str,
+                         about: str = "") -> CommandResult:
         return await self._actor(session_id).submit(
-            EmitCard(highlight_id=highlight_id, body=body, citations=citations or []),
+            LabelCard(card_id=card_id,
+                      label=Label(theme=Theme(theme), criticality=Criticality(criticality),
+                                  about=about)),
+            Origin.AGENT)
+
+    async def emit_card(self, session_id: str, highlight_id: str | None, body: str,
+                        citations: list[str] | None = None, theme: str | None = None,
+                        criticality: str | None = None, about: str = "") -> CommandResult:
+        return await self._actor(session_id).submit(
+            EmitCard(highlight_id=highlight_id, body=body, citations=citations or [],
+                     label=_label(theme, criticality, about)),
             Origin.AGENT,
         )
 

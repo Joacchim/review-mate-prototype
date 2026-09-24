@@ -8,7 +8,7 @@ from review_mate.session.reducer import reduce, fold
 from review_mate.session.state import (
     SessionState, Origin, Side, LineRange, MRMetadata, FileEntry, ChangeType,
     Highlight, Card, AccessRequest, ReviewThread, CardStatus, AccessStatus, ChatMessage,
-    DraftComment, DraftStatus, Grant, Subject, SubjectKind,
+    Criticality, DraftComment, DraftStatus, Grant, Label, Subject, SubjectKind, Theme,
 )
 
 ALL_ORIGINS = [Origin.BROWSER, Origin.AGENT, Origin.SYSTEM]
@@ -44,6 +44,8 @@ def _sample(cmd_type: str):
         "remove_draft": cmd.RemoveDraft(highlight_id="x"),
         "mark_draft_posted": cmd.MarkDraftPosted(highlight_id="x"),
         "record_grant": cmd.RecordGrant(request_id="x", grant=Grant()),
+        "label_card": cmd.LabelCard(card_id="x", label=Label(
+            theme=Theme.BUG, criticality=Criticality.HIGH)),
     }[cmd_type]
 
 
@@ -351,3 +353,63 @@ def test_a_grant_for_no_such_request_is_rejected():
     s = _with_mr()
     out = handle(s, cmd.RecordGrant(request_id="nope", grant=Grant()), Origin.SYSTEM)
     assert isinstance(out, Rejection) and "no such access request" in out.reason
+
+
+# --- what an insight is about, and how much it matters -------------------------
+
+def _labelled(theme=Theme.BUG, crit=Criticality.HIGH, about="the retry path"):
+    return Label(theme=theme, criticality=crit, about=about)
+
+
+def test_an_insight_can_say_what_it_is_and_how_much_it_matters():
+    s = _with_mr()
+    s = fold(s, handle(s, cmd.EmitCard(highlight_id=None, body="the retry is unbounded",
+                                       label=_labelled()), Origin.AGENT))
+    label = s.cards[0].label
+    assert label.theme is Theme.BUG and label.criticality is Criticality.HIGH
+    assert label.about == "the retry path"
+    assert label.by is Origin.AGENT, "the agent's own claim"
+
+
+def test_an_unlabelled_insight_stays_unlabelled():
+    """Never inferred. A card with no label is a card nobody classified, and says so."""
+    s = _with_mr()
+    s = fold(s, handle(s, cmd.EmitCard(highlight_id=None, body="a note"), Origin.AGENT))
+    assert s.cards[0].label is None
+
+
+def test_the_reviewer_can_correct_a_claim_they_disagree_with():
+    """A finding labelled wrongly is still a finding — correcting beats dismissing it."""
+    s = _with_mr()
+    s = fold(s, handle(s, cmd.EmitCard(highlight_id=None, body="x", label=_labelled()),
+                       Origin.AGENT))
+    cid = s.cards[0].id
+    s = fold(s, handle(s, cmd.LabelCard(card_id=cid, label=_labelled(
+        theme=Theme.STYLE, crit=Criticality.LOW, about="")), Origin.BROWSER))
+    label = s.cards[0].label
+    assert label.theme is Theme.STYLE and label.criticality is Criticality.LOW
+    assert label.by is Origin.BROWSER, "whose claim it now is, so a client can say so"
+
+
+def test_who_labelled_it_is_never_the_callers_to_say():
+    """Same rule a chat message's role follows: the origin decides, not the payload."""
+    s = _with_mr()
+    s = fold(s, handle(s, cmd.EmitCard(highlight_id=None, body="x"), Origin.AGENT))
+    cid = s.cards[0].id
+    forged = Label(theme=Theme.BUG, criticality=Criticality.HIGH, by=Origin.BROWSER)
+    s = fold(s, handle(s, cmd.LabelCard(card_id=cid, label=forged), Origin.AGENT))
+    assert s.cards[0].label.by is Origin.AGENT
+
+
+def test_labelling_something_that_is_not_there_is_rejected():
+    s = _with_mr()
+    out = handle(s, cmd.LabelCard(card_id="nope", label=_labelled()), Origin.AGENT)
+    assert isinstance(out, Rejection) and "no such card" in out.reason
+
+
+def test_a_theme_outside_the_vocabulary_is_not_a_command():
+    """Closed on purpose: an open list is a filter row where `perf` and `performance` both appear
+    and neither finds the other's cards."""
+    import pydantic
+    with pytest.raises(pydantic.ValidationError):
+        Label(theme="cleanliness", criticality=Criticality.LOW)

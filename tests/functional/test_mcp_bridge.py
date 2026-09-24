@@ -223,3 +223,45 @@ async def test_the_tool_the_agent_actually_calls_returns_the_folded_view(setup):
     assert "asks" in payload["chat"]["agent"], "the backlog, so the worker stops deriving it"
     assert "a candid unsent note" not in repr(payload)
     assert "files" not in payload, "the diff has its own tool"
+
+
+# --- classifying what it found -------------------------------------------------
+
+async def test_the_agent_classifies_what_it_posts(setup):
+    manager, bridge, sid = setup
+    await bridge.emit_card(sid, None, "the retry is unbounded", theme="bug", criticality="high",
+                           about="the retry path")
+    label = bridge.snapshot(sid).cards[0].label
+    assert label.theme.value == "bug" and label.criticality.value == "high"
+    assert label.about == "the retry path" and label.by is Origin.AGENT
+
+
+async def test_half_a_label_is_refused_rather_than_guessed(setup):
+    """A theme with no weight cannot be sorted and a weight with no theme cannot be filtered."""
+    manager, bridge, sid = setup
+    with pytest.raises(ValueError):
+        await bridge.emit_card(sid, None, "x", theme="bug")
+    with pytest.raises(ValueError):
+        await bridge.emit_card(sid, None, "x", criticality="high")
+
+
+async def test_no_label_at_all_is_fine(setup):
+    manager, bridge, sid = setup
+    await bridge.emit_card(sid, None, "just context, not a finding")
+    assert bridge.snapshot(sid).cards[0].label is None
+
+
+async def test_a_theme_it_invented_is_rejected(setup):
+    manager, bridge, sid = setup
+    with pytest.raises(ValueError):
+        await bridge.emit_card(sid, None, "x", theme="cleanliness", criticality="low")
+
+
+async def test_it_can_reclassify_what_it_already_posted(setup):
+    manager, bridge, sid = setup
+    await bridge.emit_card(sid, None, "x", theme="style", criticality="low")
+    cid = bridge.snapshot(sid).cards[0].id
+    await bridge.label_card(sid, cid, theme="security", criticality="high",
+                            about="reachable from the public API")
+    label = bridge.snapshot(sid).cards[0].label
+    assert label.theme.value == "security" and label.about == "reachable from the public API"

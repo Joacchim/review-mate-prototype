@@ -96,6 +96,42 @@ class Highlight(BaseModel):
     context_requested_at: str = ""     # when they escalated — the UI ages the "Claude is working" cue
 
 
+class Theme(str, Enum):
+    """What an insight is about. Closed, because an open list is a filter row nobody can rely on:
+    `perf` and `performance` would both appear and neither would find the other's cards."""
+    BUG = "bug"
+    SECURITY = "security"
+    PERFORMANCE = "performance"
+    TEST = "test"
+    DOCS = "docs"
+    STYLE = "style"
+    NAMING = "naming"
+    COMPLEXITY = "complexity"
+
+
+class Criticality(str, Enum):
+    """How much an insight matters. Three levels, not four: the gap between "nit" and "low" is the
+    difference between *do not act* and *maybe act*, and that is a reviewer's call to make. An
+    agent's findings are advisory — it blocks nothing — so a level encoding "you may ignore this"
+    would be a signal it is not entitled to send. A nit is `style` at `low`, and composes."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class Label(BaseModel):
+    """What an insight is about, how much it matters, and who says so.
+
+    `about` is the free line the enums cannot carry — "the retry path", "only on the cold start".
+    The pair is what filters and sorts; the line is what makes a row worth reading before opening
+    it. `by` records whose claim this is: the agent's when it emitted the card, the reviewer's once
+    they disagreed, which is a different thing to show than a label nobody has questioned."""
+    theme: Theme
+    criticality: Criticality
+    about: str = ""
+    by: Origin = Origin.AGENT
+
+
 class Card(BaseModel):
     id: str
     highlight_id: str | None = None    # the pivot anchor; None = an MR-level (unanchored) insight
@@ -103,6 +139,7 @@ class Card(BaseModel):
     citations: list[str] = Field(default_factory=list)
     author: Origin = Origin.AGENT
     status: CardStatus = CardStatus.COMPLETE
+    label: "Label | None" = None       # unlabelled is legal: never inferred, rendered as unlabelled
     created_at: str = ""
 
 

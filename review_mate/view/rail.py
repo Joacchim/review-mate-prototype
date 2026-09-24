@@ -21,11 +21,21 @@ from pydantic import BaseModel, Field
 from review_mate.session.state import DraftStatus, SessionStatus
 
 
+class RailLabel(BaseModel):
+    """What an insight is about and how much it matters — the pair a client filters and sorts on,
+    plus the line it renders beside the row so the label is worth reading before the card is."""
+    theme: str
+    criticality: str
+    about: str = ""
+    by: str = "agent"              # whose claim: the agent's, or the reviewer's once they corrected
+
+
 class RailCard(BaseModel):
     id: str
     body: str = ""
     citations: list[str] = Field(default_factory=list)
     status: str = ""
+    label: RailLabel | None = None   # absent means nobody classified it, never "unimportant"
     created_at: str = ""
 
 
@@ -138,8 +148,13 @@ class RailScope:
     def _card(card) -> RailCard | None:
         if card is None:
             return None
-        return RailCard(id=card.id, body=card.body, citations=list(card.citations),
-                        status=getattr(card.status, "value", ""), created_at=card.created_at)
+        label = card.label
+        return RailCard(
+            id=card.id, body=card.body, citations=list(card.citations),
+            status=getattr(card.status, "value", ""), created_at=card.created_at,
+            label=None if label is None else RailLabel(
+                theme=label.theme.value, criticality=label.criticality.value,
+                about=label.about, by=getattr(label.by, "value", str(label.by))))
 
     # --- the cheap tier ------------------------------------------------------
 

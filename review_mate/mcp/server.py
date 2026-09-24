@@ -69,10 +69,40 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
 
     @mcp.tool()
     async def emit_card(session_id: str, body: str, highlight_id: str | None = None,
-                        citations: list[str] | None = None) -> dict:
+                        citations: list[str] | None = None, theme: str | None = None,
+                        criticality: str | None = None, about: str = "") -> dict:
         """Post a context card (markdown). Anchor it to a highlight by id, or omit highlight_id
-        for an MR-level insight (a standalone card not tied to any zone)."""
-        return (await bridge.emit_card(session_id, highlight_id, body, citations)).model_dump()
+        for an MR-level insight (a standalone card not tied to any zone).
+
+        Classify it with `theme` and `criticality` — give both or neither. The reviewer sorts and
+        filters on the pair, so a change with forty findings can be read highest-first or narrowed
+        to one kind, which is the whole point of saying anything about a finding beyond its text.
+
+        - `theme`: bug · security · performance · test · docs · style · naming · complexity
+        - `criticality`: low · medium · high
+
+        `about` is one short line the two words cannot carry — "the retry path", "only on cold
+        start" — so a row is worth reading before the card is opened.
+
+        Judge honestly. Everything marked high is the same as nothing marked high, and a real bug
+        marked low is the failure that costs something. A nitpick is `style` at `low`; there is no
+        separate level for "you may ignore this", because you are not the one who decides that.
+        """
+        return (await bridge.emit_card(session_id, highlight_id, body, citations,
+                                       theme=theme, criticality=criticality,
+                                       about=about)).model_dump()
+
+    @mcp.tool()
+    async def label_card(session_id: str, card_id: str, theme: str, criticality: str,
+                         about: str = "") -> dict:
+        """Classify an insight you already posted, or change how you classified it.
+
+        Use it when you learn more — a finding you called `medium` turns out to be reachable from
+        the public API. The reviewer can relabel too, and their word replaces yours: if they moved
+        your `bug`/`high` to `style`/`low`, that is an answer, not something to set back.
+        """
+        return (await bridge.label_card(session_id, card_id, theme, criticality,
+                                        about)).model_dump()
 
     @mcp.tool()
     async def add_insight(session_id: str, file: str, start_line: int, end_line: int, body: str,
