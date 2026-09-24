@@ -8,7 +8,7 @@ from review_mate.session.reducer import reduce, fold
 from review_mate.session.state import (
     SessionState, Origin, Side, LineRange, MRMetadata, FileEntry, ChangeType,
     Highlight, Card, AccessRequest, ReviewThread, CardStatus, AccessStatus, ChatMessage,
-    DraftComment, DraftStatus,
+    DraftComment, DraftStatus, Subject, SubjectKind,
 )
 
 ALL_ORIGINS = [Origin.BROWSER, Origin.AGENT, Origin.SYSTEM]
@@ -24,6 +24,8 @@ def _sample(cmd_type: str):
         "remove_highlight": cmd.RemoveHighlight(highlight_id="x"),
         "request_context": cmd.RequestContext(highlight_id="x"),
         "request_insights": cmd.RequestInsights(),
+        "request_check": cmd.RequestCheck(
+            subject=Subject(kind=SubjectKind.HIGHLIGHT, id="x")),
         "decide_access": cmd.DecideAccess(request_id="x", approve=True),
         "end_session": cmd.EndSession(),
         "emit_card": cmd.EmitCard(highlight_id="x", body="b"),
@@ -238,3 +240,50 @@ def test_asking_again_restamps_the_head():
                        Origin.SYSTEM))
     s = fold(s, handle(s, cmd.RequestInsights(), Origin.BROWSER))
     assert s.insights_requested_sha == "def456"
+
+
+# --- asking for something to be double-checked --------------------------------
+
+def _with_highlight():
+    s = _with_mr()
+    return fold(s, handle(s, _sample("add_highlight"), Origin.BROWSER))
+
+
+def test_a_check_records_what_to_verify_and_which_code():
+    s = _with_highlight()
+    hid = s.highlights[0].id
+    s = fold(s, handle(s, cmd.RequestCheck(
+        subject=Subject(kind=SubjectKind.HIGHLIGHT, id=hid),
+        note="this claims the queue is single-threaded"), Origin.BROWSER))
+
+    check = s.checks[0]
+    assert check.subject.id == hid and check.subject.kind is SubjectKind.HIGHLIGHT
+    assert check.note == "this claims the queue is single-threaded"
+    assert check.sha == "abc123"      # which code it was about, as a pass and a highlight both do
+
+
+def test_a_check_on_something_that_is_not_there_is_rejected():
+    """The same guard a message anchored to nothing gets: an ask nothing can open is unreachable."""
+    s = _with_mr()
+    out = handle(s, cmd.RequestCheck(subject=Subject(kind=SubjectKind.HIGHLIGHT, id="nope")),
+                 Origin.BROWSER)
+    assert isinstance(out, Rejection) and "no such highlight" in out.reason
+
+
+def test_a_check_can_be_asked_about_the_agents_own_insight():
+    s = _with_mr()
+    s = fold(s, handle(s, cmd.EmitCard(highlight_id=None, body="the reducer is the only writer"),
+                       Origin.AGENT))
+    cid = s.cards[0].id
+    s = fold(s, handle(s, cmd.RequestCheck(subject=Subject(kind=SubjectKind.INSIGHT, id=cid)),
+                       Origin.BROWSER))
+    assert s.checks[0].subject.kind is SubjectKind.INSIGHT and s.checks[0].note == ""
+
+
+def test_several_checks_stand_on_their_own():
+    s = _with_highlight()
+    hid = s.highlights[0].id
+    for note in ("first doubt", "second doubt"):
+        s = fold(s, handle(s, cmd.RequestCheck(
+            subject=Subject(kind=SubjectKind.HIGHLIGHT, id=hid), note=note), Origin.BROWSER))
+    assert [c.note for c in s.checks] == ["first doubt", "second doubt"]

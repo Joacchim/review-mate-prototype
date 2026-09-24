@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from review_mate.session import events as ev
 from review_mate.session.state import (
-    AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, DraftComment, DraftStatus,
+    AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, CheckRequest, DraftComment, DraftStatus,
     FileEntry, Highlight, LineRange, MRMetadata, Origin, ReviewThread, Side, Subject, SubjectKind,
 )
 
@@ -111,6 +111,18 @@ class ClearChat(BaseModel):
     anchor: Subject | None = None      # clears that conversation only
 
 
+class RequestCheck(BaseModel):
+    """Ask the agent to verify something already said — the reviewer's words, or the agent's own.
+
+    A comment is checked through the highlight it sits on, with its text as `note`: a comment is
+    not something a conversation can be about, and inventing a fourth subject kind for it would
+    put every client and every chat scope in step with a distinction only this needs.
+    """
+    type: Literal["request_check"] = "request_check"
+    subject: Subject
+    note: str | None = None
+
+
 class RequestInsights(BaseModel):
     """Ask the agent for what it finds on the change as a whole — `request_context` at MR level."""
     type: Literal["request_insights"] = "request_insights"
@@ -142,7 +154,7 @@ class EndSession(BaseModel):
 Command = Union[
     AddHighlight, RemoveHighlight, RequestContext, RequestInsights, EmitCard, UpdateCard, RemoveCard,
     RequestAccess, DecideAccess, ApplyMRMetadata, SetCheckout, ApplyFiles, ApplyThread, ReplaceThreads,
-    PostMessage, ClearChat, SaveDraft, RemoveDraft, MarkDraftPosted, EndSession,
+    PostMessage, ClearChat, RequestCheck, SaveDraft, RemoveDraft, MarkDraftPosted, EndSession,
 ]
 
 
@@ -168,6 +180,7 @@ AUTHORITY: dict[str, set[Origin]] = {
     "remove_highlight": {Origin.BROWSER},
     "request_context": {Origin.BROWSER},   # the reviewer escalates a highlight to the agent tier (D21)
     "request_insights": {Origin.BROWSER},  # ... and the same ask about the change as a whole
+    "request_check": {Origin.BROWSER},     # verifying something said is the reviewer's to ask for
     "remove_card": {Origin.BROWSER},   # the reviewer dismisses an insight card
     "decide_access": {Origin.BROWSER},
     "end_session": {Origin.BROWSER},
@@ -301,6 +314,14 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
         msg = ChatMessage(id=_id(), role=role, body=command.body, anchor=command.anchor,
                           created_at=ts)
         return emit(ev.MessagePosted, message=msg)
+
+    if isinstance(command, RequestCheck):
+        missing = _absent_subject(state, command.subject)
+        if missing is not None:
+            return Rejection(reason=missing)
+        return emit(ev.CheckRequested, request=CheckRequest(
+            id=_id(), subject=command.subject, note=(command.note or "").strip(),
+            requested_at=ts, sha=state.mr.sha if state.mr else None))
 
     if isinstance(command, RequestInsights):
         return emit(ev.InsightsRequested, sha=state.mr.sha if state.mr else None)

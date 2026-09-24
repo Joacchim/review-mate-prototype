@@ -129,6 +129,20 @@ class ReviewThread(BaseModel):
     capabilities: dict[str, bool] = Field(default_factory=dict)
 
 
+class CheckRequest(BaseModel):
+    """Something the reviewer asked the agent to verify — their own words, or the agent's.
+
+    A comment is not a subject of its own, so double-checking one checks the highlight it sits on
+    and carries the comment's text as what to verify. The sha says which code it was about, the way
+    a highlight and a review pass both do.
+    """
+    id: str
+    subject: "Subject"
+    note: str = ""
+    requested_at: str = ""
+    sha: str | None = None
+
+
 class SubjectKind(str, Enum):
     """What a conversation can be about, beyond the review itself."""
     HIGHLIGHT = "highlight"
@@ -201,6 +215,7 @@ class SessionState(BaseModel):
     insights_requested: bool = False
     insights_requested_at: str = ""
     insights_requested_sha: str | None = None
+    checks: list[CheckRequest] = Field(default_factory=list)
     drafts: list[DraftComment] = Field(default_factory=list)
 
 

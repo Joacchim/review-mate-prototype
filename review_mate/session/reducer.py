@@ -81,6 +81,8 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
         s.messages.append(event.message)
     elif isinstance(event, ev.ChatCleared):
         s.messages = [m for m in s.messages if m.anchor != event.anchor]
+    elif isinstance(event, ev.CheckRequested):
+        s.checks.append(event.request)
     elif isinstance(event, ev.InsightsRequested):
         s.insights_requested = True
         s.insights_requested_at = event.ts

@@ -11,8 +11,8 @@ from typing import Annotated, Literal, Union
 from pydantic import BaseModel, Field, TypeAdapter
 
 from review_mate.session.state import (
-    AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, DraftComment, FileEntry, Highlight,
-    MRMetadata, Origin, ReviewThread, Subject,
+    AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, CheckRequest, DraftComment,
+    FileEntry, Highlight, MRMetadata, Origin, ReviewThread, Subject,
 )
 
 
@@ -102,6 +102,11 @@ class InsightsRequested(_EventBase):
     sha: str | None = None       # the head the pass was asked about
 
 
+class CheckRequested(_EventBase):
+    type: Literal["check_requested"] = "check_requested"
+    request: "CheckRequest"
+
+
 class MessagePosted(_EventBase):
     type: Literal["message_posted"] = "message_posted"
     message: ChatMessage
@@ -139,7 +144,8 @@ Event = Annotated[
         HighlightAdded, HighlightRemoved, ContextRequested,
         CardEmitted, CardUpdated, CardRemoved,
         AccessRequested, AccessDecided,
-        ThreadApplied, ThreadsReplaced, InsightsRequested, MessagePosted, ChatCleared,
+        ThreadApplied, ThreadsReplaced, InsightsRequested, CheckRequested, MessagePosted,
+        ChatCleared,
         DraftSaved, DraftRemoved, DraftPosted, SessionEnded,
     ],
     Field(discriminator="type"),
