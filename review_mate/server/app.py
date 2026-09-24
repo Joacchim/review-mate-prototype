@@ -99,6 +99,7 @@ def create_app(manager: SessionManager | None = None,
     from review_mate.view.review import ReviewScope
     from review_mate.view.threads import ThreadsScope
     from review_mate.writeback.submit import ReviewSubmitter
+    from review_mate.writeback.threads import ThreadVerbs
     from review_mate.view.hub import HubScope
     from review_mate.view.protocol import HUB
     # a session's reading scopes are rebuilt when its state changes, but only while a client is
@@ -264,11 +265,14 @@ def create_app(manager: SessionManager | None = None,
             presence_task = None
 
     submitter = ReviewSubmitter(manager, writeback, provider=provider, kb=kb)
+    thread_verbs = ThreadVerbs(manager, writeback, provider=provider)
     routes = build_routes(manager, resolve_ref=resolve_ref, provider=provider, broker=broker,
-                          writeback=writeback, activity_broker=activity_broker)
+                          writeback=writeback, activity_broker=activity_broker,
+                          threads=thread_verbs)
     # registered before the static mount so `/api/stream` and `/api/cmd` are never shadowed by the UI
     routes.extend(build_view_routes(manager, bus, hub, resolve_ref=resolve_ref,
-                                    submitter=submitter, review=review_scope, kb=kb))
+                                    submitter=submitter, review=review_scope, kb=kb,
+                                    threads=thread_verbs))
 
     mcp_app = None
     if with_mcp:

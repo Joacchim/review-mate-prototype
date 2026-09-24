@@ -89,8 +89,10 @@ Server frames:
 ```
 
 Writes go to `POST /api/cmd` as `{"cmd": …, "args": {…}}` — `session.open`, `session.close`,
-`hub.refresh`, `review.submit`, `review.mark_reviewed`. A rejection answers with a status code and
-a reason, and the status carries meaning: 400 on `session.open` means the reference did not parse.
+`hub.refresh`, `session.resync`, `review.submit`, `review.mark_reviewed`, and the thread verbs
+`thread.reply` / `thread.resolve` / `thread.edit_note` / `thread.delete_note`. A rejection
+answers with a status code and a reason, and the status carries meaning: 400 on
+`session.open` means the reference did not parse.
 
 Sending a review is a command rather than a route because both clients send one, and the order it
 runs in is the part worth having once: a comment the host refuses must not sink the rest, the

@@ -26,7 +26,7 @@ ACTIVITY_TIMEOUT = 50.0
 
 
 def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broker=None,
-                 writeback=None, activity_broker=None) -> list:
+                 writeback=None, activity_broker=None, threads=None) -> list:
     async def create_session(request: Request) -> JSONResponse:
         body = await _maybe_json(request)
         raw = body.get("ref") if isinstance(body, dict) else None
@@ -168,121 +168,44 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
         return JSONResponse({"available": True, "commits": await provider.commits(ref)})
 
-    async def _remirror_threads(actor, ref) -> list:
-        """Re-pull the MR's discussions from the host and re-mirror them into session state
-        (host is the single source of truth for threads). No-op without a provider."""
-        if provider is None or not hasattr(provider, "fetch_threads"):
-            return []
-        threads = await provider.fetch_threads(ref)
-        # reconcile wholesale (host is the single source of truth): drops threads it no longer
-        # reports — system notes, or a discussion resolved-and-deleted host-side
-        await actor.submit(ReplaceThreads(threads=threads), Origin.SYSTEM)
-        return threads
-
-    def _thread_ref(actor):
-        snap = actor.snapshot()
-        if snap.mr is None:
-            return None
-        return MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
+    def _verb_answer(result: dict) -> JSONResponse:
+        if "error" in result:
+            return JSONResponse(result,
+                                status_code=404 if result["error"] == "unknown session" else 400)
+        return JSONResponse(result)
 
     async def reply_thread(request: Request) -> JSONResponse:
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        if writeback is None:
-            return JSONResponse({"error": "review posting unavailable"}, status_code=400)
-        ref = _thread_ref(actor)
-        if ref is None:
-            return JSONResponse({"error": "no MR loaded"}, status_code=400)
+        """The sequence lives in `ThreadVerbs`, which `thread.reply` runs too — so whichever client
+        answers a discussion, the same reply lands and the same re-sync follows it."""
         body = await _maybe_json(request)
-        text = body.get("body", "").strip() if isinstance(body, dict) else ""
-        if not text:
-            return JSONResponse({"error": "empty reply"}, status_code=400)
-        try:
-            await writeback.reply(ref, request.path_params["tid"], text)
-        except Exception as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        await _remirror_threads(actor, ref)
-        return JSONResponse({"ok": True})
+        text = body.get("body", "") if isinstance(body, dict) else ""
+        return _verb_answer(await threads.reply(request.path_params["id"],
+                                                request.path_params["tid"], text))
 
     async def resolve_thread(request: Request) -> JSONResponse:
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        if writeback is None:
-            return JSONResponse({"error": "review posting unavailable"}, status_code=400)
-        ref = _thread_ref(actor)
-        if ref is None:
-            return JSONResponse({"error": "no MR loaded"}, status_code=400)
         body = await _maybe_json(request)
         resolved = bool(body.get("resolved", True)) if isinstance(body, dict) else True
-        try:
-            await writeback.resolve(ref, request.path_params["tid"], resolved)
-        except Exception as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        await _remirror_threads(actor, ref)
-        return JSONResponse({"ok": True, "resolved": resolved})
+        return _verb_answer(await threads.resolve(request.path_params["id"],
+                                                  request.path_params["tid"], resolved))
 
     async def edit_note(request: Request) -> JSONResponse:
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        if writeback is None:
-            return JSONResponse({"error": "review posting unavailable"}, status_code=400)
-        ref = _thread_ref(actor)
-        if ref is None:
-            return JSONResponse({"error": "no MR loaded"}, status_code=400)
         body = await _maybe_json(request)
-        text = body.get("body", "").strip() if isinstance(body, dict) else ""
-        if not text:
-            return JSONResponse({"error": "empty body"}, status_code=400)
-        try:
-            await writeback.edit_note(ref, request.path_params["tid"], request.path_params["nid"], text)
-        except Exception as exc:  # host enforces ownership → 403 surfaces here
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        await _remirror_threads(actor, ref)
-        return JSONResponse({"ok": True})
+        text = body.get("body", "") if isinstance(body, dict) else ""
+        return _verb_answer(await threads.edit_note(request.path_params["id"],
+                                                    request.path_params["tid"],
+                                                    request.path_params["nid"], text))
 
     async def delete_note(request: Request) -> JSONResponse:
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        if writeback is None:
-            return JSONResponse({"error": "review posting unavailable"}, status_code=400)
-        ref = _thread_ref(actor)
-        if ref is None:
-            return JSONResponse({"error": "no MR loaded"}, status_code=400)
-        try:
-            await writeback.delete_note(ref, request.path_params["tid"], request.path_params["nid"])
-        except Exception as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        await _remirror_threads(actor, ref)
-        return JSONResponse({"ok": True})
+        return _verb_answer(await threads.delete_note(request.path_params["id"],
+                                                      request.path_params["tid"],
+                                                      request.path_params["nid"]))
 
     async def whoami(request: Request) -> JSONResponse:
         """The reviewer's own host username — so the UI can mark 'your' notes (edit/delete)."""
         return JSONResponse({"username": getattr(provider, "username", None)})
 
     async def refresh_threads(request: Request) -> JSONResponse:
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        ref = _thread_ref(actor)
-        if ref is None:
-            return JSONResponse({"error": "no MR loaded"}, status_code=400)
-        # Full re-sync from the host (the single source of truth): MR head + diff + discussions.
-        # A thread-only refresh left snap.mr.sha frozen at session creation, so an updated MR was
-        # never noticed — review-status compared the watermark against a stale head equal to it and
-        # "Since last review" (diff-versions) never engaged. Re-pull metadata + files when the host
-        # supports a full load; fall back to a thread-only re-mirror otherwise.
-        if provider is not None and hasattr(provider, "load"):
-            payload = await provider.load(ref)
-            await actor.submit(ApplyMRMetadata(mr=payload.mr), Origin.SYSTEM)
-            await actor.submit(ApplyFiles(files=payload.files), Origin.SYSTEM)
-            await actor.submit(ReplaceThreads(threads=payload.threads), Origin.SYSTEM)  # reconcile wholesale
-            return JSONResponse({"threads": len(payload.threads), "head": payload.mr.sha})
-        threads = await _remirror_threads(actor, ref)
-        return JSONResponse({"threads": len(threads)})
+        return _verb_answer(await threads.resync(request.path_params["id"]))
 
     async def end_session(request: Request) -> JSONResponse:
         try:

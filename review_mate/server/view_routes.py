@@ -21,7 +21,7 @@ from review_mate.view.protocol import HUB, ScopeError, Subscribe, parse_client_m
 
 
 def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
-                      review=None, kb=None) -> list:
+                      review=None, kb=None, threads=None) -> list:
     async def _publish_hub() -> None:
         await bus.publish(HUB)
 
@@ -133,8 +133,76 @@ def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
         await _publish_hub()
         return JSONResponse({"ok": True, "watermark": snapshot.mr.sha})
 
+    async def _thread_verb(args: dict, act) -> JSONResponse:
+        """Every thread verb answers the same way: do it, then republish what it changed.
+
+        A verb touches the discussions and, through them, whether a highlight's posted comment has
+        a thread to show — so the rail and the review are republished with them.
+        """
+        sid = _session_arg(args)
+        if sid is None or threads is None:
+            return JSONResponse({"ok": False, "reason": "unavailable"}, status_code=400)
+        tid = args.get("thread")
+        if not isinstance(tid, str) or not tid:
+            return JSONResponse({"ok": False, "reason": "no thread"}, status_code=400)
+        result = await act(sid, tid)
+        if "error" in result:
+            return JSONResponse({"ok": False, "reason": result["error"]},
+                                status_code=404 if result["error"] == "unknown session" else 400)
+        for scope in (f"threads:{sid}", f"rail:{sid}", f"review:{sid}"):
+            await bus.publish(scope)
+        await _publish_hub()
+        return JSONResponse({"ok": True, **result})
+
+    async def _thread_reply(args: dict) -> JSONResponse:
+        return await _thread_verb(
+            args, lambda sid, tid: threads.reply(sid, tid, args.get("body") or ""))
+
+    async def _thread_resolve(args: dict) -> JSONResponse:
+        resolved = args.get("resolved", True)
+        return await _thread_verb(args, lambda sid, tid: threads.resolve(sid, tid, bool(resolved)))
+
+    async def _thread_edit_note(args: dict) -> JSONResponse:
+        note = args.get("note")
+        if not isinstance(note, str) or not note:
+            return JSONResponse({"ok": False, "reason": "no note"}, status_code=400)
+        return await _thread_verb(
+            args, lambda sid, tid: threads.edit_note(sid, tid, note, args.get("body") or ""))
+
+    async def _thread_delete_note(args: dict) -> JSONResponse:
+        note = args.get("note")
+        if not isinstance(note, str) or not note:
+            return JSONResponse({"ok": False, "reason": "no note"}, status_code=400)
+        return await _thread_verb(args, lambda sid, tid: threads.delete_note(sid, tid, note))
+
+    async def _session_resync(args: dict) -> JSONResponse:
+        """Re-read the change from the host. Everything a session mirrors can move, so everything
+        it is being read through is republished."""
+        sid = _session_arg(args)
+        if sid is None or threads is None:
+            return JSONResponse({"ok": False, "reason": "unavailable"}, status_code=400)
+        try:
+            result = await threads.resync(sid)
+        except Exception as exc:
+            return JSONResponse({"ok": False, "reason": f"{type(exc).__name__}: {exc}"},
+                                status_code=502)
+        if "error" in result:
+            return JSONResponse({"ok": False, "reason": result["error"]},
+                                status_code=404 if result["error"] == "unknown session" else 400)
+        for scope in bus.watched(f"diff:{sid}:") | bus.watched(f"blob:{sid}:"):
+            await bus.publish(scope)
+        for scope in (f"threads:{sid}", f"rail:{sid}", f"review:{sid}"):
+            await bus.publish(scope)
+        await _publish_hub()
+        return JSONResponse({"ok": True, **result})
+
     _HANDLERS = {
         "session.open": _session_open,
+        "session.resync": _session_resync,
+        "thread.reply": _thread_reply,
+        "thread.resolve": _thread_resolve,
+        "thread.edit_note": _thread_edit_note,
+        "thread.delete_note": _thread_delete_note,
         "session.close": _session_close,
         "hub.refresh": _hub_refresh,
         "review.submit": _review_submit,

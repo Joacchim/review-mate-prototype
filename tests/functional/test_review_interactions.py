@@ -153,7 +153,9 @@ async def test_refresh_pulls_threads_into_state(tmp_path):
     manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider(threads=fresh))
     async with client:
         r = await client.post(f"/api/sessions/{sid}/refresh-threads", json={})
-        assert r.json() == {"threads": 1}
+        # a re-sync reports the head it read as well as what it mirrored: a head left frozen is
+        # what made "since last review" never engage
+        assert r.json() == {"ok": True, "head": "s", "threads": 1}
     assert [t.id for t in manager.get(sid).snapshot().threads] == ["d9"]
     await manager.shutdown()
 
@@ -381,4 +383,74 @@ async def test_marking_reviewed_advances_the_watermark_without_posting(tmp_path)
     assert r.json() == {"ok": True, "watermark": "s"}
     assert manager._test_kb.get_watermark("gitlab", "g/p", 42) == "s"
     assert writer.calls == []               # nothing was sent to the host
+    await manager.shutdown()
+
+
+# --- the same verbs, as named commands --------------------------------------
+# The route and the command run one sequence (`ThreadVerbs`), so what these pin is that the command
+# reaches it and republishes what it changed — not the posting, which the tests above cover.
+
+async def _cmd(client, name, **args):
+    return await client.post("/api/cmd", json={"cmd": name, "args": args})
+
+
+async def test_the_reply_command_posts_and_remirrors(tmp_path):
+    after = [ReviewThread(id="disc1", comments=[ThreadComment(id="1", author="rev", body="nit"),
+                                                ThreadComment(id="2", author="me", body="fixed")])]
+    writer = StubWriter()
+    manager, sid, client = await _app_client(tmp_path, writer, StubProvider(threads=after))
+    async with client:
+        r = await _cmd(client, "thread.reply", session=sid, thread="disc1", body="fixed")
+        assert r.json()["ok"] is True
+    assert writer.calls[-1] == ("reply", "disc1", "fixed")
+    assert [c.body for c in manager.get(sid).snapshot().threads[0].comments] == ["nit", "fixed"]
+    await manager.shutdown()
+
+
+async def test_an_empty_reply_is_refused_before_it_reaches_the_host(tmp_path):
+    writer = StubWriter()
+    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    async with client:
+        r = await _cmd(client, "thread.reply", session=sid, thread="disc1", body="   ")
+    assert r.status_code == 400 and writer.calls == []
+    await manager.shutdown()
+
+
+async def test_the_resolve_command_says_which_way_it_went(tmp_path):
+    writer = StubWriter()
+    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    async with client:
+        assert (await _cmd(client, "thread.resolve", session=sid,
+                           thread="disc1")).json()["resolved"] is True
+        assert (await _cmd(client, "thread.resolve", session=sid, thread="disc1",
+                           resolved=False)).json()["resolved"] is False
+    assert writer.calls == [("resolve", "disc1", True), ("resolve", "disc1", False)]
+    await manager.shutdown()
+
+
+async def test_the_note_commands_carry_the_note_they_act_on(tmp_path):
+    writer = StubWriter()
+    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    async with client:
+        await _cmd(client, "thread.edit_note", session=sid, thread="d1", note="n1", body="better")
+        await _cmd(client, "thread.delete_note", session=sid, thread="d1", note="n1")
+    assert writer.calls == [("edit_note", "d1", "n1", "better"), ("delete_note", "d1", "n1")]
+    await manager.shutdown()
+
+
+async def test_a_verb_without_a_thread_is_refused(tmp_path):
+    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
+    async with client:
+        r = await _cmd(client, "thread.resolve", session=sid)
+    assert r.status_code == 400 and r.json()["ok"] is False
+    await manager.shutdown()
+
+
+async def test_the_resync_command_reads_the_change_again(tmp_path):
+    fresh = [ReviewThread(id="d9", comments=[ThreadComment(id="9", author="a", body="new")])]
+    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider(threads=fresh))
+    async with client:
+        r = await _cmd(client, "session.resync", session=sid)
+        assert r.json() == {"ok": True, "head": "s", "threads": 1}
+    assert [t.id for t in manager.get(sid).snapshot().threads] == ["d9"]
     await manager.shutdown()
