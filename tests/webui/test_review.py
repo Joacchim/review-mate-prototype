@@ -230,3 +230,47 @@ def test_resolving_a_discussion_settles_it(diff, threads, shell, staged, stub_wr
     # host answers with, which this fixture decides rather than the resolve does
     expect(shell.status).to_have_text("resolved")
     assert stub_writer.resolved == [("d1", True)]
+
+
+# --- asking for a pass over the whole change ----------------------------------
+# The reviewer asks before or alongside their own pass, so it blocks nothing. What the control
+# must never do is disappear, or stop saying anything after the branch moves.
+
+def _reviewed_at(sha, requested=False):
+    state = review_with_highlights("s1")
+    state.mr = state.mr.model_copy(update={"sha": sha})
+    if requested:
+        state.insights_requested = True
+        state.insights_requested_at = "2026-01-01T00:00:00+00:00"
+        state.insights_requested_sha = sha
+    return state
+
+
+def test_a_change_nobody_has_asked_about_offers_the_pass(diff, rail, staged):
+    staged.put(_reviewed_at("abc123"))
+    diff.load("s1")
+    expect(rail.review_pass).to_be_enabled()
+
+
+def test_a_pass_covering_this_code_greys_the_control_rather_than_hiding_it(diff, rail, staged):
+    """A control that vanishes reads as broken; one that is greyed reads as already done."""
+    staged.put(_reviewed_at("abc123", requested=True))
+    diff.load("s1")
+    expect(rail.review_pass).to_have_count(1)
+    expect(rail.review_pass).to_be_disabled()
+
+
+def test_a_pass_the_change_moved_past_says_so_and_offers_another(diff, rail, staged):
+    state = _reviewed_at("abc123", requested=True)
+    state.mr = state.mr.model_copy(update={"sha": "moved-on"})   # a push since the pass
+    staged.put(state)
+    diff.load("s1")
+    expect(rail.pass_note).to_contain_text("about an earlier version")
+    expect(rail.review_pass).to_be_enabled()
+
+
+def test_asking_records_the_request(diff, rail, staged):
+    staged.put(_reviewed_at("abc123"))
+    diff.load("s1")
+    rail.review_pass.click()
+    expect(rail.review_pass).to_be_disabled()      # the server answered, and the control followed

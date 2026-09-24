@@ -446,6 +446,13 @@ function railHighlights() {
   return view && view.state === "ready" ? view.highlights : [];
 }
 
+// the MR-wide pass: whether one is running, whether it is about code that has moved, and whether
+// asking now would say anything new. All three are the server's — see view/rail.py
+function reviewPass() {
+  const view = railView();
+  return (view && view.state === "ready" && view.review_pass) || null;
+}
+
 function railInsights() {
   const view = railView();
   return view && view.state === "ready" ? view.insights : [];
@@ -1508,12 +1515,37 @@ function renderMrZone() {
   const insights = railInsights();
   zone.appendChild(h3(insights.length ? `The merge request · ${insights.length} insights`
                                       : "The merge request"));
+  zone.appendChild(reviewPassRow());
   renderMrRow(zone);
   const box = document.createElement("div");
   box.className = "railinsights";
   insights.forEach((c) => box.appendChild(insightRow(c)));
   zone.appendChild(box);
   return zone;
+}
+
+// Asking Claude for a pass over the whole change. The control is disabled rather than hidden while
+// a pass already covers what is on screen — a control that vanishes reads as broken — and a pass
+// the change has moved past says so rather than leaving a spinner that quietly stopped.
+function reviewPassRow() {
+  const wrap = document.createElement("div");
+  wrap.className = "passrow";
+  const state = reviewPass();
+  const running = state && state.requested && !state.stale;
+  const b = btn("✦ Review this change", "btn" + (running ? "" : " primary"),
+                () => post({ type: "request_insights" }));
+  b.disabled = !state || !state.available;
+  b.title = running ? "Claude is reviewing this change"
+          : b.disabled ? "already reviewed — ask again once the change moves"
+          : "ask Claude for a pass over the whole change, alongside your own";
+  wrap.appendChild(b);
+  if (running) wrap.appendChild(agentWaitLine(state.at, true));
+  else if (state && state.stale) {
+    const note = document.createElement("span");
+    note.className = "passnote"; note.textContent = "that pass was about an earlier version";
+    wrap.appendChild(note);
+  }
+  return wrap;
 }
 
 function railSplit(label) {

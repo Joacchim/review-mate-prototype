@@ -29,6 +29,16 @@ class RailPage:
         return self.page.locator(".railpin")
 
     @property
+    def review_pass(self):
+        """The control that asks Claude for a pass over the whole change."""
+        return self.page.locator(".passrow .btn")
+
+    @property
+    def pass_note(self):
+        """Why the control is available again, when a pass has gone stale."""
+        return self.page.locator(".passrow .passnote")
+
+    @property
     def mr_row(self):
         return self.page.locator(".railpin .hrow.mr")
 

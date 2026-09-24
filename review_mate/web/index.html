@@ -87,6 +87,10 @@
   .railpin::after{content:"";position:absolute;left:1px;right:1px;bottom:1px;height:18px;
                   border-radius:0 0 9px 9px;pointer-events:none;
                   background:linear-gradient(to top,var(--panel),transparent)}
+  /* asking for a pass over the whole change, above the insights it produces */
+  .passrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px}
+  .passrow .btn:disabled{opacity:.55;cursor:default;border-color:var(--line2);color:var(--fg2)}
+  .passrow .passnote{font-size:11px;color:var(--warnfg)}
   .railinsights{flex:1;min-height:0;overflow:auto;padding-right:2px}
   .railinsights .hrow:last-child{margin-bottom:4px}
   .raillist{flex:1;min-height:0;overflow:auto;padding-right:2px}
