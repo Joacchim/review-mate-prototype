@@ -320,6 +320,60 @@ def test_an_ask_that_has_sat_says_so():
     assert "no answer yet" in text_of(screen)
 
 
+# --- reading another repository ------------------------------------------------
+
+def access(*requests):
+    return {"session": "s1", "state": "ready", "requests": list(requests),
+            "pending": sum(1 for r in requests if r["status"] == "pending"), "working": 0}
+
+
+def req(repo="g/sibling", status="pending", grant=None):
+    return {"id": "r1", "repo": repo, "reason": "it defines the type", "status": status,
+            "decided_at": None, "grant": grant}
+
+
+def screen_with_access(*requests):
+    client = StubClient({"diff:s1:full": listing([row("a.py")]),
+                         "diff:s1:full:a.py": body(),
+                         "rail:s1": rail(), "access:s1": access(*requests)})
+    return DiffScreen(client, "s1")
+
+
+def test_an_unanswered_ask_says_what_it_blocks():
+    assert "Claude is waiting on 1 repo" in text_of(screen_with_access(req()))
+
+
+def test_an_approval_nothing_is_acting_on_says_so():
+    """The reviewer said yes and no clone started — a silence only they can break."""
+    rendered = text_of(screen_with_access(req(status="approved")))
+    assert "nothing is fetching it" in rendered
+
+
+def test_a_clone_under_way_says_so_instead():
+    rendered = text_of(screen_with_access(
+        req(status="approved", grant={"state": "materializing", "path": None, "error": ""})))
+    assert "fetching 1 repo" in rendered and "nothing is fetching" not in rendered
+
+
+def test_a_ready_grant_stops_saying_anything():
+    """It arrived. A header line that keeps reporting finished work is one the reviewer stops reading."""
+    rendered = text_of(screen_with_access(
+        req(status="approved", grant={"state": "ready", "path": "/tmp/x", "error": ""})))
+    assert "fetching" not in rendered and "nothing is fetching" not in rendered
+
+
+def test_a_failed_grant_names_the_repository():
+    rendered = text_of(screen_with_access(
+        req(status="approved", grant={"state": "failed", "path": None, "error": "no such repo"})))
+    assert "g/sibling could not be fetched" in rendered
+
+
+def test_a_refusal_is_not_followed_up():
+    """The reviewer made that decision; it needs nothing from them afterwards."""
+    rendered = text_of(screen_with_access(req(status="denied")))
+    assert "fetching" not in rendered and "could not be fetched" not in rendered
+
+
 # --- what the change owns, on the rail ----------------------------------------
 
 def test_an_insight_is_on_the_rail_above_the_lines():

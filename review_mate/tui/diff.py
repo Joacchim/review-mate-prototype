@@ -171,6 +171,15 @@ class DiffScreen:
     def pending_access(self) -> list[dict]:
         return [r for r in (self.access.get("requests") or []) if r.get("status") == "pending"]
 
+    def granted_access(self) -> list[dict]:
+        """Approvals and what became of them — a decision is not the end of the story here.
+
+        A refusal is left out: the reviewer made it and it needs no follow-up. An approval can still
+        be fetching, can have failed, or can be sitting with nothing acting on it, and each of those
+        is theirs to see.
+        """
+        return [r for r in (self.access.get("requests") or []) if r.get("status") == "approved"]
+
     @property
     def review(self) -> dict:
         """What is prepared to send: the drafts, the approval, and whether this has moved on."""
@@ -548,12 +557,29 @@ class DiffScreen:
 
     def _access_badge(self) -> list[tuple[str, str]]:
         """Consent is the one thing here that blocks the agent rather than the reviewer, so it says
-        so in the header where nothing has to be open to see it."""
+        so in the header where nothing has to be open to see it.
+
+        And the same line reports what an approval became. A reviewer who said yes has no other way
+        to tell a clone that is running from one that never started, and a failure is theirs to
+        chase because they are the one who agreed to it.
+        """
+        out: list[tuple[str, str]] = []
         waiting = len(self.pending_access())
-        if not waiting:
-            return []
-        what = "repo" if waiting == 1 else "repos"
-        return [("class:attention", f"   Claude is waiting on {waiting} {what}  (C to decide)")]
+        if waiting:
+            what = "repo" if waiting == 1 else "repos"
+            out.append(("class:attention",
+                        f"   Claude is waiting on {waiting} {what}  (C to decide)"))
+        granted = self.granted_access()
+        working = sum(1 for r in granted if (r.get("grant") or {}).get("state") == "materializing")
+        failed = [r for r in granted if (r.get("grant") or {}).get("state") == "failed"]
+        idle = [r for r in granted if r.get("grant") is None]
+        if working:
+            out.append(("class:info", f"   fetching {working} repo{'s' if working > 1 else ''}"))
+        if failed:
+            out.append(("class:error", f"   {failed[0]['repo']} could not be fetched"))
+        if idle:
+            out.append(("class:attention", f"   {idle[0]['repo']}: nothing is fetching it"))
+        return out
 
     def _review_badge(self) -> list[tuple[str, str]]:
         """What is waiting to be sent, and whether this has already been approved.
