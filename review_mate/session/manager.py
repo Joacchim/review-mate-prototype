@@ -91,12 +91,16 @@ class SessionManager:
             async for event in actor.subscribe(since=since):
                 if event.origin is not Origin.BROWSER:
                     continue  # agent actions must not wake the agent
-                # a bare highlight gets the cheap tier and spends no agent turn (D21); only an
-                # explicit context request or a chat message wakes the agent.
+                # a bare highlight gets the cheap tier and spends no agent turn (D21); every
+                # *explicit* ask wakes the agent, because each one is the reviewer waiting.
                 if isinstance(event, ev.ContextRequested):
                     broker.publish("context_requested", session_id=sid)
                 elif isinstance(event, ev.MessagePosted):
                     broker.publish("message_posted", session_id=sid)
+                elif isinstance(event, ev.InsightsRequested):
+                    broker.publish("insights_requested", session_id=sid)
+                elif isinstance(event, ev.CheckRequested):
+                    broker.publish("check_requested", session_id=sid)
 
         task = asyncio.create_task(_pump())
         task.add_done_callback(self._on_republisher_done)

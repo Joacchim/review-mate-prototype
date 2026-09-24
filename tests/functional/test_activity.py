@@ -8,8 +8,10 @@ from starlette.testclient import TestClient
 from review_mate.activity.broker import ActivityBroker
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
-from review_mate.session.commands import AddHighlight, EmitCard, PostMessage, RequestContext
-from review_mate.session.state import Side, LineRange, Origin
+from review_mate.session.commands import (
+    AddHighlight, EmitCard, PostMessage, RequestCheck, RequestContext, RequestInsights,
+)
+from review_mate.session.state import Side, LineRange, Origin, Subject, SubjectKind
 
 HL = dict(file="a.py", side=Side.NEW, line_range=LineRange(start=1, end=1))
 HL_CMD = {"type": "add_highlight", "file": "a.py", "side": "new",
@@ -46,6 +48,65 @@ async def test_republisher_emits_message_posted(tmp_path):
     await mgr.get(sid).submit(PostMessage(body="hi"), Origin.BROWSER)
     event = await broker.wait(since=0, timeout=1)
     assert event is not None and event.kind == "message_posted" and event.session_id == sid
+    await mgr.shutdown()
+
+
+async def test_asking_for_a_pass_republishes(tmp_path):
+    """The reviewer is waiting on it, and the coordinator does not re-sweep durable state in its
+    steady-state loop — an ask nothing announces sits until the agent happens to restart."""
+    broker = ActivityBroker()
+    mgr = SessionManager(root=tmp_path / "s", activity_broker=broker)
+    sid = await mgr.create()
+    await mgr.get(sid).submit(RequestInsights(), Origin.BROWSER)
+    event = await broker.wait(since=0, timeout=1)
+    assert event is not None and event.kind == "insights_requested" and event.session_id == sid
+    await mgr.shutdown()
+
+
+async def test_asking_for_a_double_check_republishes(tmp_path):
+    broker = ActivityBroker()
+    mgr = SessionManager(root=tmp_path / "s", activity_broker=broker)
+    sid = await mgr.create()
+    await mgr.get(sid).submit(AddHighlight(**HL), Origin.BROWSER)   # announces nothing on its own
+    hid = mgr.get(sid).snapshot().highlights[0].id
+    await mgr.get(sid).submit(
+        RequestCheck(subject=Subject(kind=SubjectKind.HIGHLIGHT, id=hid)), Origin.BROWSER)
+    event = await broker.wait(since=0, timeout=1)
+    assert event is not None and event.kind == "check_requested" and event.session_id == sid
+    await mgr.shutdown()
+
+
+async def test_every_ask_the_reviewer_raises_is_announced(tmp_path):
+    """`view.asks` and this stream have to cover the same set.
+
+    An ask that is listed as outstanding and announced by nothing is a silence: the reviewer sees a
+    waiting cue, and the agent is told to go and look by nothing, because the coordinator's
+    steady-state loop reacts to this stream and re-derives durable state only after a restart.
+
+    Behavioural, so it goes through the real republisher — but it cannot notice a *fifth* ask kind
+    that forgets to announce itself. Nothing cheap can; the four are named here and in `view.asks`.
+    """
+    broker = ActivityBroker()
+    mgr = SessionManager(root=tmp_path / "s", activity_broker=broker)
+    sid = await mgr.create()
+    actor = mgr.get(sid)
+    await actor.submit(AddHighlight(**HL), Origin.BROWSER)
+    hid = actor.snapshot().highlights[0].id
+    subject = Subject(kind=SubjectKind.HIGHLIGHT, id=hid)
+    await actor.submit(RequestContext(highlight_id=hid), Origin.BROWSER)
+    await actor.submit(PostMessage(body="and this?", anchor=subject), Origin.BROWSER)
+    await actor.submit(RequestInsights(), Origin.BROWSER)
+    await actor.submit(RequestCheck(subject=subject), Origin.BROWSER)
+
+    seen, since = [], 0
+    while len(seen) < 4:
+        event = await broker.wait(since=since, timeout=1)
+        assert event is not None, f"only {[e.kind for e in seen]} announced"
+        seen.append(event)
+        since = event.seq
+    assert [e.kind for e in seen] == ["context_requested", "message_posted",
+                                      "insights_requested", "check_requested"]
+    assert {e.session_id for e in seen} == {sid}
     await mgr.shutdown()
 
 

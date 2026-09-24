@@ -84,11 +84,14 @@ it dangerous.
    `curl -s -m 55 "http://127.0.0.1:8765/api/activity?since=<since>"` with `run_in_background: true`.
 2. **On re-invocation** (the curl returned), branch on the body:
    - **empty / HTTP 204** (timeout tick) → reap, then relaunch step 1 with the same `since`.
-   - **`context_requested` / `message_posted`** for session `S` at `seq M` → set `since = M`;
+   - **`context_requested` / `message_posted` / `insights_requested` / `check_requested`** for
+     session `S` at `seq M` → set `since = M`;
      **resume** `S`'s worker via `SendMessage` ("new activity in `S` — drain your backlog") if it is
      live, else **cold-spawn** (below); set `last_active[S] = now`. (A bare highlight never appears
      here — the reviewer must escalate it with a context request, D21 — so a worker only ever wakes
-     for work the reviewer actually asked for.)
+     for work the reviewer actually asked for.) All four mean the same thing to you: *this session
+     has work*. The worker reads `outstanding` for that session and finds what kind it is; the
+     event name is a hint, never the work list.
    - **`lookup_opened`** carrying `lookup_id` + `query` → the reviewer explicitly asked you to find
      an MR by description (the **escape hatch**, D20 — the browser's own `/api/search` is the default
      path; a `lookup_opened` means direct search didn't satisfy them). Answer inline from the event:
