@@ -79,9 +79,9 @@ def test_the_file_scope_is_the_listing_plus_the_path():
     assert screen.body_scope == "diff:s1:full:pkg/b.py"
 
 
-def test_it_watches_the_listing_the_open_file_the_rail_the_conversation_and_the_review():
+def test_it_watches_everything_the_review_screen_shows():
     screen = DiffScreen(StubClient({"diff:s1:full": listing([row("a.py"), row("b.py")])}), "s1")
-    assert screen.wanted() == ["diff:s1:full", "rail:s1", "chat:s1", "review:s1",
+    assert screen.wanted() == ["diff:s1:full", "rail:s1", "chat:s1", "review:s1", "threads:s1",
                                "chat:s1:review", "diff:s1:full:a.py"]
 
 
@@ -252,11 +252,12 @@ def test_the_file_pane_counts_what_was_asked_per_file():
     assert "2 asked" in text_of(screen)
 
 
-def test_focus_cycles_through_the_three_panes():
+def test_focus_cycles_through_every_pane():
     screen = screen_with()
     assert screen.focus == "files"
     screen.toggle_focus(); assert screen.focus == "body"
     screen.toggle_focus(); assert screen.focus == "rail"
+    screen.toggle_focus(); assert screen.focus == "threads"
     screen.toggle_focus(); assert screen.focus == "files"
 
 
@@ -334,3 +335,77 @@ def test_the_rail_cursor_picks_whose_conversation_is_shown():
     rendered = text_of(screen)
     assert "Chat — #3 a.py:42" in rendered
     assert "about this line" in rendered and "about the review" not in rendered
+
+
+# --- the discussions already on the merge request -----------------------------
+
+def discussions(rows=(), unresolved=None):
+    rows = list(rows)
+    return {"session": "s1", "state": "ready", "threads": rows, "total": len(rows),
+            "unresolved": sum(1 for t in rows if not t["resolved"]) if unresolved is None
+            else unresolved}
+
+
+def disc(id="t1", resolved=False, file="a.py", line=2, said="prefer a guard", n=1):
+    return {"id": id, "resolved": resolved,
+            "anchor": None if file is None else {"file": file, "side": "new", "line": line},
+            "capabilities": {},
+            "comments": [{"id": str(i), "author": "eric", "body": said, "created_at": "",
+                          "mine": False} for i in range(n)]}
+
+
+def screen_with_threads(rows=()):
+    client = StubClient({"diff:s1:full": listing([row("a.py")]),
+                         "diff:s1:full:a.py": body(),
+                         "rail:s1": rail(),
+                         "threads:s1": discussions(rows)})
+    return DiffScreen(client, "s1")
+
+
+def test_the_discussions_pane_lists_what_is_open():
+    rendered = text_of(screen_with_threads([disc(), disc(id="t2", resolved=True)]))
+    assert "Discussions · 1 open of 2" in rendered
+    assert "prefer a guard" in rendered
+
+
+def test_the_filter_starts_on_what_is_still_open():
+    screen = screen_with_threads([disc(), disc(id="t2", resolved=True, said="settled")])
+    assert [t["id"] for t in screen.thread_rows()] == ["t1"]
+    screen.cycle_thread_filter()
+    assert [t["id"] for t in screen.thread_rows()] == ["t1", "t2"]
+    assert "settled" in text_of(screen)
+
+
+def test_a_discussion_about_the_whole_change_says_so():
+    assert "whole MR" in text_of(screen_with_threads([disc(file=None)]))
+
+
+def test_pointing_at_a_discussion_makes_it_the_subject():
+    """A discussion is a conversation subject, so the pane picks one the way the rail does."""
+    screen = screen_with_threads([disc()])
+    screen.focus = "threads"
+    assert screen.subject() == {"kind": "thread", "id": "t1"}
+    assert screen.conversation_scope() == "chat:s1:thread:t1"
+
+
+def test_going_to_a_discussion_opens_its_line():
+    screen = screen_with_threads([disc(line=2)])
+    screen.focus = "threads"
+    assert screen.jump_to_thread() is True
+    assert screen.focus == "body"
+    assert screen.body_rows()[screen.body_cursor]["line"] == 2
+
+
+def test_a_line_this_view_does_not_render_lands_at_the_top():
+    """Anchored to a line the mode does not show — better than landing somewhere arbitrary."""
+    screen = screen_with_threads([disc(line=999)])
+    screen.focus = "threads"
+    assert screen.jump_to_thread() is True
+    assert screen.body_cursor == 0
+
+
+def test_a_discussion_with_nowhere_to_go_says_so_rather_than_guessing():
+    screen = screen_with_threads([disc(file=None)])
+    screen.focus = "threads"
+    assert screen.jump_to_thread() is False
+    assert screen.focus == "threads"      # the cursor stays where it was

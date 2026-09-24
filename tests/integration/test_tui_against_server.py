@@ -87,6 +87,11 @@ async def wait_for(predicate, timeout=10.0):
         await asyncio.sleep(0.01)
 
 
+def _tmp_kb(tmp_path):
+    from review_mate.kb.store import ReviewKB
+    return ReviewKB(root=tmp_path / "kb")
+
+
 def build(tmp_path, provider, writer=None):
     from review_mate.kb.store import ReviewKB
     from review_mate.writeback.service import Writeback
@@ -455,3 +460,42 @@ async def test_sending_a_review_from_the_terminal_reaches_the_host(tmp_path):
     assert writer.posted == ["reads well overall"]
     assert writer.approved is False
     assert shell.diff.review["pending"] == 0
+
+
+async def test_the_terminal_reads_the_merge_requests_discussions(tmp_path):
+    """The discussions arrive on their own scope, with the reviewer's own comments marked as such —
+    the terminal never asks who it is and compares names."""
+    from review_mate.tui.app import Shell
+    from review_mate.session.commands import ReplaceThreads
+    from review_mate.session.state import Origin, ReviewThread, ThreadComment
+
+    host = DiffHost()
+    manager = SessionManager(root=tmp_path / "sessions", mr_source=host)
+    app = create_app(manager=manager, provider=host, with_mcp=False,
+                     kb=_tmp_kb(tmp_path),
+                     resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+
+    async with serving(app) as base:
+        async with connected(base) as (client, watcher):
+            await watcher.until(lambda v: v.get("queue_state") == "ready")
+            await client.command("session.open", ref={"host": "gitlab", "project": "g/p", "iid": 1})
+            session = (await watcher.until(lambda v: v["sessions"]))["sessions"][0]["id"]
+            await manager.get(session).submit(ReplaceThreads(threads=[
+                ReviewThread(id="d1", anchor={"file": "a.py", "side": "new", "line": 2},
+                             comments=[ThreadComment(id="1", author="eric", body="prefer a guard"),
+                                       ThreadComment(id="2", author="reviewer", body="agreed")]),
+                ReviewThread(id="d2", resolved=True),
+            ]), Origin.SYSTEM)
+
+            shell = Shell(client)
+            watcher.also = shell.on_change
+            await shell.open_review(session)
+            await wait_for(lambda: shell.diff.threads.get("threads"))
+
+            view = shell.diff.threads
+            assert view["total"] == 2 and view["unresolved"] == 1
+            mine = {c["author"]: c["mine"] for c in view["threads"][0]["comments"]}
+            assert mine == {"eric": False, "reviewer": True}      # DiffHost's username is reviewer
+            assert [t["id"] for t in shell.diff.thread_rows()] == ["d1"]   # open ones lead
+            rendered = "".join(text for _, text in shell.fragments())
+            assert "prefer a guard" in rendered and "1 open of 2" in rendered

@@ -350,7 +350,9 @@ class Shell:
             # the rail cursor picks the subject, so moving it changes which conversation is watched
             previous = self.diff.wanted() if self.diff is not None else []
             self.screen.move(delta)
-            if self.diff is not None and self.diff.focus == "rail":
+            # both the rail and the discussions pick a subject, so moving either changes which
+            # conversation is watched
+            if self.diff is not None and self.diff.focus in ("rail", "threads"):
                 spawn(self.resync(previous))
 
         @kb.add("j")
@@ -366,6 +368,10 @@ class Shell:
         @kb.add("enter")
         def _enter(event) -> None:
             if self.diff is not None:
+                # on a discussion, enter means go to what it is about; elsewhere it moves on
+                if self.diff.focus == "threads" and self.diff.jump_to_thread():
+                    self.invalidate()
+                    return
                 self.diff.toggle_focus()
                 return
             session = self.hub.selected_session()
@@ -452,6 +458,13 @@ class Shell:
         def _refresh(event) -> None:
             if self.diff is None:
                 spawn(self.client.command("hub.refresh"))
+
+        @kb.add("f")
+        def _filter(event) -> None:
+            """Open discussions, or all of them — the filter a reviewer reaches for first."""
+            if self.diff is not None:
+                self.diff.cycle_thread_filter()
+                self.invalidate()
 
         @kb.add("d")
         def _draft(event) -> None:

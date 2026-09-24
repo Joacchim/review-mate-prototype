@@ -40,6 +40,7 @@ MODES = ("full", "since")
 FILE_PANE_ROWS = 8
 RAIL_PANE_ROWS = 5
 CHAT_PANE_ROWS = 6
+THREAD_PANE_ROWS = 5
 
 # what the agent state reads as on one line — the server decides the word, this picks the colour
 AGENT_STYLE = {"working": "class:info", "stalled": "class:error",
@@ -89,7 +90,9 @@ class DiffScreen:
         self.body_cursor = 0          # index into the rendered body rows
         self.rail_index = 0
         self.anchor: int | None = None   # a selection in progress, at this new-side line
-        self.focus = "files"          # files | body | rail
+        self.focus = "files"          # files | body | rail | threads
+        self.thread_index = 0
+        self.thread_filter = "unresolved"   # unresolved | all
         self.rows = 24
 
     # --- what it watches --------------------------------------------------
@@ -130,6 +133,62 @@ class DiffScreen:
         """What is prepared to send: the drafts, the approval, and whether this has moved on."""
         return self.client.views.get(f"review:{self.session}") or {}
 
+    @property
+    def threads(self) -> dict:
+        """The discussions already on the merge request, as the host last reported them."""
+        return self.client.views.get(f"threads:{self.session}") or {}
+
+    def thread_rows(self) -> list[dict]:
+        """What the filter leaves. `unresolved` is the one a reviewer reaches for, so it leads."""
+        rows = self.threads.get("threads") or []
+        return rows if self.thread_filter == "all" else [t for t in rows if not t.get("resolved")]
+
+    def current_thread(self) -> dict | None:
+        rows = self.thread_rows()
+        if not rows:
+            return None
+        self.thread_index = max(0, min(self.thread_index, len(rows) - 1))
+        return rows[self.thread_index]
+
+    def cycle_thread_filter(self) -> str:
+        self.thread_filter = "all" if self.thread_filter == "unresolved" else "unresolved"
+        self.thread_index = 0
+        return self.thread_filter
+
+    def jump_to_thread(self) -> bool:
+        """Open the file a discussion is anchored to and put the cursor on its line.
+
+        A discussion about the whole change has nowhere to jump to, which is a fact about it rather
+        than a failure — the caller says so instead of moving the cursor somewhere arbitrary.
+        """
+        thread = self.current_thread()
+        anchor = (thread or {}).get("anchor") or {}
+        path, line = anchor.get("file"), anchor.get("line")
+        if not path or not line:
+            return False
+        for index, row in enumerate(self.files):
+            if row["path"] == path:
+                self.file_index = index
+                break
+        else:
+            return False
+        self.scroll = 0
+        self.focus = "body"
+        self.body_cursor = self._row_of_line(line)
+        return True
+
+    def _row_of_line(self, line: int) -> int:
+        """The rendered row standing for a new-side line, or the top when none does.
+
+        A discussion can be anchored to a line this mode does not render — an older version, or a
+        line inside a gap nobody has unfolded — and landing at the top of the file is a better
+        answer there than landing somewhere arbitrary.
+        """
+        for index, row in enumerate(self.body_rows()):
+            if row.get("line") == line:
+                return index
+        return 0
+
     def draft_body(self) -> str:
         """The comment already prepared for whatever the rail points at, so editing one reopens it.
 
@@ -143,12 +202,16 @@ class DiffScreen:
         return ""
 
     def subject(self) -> dict | None:
-        """What the chat pane is about: the highlight under the rail cursor, else the review.
+        """What the chat pane is about: whatever the cursor is on, else the review.
 
-        The rail cursor is the terminal's selection, so the conversation follows it the way the
-        open file follows the file cursor — one place to point at a thing, and everything about
-        that thing follows.
+        The cursor is the terminal's selection, so the conversation follows it the way the open
+        file follows the file cursor — one place to point at a thing, and everything about that
+        thing follows. A discussion is a subject like a highlight is, so pointing at one opens
+        what has been said about it privately, beside what the merge request says publicly.
         """
+        if self.focus == "threads":
+            thread = self.current_thread()
+            return {"kind": "thread", "id": thread["id"]} if thread else None
         rows = self.highlights
         if self.focus != "rail" or not rows:
             return None
@@ -180,7 +243,7 @@ class DiffScreen:
 
     def wanted(self) -> list[str]:
         scopes = [self.listing, f"rail:{self.session}", f"chat:{self.session}",
-                  f"review:{self.session}", self.conversation_scope()]
+                  f"review:{self.session}", f"threads:{self.session}", self.conversation_scope()]
         body = self.body_scope
         if body:
             scopes.append(body)
@@ -217,6 +280,7 @@ class DiffScreen:
         out.append(("", "\n"))
         out.extend(self._body_pane())
         out.extend(self._rail_pane())
+        out.extend(self._thread_pane())
         out.extend(self._chat_pane())
         error = self.client.errors.get(f"rail:{self.session}") or self.client.last_command_error
         if error:
@@ -359,6 +423,34 @@ class DiffScreen:
             out.append(("class:attention", "   moved since you read it"))
         return out
 
+    def _thread_pane(self) -> list[tuple[str, str]]:
+        view = self.threads
+        if not view:
+            return []
+        rows = self.thread_rows()
+        shown = "open" if self.thread_filter == "unresolved" else "all"
+        head = f"\n Discussions · {view.get('unresolved', 0)} open of {view.get('total', 0)}"
+        out: list[tuple[str, str]] = [("class:header", f"{head}  [{shown}]\n")]
+        if not rows:
+            out.append(("class:muted", "   nothing here — f shows all\n"))
+            return out
+        self.thread_index = max(0, min(self.thread_index, len(rows) - 1))
+        top = max(0, min(self.thread_index - THREAD_PANE_ROWS // 2, len(rows) - THREAD_PANE_ROWS))
+        for index in range(top, min(top + THREAD_PANE_ROWS, len(rows))):
+            thread = rows[index]
+            selected = index == self.thread_index and self.focus == "threads"
+            anchor = thread.get("anchor") or {}
+            where = (f"{anchor['file'].split('/')[-1]}:{anchor.get('line', '')}"
+                     if anchor.get("file") else "whole MR")
+            comments = thread.get("comments") or []
+            said = _one_line(comments[0]["body"]) if comments else ""
+            out.append(("class:selected" if selected else "class:info",
+                        f" {'✓' if thread.get('resolved') else '●'} "))
+            out.append(("class:muted", f"{where:<22} "))
+            out.append(("class:muted" if thread.get("resolved") else "",
+                        f"{said}  ({len(comments)})\n"))
+        return out
+
     def _agent_badge(self) -> list[tuple[str, str]]:
         """Working, stalled, watching or off — the server's word, not a rule applied here."""
         agent = self.chat.get("agent") or {}
@@ -401,6 +493,9 @@ class DiffScreen:
         if self.focus == "rail":
             return ("\n tab pane   j/k move   a ask Claude   c write   d comment   S send"
                     "   b back   q quit\n")
+        if self.focus == "threads":
+            return ("\n tab pane   j/k move   enter go to it   f open/all   c write"
+                    "   b back   q quit\n")
         return "\n tab pane   j/k move   c write   d comment   S send   n/p file   b back   q quit\n"
 
     # --- interaction ---------------------------------------------------------
@@ -430,6 +525,10 @@ class DiffScreen:
             rows = self.highlights
             if rows:
                 self.rail_index = max(0, min(self.rail_index + delta, len(rows) - 1))
+        elif self.focus == "threads":
+            rows = self.thread_rows()
+            if rows:
+                self.thread_index = max(0, min(self.thread_index + delta, len(rows) - 1))
         else:
             rows = self.body_rows()
             self.body_cursor = max(0, min(self.body_cursor + delta, max(len(rows) - 1, 0)))
@@ -442,7 +541,7 @@ class DiffScreen:
             self.anchor = None
 
     def toggle_focus(self) -> None:
-        order = ("files", "body", "rail")
+        order = ("files", "body", "rail", "threads")
         self.focus = order[(order.index(self.focus) + 1) % len(order)]
 
     def cycle_mode(self) -> str:
