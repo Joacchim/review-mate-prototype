@@ -42,7 +42,9 @@ async def setup(tmp_path, sibling_repo):
         host="local", project="g/main", iid=1, title="t", source_branch="x",
         target_branch="main", sha="z", author="d", url="u")), Origin.SYSTEM)
 
-    def resolve(repo: str):
+    async def resolve(repo: str):
+        if repo == "g/nowhere":
+            return None            # nothing on the host answers to that name
         return RepoRef(host="local", project=repo, clone_url=str(src)), sha
 
     broker = CrossRepoBroker(
@@ -68,8 +70,11 @@ async def test_approved_request_materializes_and_grants(setup):  # AC-1,3,4
     assert handle is not None
     from pathlib import Path
     assert (Path(handle.path) / "contract.md").exists()
-    assert broker.is_granted(sid, "g/sibling")
+    assert broker.granted(sid, "g/sibling") == handle.path
     assert "g/sibling" in broker.kb.related("g/main")  # relationship recorded
+
+    grant = actor.snapshot().access_requests[-1].grant
+    assert grant.state == "ready" and grant.path == handle.path
 
 
 async def test_denied_request_not_granted(setup):  # AC-2
@@ -77,7 +82,8 @@ async def test_denied_request_not_granted(setup):  # AC-2
     rid = await _request(actor)
     await actor.submit(DecideAccess(request_id=rid, approve=False), Origin.BROWSER)
     assert await broker.grant_access(sid, rid) is None
-    assert not broker.is_granted(sid, "g/sibling")
+    assert broker.granted(sid, "g/sibling") is None
+    assert actor.snapshot().access_requests[-1].grant is None, "a refusal starts nothing"
 
 
 async def test_pending_request_not_granted(setup):  # AC-2
@@ -93,8 +99,42 @@ async def test_watch_processes_approval(setup):  # AC-5
     rid = await _request(actor)
     await actor.submit(DecideAccess(request_id=rid, approve=True), Origin.BROWSER)
     for _ in range(50):
-        if broker.is_granted(sid, "g/sibling"):
+        if broker.granted(sid, "g/sibling"):
             break
         await asyncio.sleep(0.02)
-    assert broker.is_granted(sid, "g/sibling")
+    assert broker.granted(sid, "g/sibling")
     task.cancel()
+
+
+async def test_the_session_says_a_clone_is_running_before_it_finishes(setup):
+    """"Approved and a clone is running" must not look like "approved and nothing is listening"."""
+    manager, actor, sid, broker = setup
+    rid = await _request(actor)
+    await actor.submit(DecideAccess(request_id=rid, approve=True), Origin.BROWSER)
+
+    seen = []
+    task = asyncio.create_task(broker.grant_access(sid, rid))
+    for _ in range(50):
+        grant = actor.snapshot().access_requests[-1].grant
+        if grant is not None and grant.state not in [g.state for g in seen]:
+            seen.append(grant)
+        if task.done():
+            break
+        await asyncio.sleep(0.01)
+    await task
+    grant = actor.snapshot().access_requests[-1].grant
+    if grant.state == "ready":
+        seen.append(grant)
+    assert [g.state for g in seen][:1] == ["materializing"]
+    assert seen[-1].state == "ready"
+
+
+async def test_a_name_nothing_answers_to_is_recorded_as_a_failure(setup):
+    """Otherwise an approval that cannot be honoured is indistinguishable from one still working."""
+    manager, actor, sid, broker = setup
+    rid = await _request(actor, repo="g/nowhere")
+    await actor.submit(DecideAccess(request_id=rid, approve=True), Origin.BROWSER)
+    with pytest.raises(LookupError):
+        await broker.grant_access(sid, rid)
+    grant = actor.snapshot().access_requests[-1].grant
+    assert grant.state == "failed" and "g/nowhere" in grant.error

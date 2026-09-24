@@ -28,6 +28,7 @@ class _NoCacheUI(BaseHTTPMiddleware):
 from review_mate.host.config import build_provider_from_env, build_writer_from_env
 from review_mate.server.routes import build_routes
 from review_mate.session.manager import SessionManager
+from review_mate.seams import RepoRef
 from review_mate.workspace.manager import WorkspaceManager
 from review_mate.writeback.service import Writeback
 
@@ -109,6 +110,8 @@ def create_app(manager: SessionManager | None = None,
     # looking: the bus says when a scope gains its first watcher and loses its last, and the tail
     # on that session's events runs exactly between those two moments.
     session_pumps: dict[str, asyncio.Task] = {}
+    # the consent watch on a session, running for as long as a client is reading its access scope
+    access_watches: dict[str, asyncio.Task] = {}
     presence_task: asyncio.Task | None = None
 
     def _session_of(scope: str) -> str | None:
@@ -178,6 +181,12 @@ def create_app(manager: SessionManager | None = None,
             asyncio.create_task(_quietly(browse.fetch_tree(scope.partition(":")[2])))
         if scope.startswith("commits:") and scope.count(":") == 1:
             asyncio.create_task(_quietly(browse.fetch_commits(scope.partition(":")[2])))
+        if crossrepo is not None and scope.startswith("access:") and scope.count(":") == 1:
+            # a decision can only come from a client that is reading this, so watching exactly then
+            # misses nothing — and the watch sweeps for approvals a restart left unhonoured
+            sid = scope.partition(":")[2]
+            if sid not in access_watches:
+                access_watches[sid] = asyncio.create_task(_quietly(crossrepo.watch(sid)))
         if scope.startswith("review:") and scope.count(":") == 1:
             # who approved is a host fact the bar shows, so it is worth asking for exactly while
             # someone is reading it — and once, rather than on every rebuild
@@ -197,6 +206,10 @@ def create_app(manager: SessionManager | None = None,
     def _on_last_watch(scope: str) -> None:
         if _carries_presence(scope):
             _stop_ticker_if_idle()
+        if scope.startswith("access:") and scope.count(":") == 1:
+            watch = access_watches.pop(scope.partition(":")[2], None)
+            if watch is not None:
+                watch.cancel()      # a clone already under way is its own task and survives this
         session_id = _session_of(scope)
         if session_id is None or _still_watched(session_id):
             return
@@ -237,6 +250,23 @@ def create_app(manager: SessionManager | None = None,
     bus.register_family("threads", threads_scope.build)
     access_scope = AccessScope(manager)
     bus.register_family("access", access_scope.build)
+
+    # Consent's other half. The scope shows what the agent asked for and what the reviewer answered;
+    # this is what makes an approval mean something — it materializes the repository and records
+    # where it landed, so "approved" stops being a note nothing acts on.
+    crossrepo = None
+    workspace = getattr(manager, "_workspace", None)
+    if workspace is not None and provider is not None and hasattr(provider, "locate_repo"):
+        from review_mate.crossrepo.broker import CrossRepoBroker
+
+        async def _locate(name: str):
+            found = await provider.locate_repo(name)
+            if found is None:
+                return None
+            return (RepoRef(host=found["host"], project=found["project"],
+                            clone_url=found["clone_url"]), found["ref"])
+
+        crossrepo = CrossRepoBroker(manager, workspace, kb, _locate)
     browse = BrowseScopes(manager, provider=provider, publish=bus.publish)
     bus.register_family("tree", browse.build_tree)
     bus.register_family("commits", browse.build_commits)
@@ -274,9 +304,10 @@ def create_app(manager: SessionManager | None = None,
             await bus.publish(scope)
 
     async def _stop_pumps() -> None:
-        for task in list(session_pumps.values()):
+        for task in list(session_pumps.values()) + list(access_watches.values()):
             task.cancel()
         session_pumps.clear()
+        access_watches.clear()
         nonlocal presence_task
         if presence_task is not None:
             presence_task.cancel()
