@@ -273,10 +273,8 @@ class DiffScreen:
         if self.focus == "threads":
             thread = self.current_thread()
             return {"kind": "thread", "id": thread["id"]} if thread else None
-        rows = self.highlights
-        if self.focus != "rail" or not rows:
-            return None
-        return {"kind": "highlight", "id": rows[max(0, min(self.rail_index, len(rows) - 1))]["id"]}
+        row = self.rail_row() if self.focus == "rail" else None
+        return None if row is None else {"kind": row["kind"], "id": row["data"]["id"]}
 
     def conversation_scope(self) -> str:
         anchor = self.subject()
@@ -291,6 +289,26 @@ class DiffScreen:
     def highlights(self) -> list[dict]:
         """This session's highlights, newest last. The rail is session-wide; the overlay selects."""
         return self.rail.get("highlights", [])
+
+    def rail_rows(self) -> list[dict]:
+        """What the rail cursor moves over: the change's own findings, then what was asked.
+
+        Insights come first for the reason the browser pins them above its index — they are about
+        the change rather than a line, so a run of highlights must not bury them. One list rather
+        than two panes because the cursor is the terminal's only selection, and a second one would
+        need its own key to reach.
+        """
+        return ([{"kind": "insight", "data": card} for card in self.insights]
+                + [{"kind": "highlight", "data": h} for h in self.highlights])
+
+    def rail_row(self) -> dict | None:
+        rows = self.rail_rows()
+        return rows[max(0, min(self.rail_index, len(rows) - 1))] if rows else None
+
+    @property
+    def insights(self) -> list[dict]:
+        """What Claude found about the change as a whole — anchored to no line."""
+        return self.rail.get("insights", [])
 
     def highlights_here(self) -> list[dict]:
         row = self.current
@@ -473,7 +491,7 @@ class DiffScreen:
         return out
 
     def _rail_pane(self) -> list[tuple[str, str]]:
-        rows = self.highlights
+        rows = self.rail_rows()
         out: list[tuple[str, str]] = [("class:header", "\n Asked\n")]
         if not rows:
             out.append(("class:muted", "   nothing yet \u2014 v selects lines, v again asks\n"))
@@ -481,8 +499,12 @@ class DiffScreen:
         self.rail_index = max(0, min(self.rail_index, len(rows) - 1))
         top = max(0, min(self.rail_index - RAIL_PANE_ROWS // 2, len(rows) - RAIL_PANE_ROWS))
         for index in range(top, min(top + RAIL_PANE_ROWS, len(rows))):
-            highlight = rows[index]
+            row = rows[index]
             selected = index == self.rail_index and self.focus == "rail"
+            if row["kind"] == "insight":
+                out.extend(self._insight_line(row["data"], selected))
+                continue
+            highlight = row["data"]
             card = highlight.get("card")
             context = highlight.get("context") or {}
             if card:
@@ -504,6 +526,13 @@ class DiffScreen:
             out.append(COMMENT_MARK.get(highlight.get("comment_state"), ("class:muted", "  ")))
             out.append((style, answer + ("  (stale)" if highlight.get("stale") else "") + "\n"))
         return out
+
+    def _insight_line(self, card: dict, selected: bool) -> list[tuple[str, str]]:
+        """A finding about the change rather than a line, so it carries no file and no number."""
+        return [("class:selected" if selected else "class:info", " \u2726   "),
+                ("class:muted", f"{'the change':<22} "),
+                ("class:muted", "  "),
+                ("class:ok", card.get("body", "").splitlines()[0][:60] + "\n")]
 
     def review_pass(self) -> dict:
         return self.rail.get("review_pass") or {}
@@ -650,7 +679,7 @@ class DiffScreen:
                 self.file_index = max(0, min(self.file_index + delta, len(rows) - 1))
                 self.scroll = self.body_cursor = 0
         elif self.focus == "rail":
-            rows = self.highlights
+            rows = self.rail_rows()
             if rows:
                 self.rail_index = max(0, min(self.rail_index + delta, len(rows) - 1))
         elif self.focus == "threads":
@@ -710,9 +739,10 @@ class DiffScreen:
 
     def ask_command(self) -> dict | None:
         """Escalate the highlight in focus from the cheap tier to the agent."""
-        rows = self.highlights
-        if self.focus == "rail" and rows:
-            target = rows[max(0, min(self.rail_index, len(rows) - 1))]
+        row = self.rail_row() if self.focus == "rail" else None
+        if row is not None:
+            # an insight is already an answer, so there is nothing to escalate about one
+            target = row["data"] if row["kind"] == "highlight" else None
         else:
             line = self.cursor_line()
             target = next((h for h in self.highlights_here()

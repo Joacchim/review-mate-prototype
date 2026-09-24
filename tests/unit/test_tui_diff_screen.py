@@ -151,10 +151,14 @@ def hl(n=1, file="a.py", start=1, end=2, card=None, context=None, stale=False):
             "card": card}
 
 
-def screen_with(highlights=(), **kwargs):
+def insight(n=1, body="Three call sites still assume a single queue."):
+    return {"id": f"c{n}", "body": body, "citations": [], "status": "", "created_at": ""}
+
+
+def screen_with(highlights=(), insights=(), **kwargs):
     client = StubClient({"diff:s1:full": listing([row("a.py")]),
                          "diff:s1:full:a.py": body(**kwargs),
-                         "rail:s1": rail(highlights)})
+                         "rail:s1": rail(highlights, insights)})
     return DiffScreen(client, "s1")
 
 
@@ -314,6 +318,50 @@ def test_an_ask_that_has_sat_says_so():
     screen = DiffScreen(StubClient({"diff:s1:full": listing([row("a.py")]),
                                     "chat:s1": chat_index("working", stale=True)}), "s1")
     assert "no answer yet" in text_of(screen)
+
+
+# --- what the change owns, on the rail ----------------------------------------
+
+def test_an_insight_is_on_the_rail_above_the_lines():
+    """It is about the change, not a line, so a run of highlights must not bury it."""
+    screen = screen_with([hl(n=1, file="a.py")], [insight(body="one queue is assumed")])
+    rendered = text_of(screen)
+    assert "one queue is assumed" in rendered
+    assert rendered.index("one queue is assumed") < rendered.index("a.py:1-2")
+
+
+def test_the_cursor_spans_both_kinds():
+    screen = screen_with([hl(n=1)], [insight()])
+    screen.focus = "rail"
+    assert screen.subject() == {"kind": "insight", "id": "c1"}
+    screen.move(1)
+    assert screen.subject() == {"kind": "highlight", "id": "h1"}
+    screen.move(1)
+    assert screen.subject() == {"kind": "highlight", "id": "h1"}, "the cursor stops at the end"
+
+
+def test_claudes_own_finding_can_be_double_checked_from_the_terminal():
+    """The asymmetry this closes: the browser could doubt an insight and the terminal could not."""
+    screen = screen_with([hl(n=1)], [insight()])
+    screen.focus = "rail"
+    assert screen.check_command() == {"type": "request_check",
+                                      "subject": {"kind": "insight", "id": "c1"}}
+
+
+def test_an_insight_is_not_something_to_escalate():
+    """It is already an answer. `a` on one asks for nothing rather than escalating the row below."""
+    screen = screen_with([hl(n=1)], [insight()])
+    screen.focus = "rail"
+    assert screen.ask_command() is None
+    screen.move(1)
+    assert screen.ask_command() == {"type": "request_context", "highlight_id": "h1"}
+
+
+def test_an_insights_conversation_is_the_one_the_screen_watches():
+    screen = screen_with([hl(n=1)], [insight()])
+    screen.focus = "rail"
+    assert screen.conversation_scope() == "chat:s1:insight:c1"
+    assert "chat:s1:insight:c1" in screen.wanted()
 
 
 def test_a_doubt_is_raised_about_whatever_the_cursor_is_on():
