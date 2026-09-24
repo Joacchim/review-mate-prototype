@@ -250,6 +250,24 @@ And the reviewer's unposted drafts are absent at every stage: a draft is private
 post it, at which point it is a discussion and the agent reads it in `threads` like everyone else.
 No filter enforces that; the review scope is simply not part of the agent's view.
 
+### The agent does not know what the reviewer is looking at
+
+Which file is open, and which mode — the whole change, since the last review, one commit — is a
+client fact. It lives in the scope a client subscribes to and is deliberately not recorded on the
+session, so the agent cannot read it and is not meant to.
+
+The agent is not reading over the reviewer's shoulder. It is an assistant with the whole repository
+in hand — the merge request on disk at its head, the history behind it, the rest of the tree around
+it, and whatever tools it can bring to that — and its worth is in seeing what the reviewer is not
+currently looking at. A pass scoped to their open file would be the one place a second reader adds
+nothing.
+
+Following them would also actively narrow it. A reviewer in *since last review* is looking at three
+files of a two-hundred-file change; an agent that mirrored them would go blind to the other
+hundred and ninety-seven, which is where an unasked-for finding is most likely to be. So the two
+planes look at the change independently (D19), and they meet on subjects — a highlight, a
+discussion, the review itself — rather than on a viewport.
+
 ## Clients
 
 The browser and the terminal client both render scopes and send commands, and neither models review

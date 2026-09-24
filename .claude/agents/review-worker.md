@@ -59,6 +59,10 @@ For the highlighted `file` + `line_range` (and the reviewer's optional `question
     arrived since a sha the reviewer already read. You do not need the server for any of it.
   - The mirror is cloned blobless, so reading an *old* blob may fetch from the forge — cheap and
     cached, but not free, and it fails with no network. Reading the worktree itself never does.
+  - **You cannot see which file or mode the reviewer has open, and you are not meant to.** You are
+    not reading over their shoulder — you have the whole repository and they have a viewport, and
+    your worth is in what they are not currently looking at. Scope your reading to the question you
+    were asked, not to a guess at their screen.
   - **If `checkout_path` is null**, materialization failed (no clone URL, or auth) and the review is
     running over the host API alone. Then, and only then: `get_diff(session_id, path=...)` for one
     file's unified diff text, and `get_file` for whole-file content.
