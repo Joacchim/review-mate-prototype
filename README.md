@@ -202,7 +202,8 @@ uv run pytest          # unit + functional tests
 ```
 
 Design documentation lives under `docs/`: [the architecture](docs/architecture.md),
-[a glossary](docs/glossary.md), and [how the web UI is tested](docs/testing/web-ui.md).
+[a glossary](docs/glossary.md), [behaviour that surprises people](docs/surprises.md), and
+[how the web UI is tested](docs/testing/web-ui.md).
 
 Layout:
 
@@ -216,7 +217,7 @@ Layout:
 | `review_mate/mcp/` | The agent seam, mounted at `/mcp` |
 | `review_mate/web/` | The browser UI (vanilla JS, no build step) |
 | `review_mate/tui/` | The terminal client — a renderer over the view protocol |
-| `docs/` | Architecture, glossary, testing method |
+| `docs/` | Architecture, glossary, known surprises, testing method |
 | `.claude/` | The Claude Code skill, worker agent, and startup hook |
 
 The UI is served uncached, so a reload picks up `app.js` / `index.html` edits immediately. Python is

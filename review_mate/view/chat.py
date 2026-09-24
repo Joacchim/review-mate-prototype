@@ -40,6 +40,7 @@ class ConversationRow(BaseModel):
     last_at: str = ""
     preview: str = ""
     owed: bool = False             # the reviewer spoke last, so an answer is expected
+    checking: bool = False         # a doubt about this subject the agent has not spoken to yet
 
 
 class ChatIndexView(BaseModel):
@@ -55,7 +56,17 @@ class ConversationView(BaseModel):
     kind: str = REVIEW
     id: str = ""
     owed: bool = False
+    checking: bool = False
     messages: list[ChatMessageView] = Field(default_factory=list)
+
+
+def _being_checked(asks) -> set[tuple[str, str]]:
+    """Which subjects have a doubt the agent has not spoken to, addressed as the index addresses them.
+
+    Read off the same outstanding list the agent works from, so what a reviewer sees waiting and
+    what the agent is told it owes cannot drift apart.
+    """
+    return {_address(ask.subject) for ask in asks if ask.kind == "check"}
 
 
 def _first_line(body: str, width: int = 80) -> str:
@@ -96,9 +107,13 @@ class ChatScopes:
         snapshot = self._snapshot(session_id)
         if snapshot is None:
             return ChatIndexView(session=session_id, state="unknown-session").model_dump(mode="json")
+        asks = outstanding(snapshot)
+        checking = _being_checked(asks)
         by_address: dict[tuple[str, str], list] = {(REVIEW, ""): []}
         for message in snapshot.messages:
             by_address.setdefault(_address(message.anchor), []).append(message)
+        for address in checking:            # a doubt with nothing said yet still has to be visible
+            by_address.setdefault(address, [])
         rows = []
         for (kind, ident), messages in by_address.items():
             last = messages[-1] if messages else None
@@ -111,10 +126,10 @@ class ChatScopes:
                 last_at=last.created_at if last else "",
                 preview=_first_line(last.body) if last else "",
                 owed=bool(last and last.role == "user"),
+                checking=(kind, ident) in checking,
             ))
         # the review's own first, then by most recent — a client renders the order it is given
         rows.sort(key=lambda r: (r.kind != REVIEW, _descending(r.last_at)))
-        asks = outstanding(snapshot)
         return ChatIndexView(session=session_id, agent=agent_state(asks, self._watcher_now()),
                              conversations=rows).model_dump(mode="json")
 
@@ -130,6 +145,7 @@ class ChatScopes:
         return ConversationView(
             session=session_id, kind=kind, id=ident,
             owed=bool(messages and messages[-1].role == "user"),
+            checking=(kind, ident) in _being_checked(outstanding(snapshot)),
             messages=[ChatMessageView(id=m.id, role=m.role, body=m.body, created_at=m.created_at)
                       for m in messages],
         ).model_dump(mode="json")

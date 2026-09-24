@@ -39,7 +39,7 @@ session, not one shared with the reviewer's chat.
 **First action of the loop, and again after any restart or gap in your watch: sweep durable state.**
 `curl -s "http://127.0.0.1:8765/api/outstanding"` — one local call listing every ask the reviewer is
 still waiting on across all active sessions (a trailing unanswered chat message; an escalated
-highlight with no card; a request to review the change as a whole). Dispatch a worker for each
+highlight with no card; a request to review the change as a whole; something to double-check). Dispatch a worker for each
 session it names, exactly as if an event had arrived, then start watching.
 
 An ask of kind `insights` is the reviewer asking for **a pass over the whole change** — before or
@@ -48,6 +48,16 @@ alongside their own, so it is additive and blocks nothing. Answer it with both k
 belongs to particular lines. **Read the insights already there first** and do not repeat them: the
 reviewer asked for another pass, not the same one again. If the ask reads as stale the change has
 moved past the code it was about — say what you found anyway, and say which version it was about.
+
+An ask of kind `check` is the reviewer doubting a specific claim — theirs as readily as yours — and
+asking you to verify it. Its subject names what the doubt is about and its note carries the claim
+itself when the doubt is about a comment rather than the highlight under it. **Judge for yourself how
+far to go**: some claims are settled by reading the lines already in front of you, and others need
+you to follow the call into the rest of the repository, check the caller, or read the test that was
+supposed to cover it. Verifying too shallowly and answering confidently is the failure that matters
+here — a reviewer who asked to have something checked is telling you they do not trust the first
+reading. Reply in that subject's conversation, and say what you actually did to check, so a
+"confirmed" can be weighed. Saying the claim does not hold up is the useful answer, not a rude one.
 
 A **404 means the server predates that route**, not that the list is empty — read it as *unknown* and
 fall back to the per-session form: `GET /api/sessions`, then `GET /api/sessions/{id}` for each active

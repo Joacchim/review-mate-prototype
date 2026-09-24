@@ -18,7 +18,7 @@ from conftest import HostStub, next_frame
 from review_mate.seams import MRRef
 from review_mate.server.app import create_app
 from review_mate.session.commands import (
-    AddHighlight, EmitCard, PostMessage, RequestContext, RequestInsights,
+    AddHighlight, EmitCard, PostMessage, RequestCheck, RequestContext, RequestInsights,
 )
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import LineRange, Origin, Side, Subject, SubjectKind
@@ -172,6 +172,93 @@ async def test_an_answer_closes_the_ask_it_answers(session):
     assert (await chat_for(manager, ATTACHED).build(sid))["agent"]["state"] == "working"
     await actor.submit(EmitCard(highlight_id=highlight.id, body="here"), Origin.AGENT)
     assert (await chat_for(manager, ATTACHED).build(sid))["agent"]["state"] == "watching"
+
+
+async def test_a_doubt_the_agent_has_not_spoken_to_is_an_ask(session):
+    manager, sid = session
+    actor = manager.get(sid)
+    highlight = await mark(actor)
+    await actor.submit(RequestCheck(subject=Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id),
+                                    note="claims the queue is single-threaded"), Origin.BROWSER)
+    asks = (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"]
+    assert [a["kind"] for a in asks] == ["check"]
+    assert asks[0]["subject"]["id"] == highlight.id
+
+
+async def test_the_agent_speaking_on_the_subject_closes_the_doubt(session):
+    manager, sid = session
+    actor = manager.get(sid)
+    highlight = await mark(actor)
+    subject = Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)
+    await actor.submit(RequestCheck(subject=subject), Origin.BROWSER)
+    await actor.submit(PostMessage(anchor=subject, body="checked: it is not"), Origin.AGENT)
+    assert (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"] == []
+
+
+async def test_the_reviewers_own_words_do_not_close_their_doubt(session):
+    """Otherwise asking and then adding a detail would answer the ask with the ask."""
+    manager, sid = session
+    actor = manager.get(sid)
+    highlight = await mark(actor)
+    subject = Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)
+    await actor.submit(RequestCheck(subject=subject), Origin.BROWSER)
+    await actor.submit(PostMessage(anchor=subject, body="specifically the retry"), Origin.BROWSER)
+    kinds = [a["kind"] for a in (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"]]
+    assert "check" in kinds
+
+
+async def test_a_doubt_about_another_subject_stays_open(session):
+    manager, sid = session
+    actor = manager.get(sid)
+    one, two = await mark(actor, line=1), await mark(actor, line=9)
+    await actor.submit(RequestCheck(subject=Subject(kind=SubjectKind.HIGHLIGHT, id=one.id)),
+                       Origin.BROWSER)
+    await actor.submit(PostMessage(anchor=Subject(kind=SubjectKind.HIGHLIGHT, id=two.id),
+                                   body="unrelated"), Origin.AGENT)
+    assert [a["kind"] for a in
+            (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"]] == ["check"]
+
+
+async def test_doubting_what_the_agent_already_said_is_not_born_answered(session):
+    """The central case: what raises the doubt is the agent having spoken. Only later words count."""
+    manager, sid = session
+    actor = manager.get(sid)
+    highlight = await mark(actor)
+    subject = Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)
+    await actor.submit(PostMessage(anchor=subject, body="the queue is single-threaded"), Origin.AGENT)
+    await actor.submit(RequestCheck(subject=subject, note="the queue is single-threaded"),
+                       Origin.BROWSER)
+    assert [a["kind"] for a in
+            (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"]] == ["check"]
+
+
+async def test_a_word_on_the_subject_closes_the_doubt_whatever_it_answered(session):
+    """The surprise in docs/surprises.md, pinned so a future closing verb is a deliberate change."""
+    manager, sid = session
+    actor = manager.get(sid)
+    highlight = await mark(actor)
+    subject = Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)
+    await actor.submit(RequestCheck(subject=subject, note="doubt this"), Origin.BROWSER)
+    await actor.submit(PostMessage(anchor=subject, body="it is defined in utils.py"), Origin.AGENT)
+    assert (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"] == []
+
+
+async def test_a_doubt_shows_on_the_conversation_it_will_be_answered_in(session):
+    """Waiting on a check is waiting on a message, so it reads where that message will appear."""
+    manager, sid = session
+    actor = manager.get(sid)
+    highlight = await mark(actor)
+    subject = Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)
+    await actor.submit(RequestCheck(subject=subject), Origin.BROWSER)
+
+    chat = chat_for(manager, ATTACHED)
+    row = rows(await chat.build(sid))[("highlight", highlight.id)]
+    assert row["checking"] and row["count"] == 0, "a doubt with nothing said yet is still visible"
+    assert (await chat.build(f"{sid}:highlight:{highlight.id}"))["checking"]
+    assert not rows(await chat.build(sid))[("review", "")]["checking"]
+
+    await actor.submit(PostMessage(anchor=subject, body="checked"), Origin.AGENT)
+    assert not rows(await chat.build(sid))[("highlight", highlight.id)]["checking"]
 
 
 def test_an_old_ask_with_an_agent_attached_is_flagged_stale():

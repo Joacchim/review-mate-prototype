@@ -46,9 +46,9 @@ def _key(anchor: Subject | None) -> tuple[str, str]:
 def outstanding(snapshot) -> list[Ask]:
     """Every ask this review is waiting on, oldest first.
 
-    Three shapes, and they are not interchangeable: a conversation where the reviewer spoke last, a
-    highlight escalated past the cheap tier with no card yet, and a request for insights on the
-    change as a whole that nothing has answered.
+    Four shapes, and they are not interchangeable: a conversation where the reviewer spoke last, a
+    highlight escalated past the cheap tier with no card yet, a request for insights on the change
+    as a whole that nothing has answered, and something the reviewer asked to have verified.
 
     An agent's own question back to the reviewer is not here. Nothing distinguishes a question from
     a statement in a message body, and inventing the distinction would report the reviewer's silence
@@ -74,7 +74,27 @@ def outstanding(snapshot) -> list[Ask]:
     if snapshot.insights_requested and not any(c.highlight_id is None for c in snapshot.cards):
         asks.append(Ask(kind="insights", since=snapshot.insights_requested_at))
 
+    for check in snapshot.checks:
+        if not _answered(snapshot, check):
+            asks.append(Ask(kind="check", subject=check.subject, since=check.requested_at))
+
     return sorted(asks, key=lambda a: a.since or "")
+
+
+def _answered(snapshot, check) -> bool:
+    """Whether the agent has said anything about a check's subject since it was asked.
+
+    Deliberately that loose. Adding a verb for the agent to close a check with would be a second
+    way of saying what a message already says, and an agent that answered without remembering to
+    call it would leave the reviewer waiting on work that was done. The cost is that *any* later
+    word on that subject closes it — see docs/surprises.md.
+    """
+    for message in snapshot.messages:
+        if message.role == "user" or message.anchor != check.subject:
+            continue
+        if (message.created_at or "") > (check.requested_at or ""):
+            return True
+    return False
 
 
 def agent_state(asks: list[Ask], watcher: dict | None, *, now: datetime | None = None) -> AgentState:
