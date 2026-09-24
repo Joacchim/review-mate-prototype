@@ -252,6 +252,10 @@
   .req{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px}
   .req .repo{font-family:var(--mono);font-size:12px} .req .why{color:var(--fg2);font-size:12px;margin:4px 0 8px}
   .req button{margin-right:6px} button.ok{border-color:var(--postline);color:var(--addfg)} button.no{border-color:var(--delline);color:var(--delfg)}
+  .req.decided{opacity:.8} .req .grant{font-size:11.5px;margin-top:2px}
+  .req .grant.ok{color:var(--addfg)} .req .grant.no{color:var(--delfg)}
+  .req .grant.work{color:var(--warnfg)} .req .grant.warn{color:var(--warnfg)}
+  .req .grant.path{font-family:var(--mono);font-size:11px;overflow-wrap:anywhere}
   .empty{color:var(--fg2);font-size:12px;padding:8px 0}
   /* one subject, two channels — the Claude tab is a session command only the reviewer sees, the
      Review tab is written back to the host. They carry the colours those two already have here:

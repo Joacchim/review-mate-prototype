@@ -174,6 +174,27 @@ function pendingAccess() {
   return view ? view.requests.filter((r) => r.status === "pending") : [];
 }
 
+// Every request, decided ones included. What the reviewer answered is worth seeing after they
+// answered it — an agent re-asking for what was refused reads very differently from a first ask,
+// and an approval that produced nothing is something only they can chase.
+function accessRequests() {
+  const view = accessView();
+  return view ? view.requests : [];
+}
+
+// What became of an approval, in the reviewer's terms. The distinction that carries the weight is
+// the one between an approval being worked on and an approval nothing is working on: the scope
+// leaves the grant absent for the second, and this must not paper over it.
+function grantLine(r) {
+  if (r.status === "denied") return { text: "denied", cls: "no" };
+  if (r.status !== "approved") return null;
+  const g = r.grant;
+  if (!g) return { text: "approved — nothing is fetching it", cls: "warn" };
+  if (g.state === "materializing") return { text: "fetching the repository…", cls: "work" };
+  if (g.state === "ready") return { text: g.path || "ready", cls: "ok", path: true };
+  return { text: g.error || "could not be fetched", cls: "no" };
+}
+
 // the discussions on the merge request, as the host last reported them
 function threadsView() {
   const view = scopeViews[`threads:${SID}`];
@@ -1486,15 +1507,24 @@ function renderRail() {
 
   renderThreads(list);          // existing MR discussions — reply / resolve / refresh
 
-  const pending = pendingAccess();
+  const requests = accessRequests();
   list.appendChild(h3("Access requests"));
-  if (!pending.length) list.appendChild(empty("none"));
-  pending.forEach((r) => {
+  if (!requests.length) list.appendChild(empty("none"));
+  requests.forEach((r) => {
     const box = document.createElement("div");
-    box.className = "req";
+    box.className = "req" + (r.status === "pending" ? "" : " decided");
     box.innerHTML = `<div class="repo">${esc(r.repo)}</div><div class="why">${esc(r.reason)}</div>`;
-    box.appendChild(btn("Approve", "btn ok", () => post({ type: "decide_access", request_id: r.id, approve: true })));
-    box.appendChild(btn("Deny", "btn no", () => post({ type: "decide_access", request_id: r.id, approve: false })));
+    if (r.status === "pending") {
+      box.appendChild(btn("Approve", "btn ok", () => post({ type: "decide_access", request_id: r.id, approve: true })));
+      box.appendChild(btn("Deny", "btn no", () => post({ type: "decide_access", request_id: r.id, approve: false })));
+    } else {
+      const state = grantLine(r);
+      const line = document.createElement("div");
+      line.className = "grant " + state.cls + (state.path ? " path" : "");
+      line.textContent = state.text;
+      if (state.path) line.title = "Claude can read this checkout";
+      box.appendChild(line);
+    }
     list.appendChild(box);
   });
 
