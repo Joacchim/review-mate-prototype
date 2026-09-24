@@ -8,7 +8,7 @@ from review_mate.session.reducer import reduce, fold
 from review_mate.session.state import (
     SessionState, Origin, Side, LineRange, MRMetadata, FileEntry, ChangeType,
     Highlight, Card, AccessRequest, ReviewThread, CardStatus, AccessStatus, ChatMessage,
-    DraftComment, DraftStatus, Subject, SubjectKind,
+    DraftComment, DraftStatus, Grant, Subject, SubjectKind,
 )
 
 ALL_ORIGINS = [Origin.BROWSER, Origin.AGENT, Origin.SYSTEM]
@@ -43,6 +43,7 @@ def _sample(cmd_type: str):
         "save_draft": cmd.SaveDraft(highlight_id="x", body="b"),
         "remove_draft": cmd.RemoveDraft(highlight_id="x"),
         "mark_draft_posted": cmd.MarkDraftPosted(highlight_id="x"),
+        "record_grant": cmd.RecordGrant(request_id="x", grant=Grant()),
     }[cmd_type]
 
 
@@ -287,3 +288,66 @@ def test_several_checks_stand_on_their_own():
         s = fold(s, handle(s, cmd.RequestCheck(
             subject=Subject(kind=SubjectKind.HIGHLIGHT, id=hid), note=note), Origin.BROWSER))
     assert [c.note for c in s.checks] == ["first doubt", "second doubt"]
+
+
+# --- what an approval produces -------------------------------------------------
+
+def _with_request(approve=None):
+    s = _with_mr()
+    s = fold(s, handle(s, cmd.RequestAccess(repo="g/sibling", reason="the caller lives there"),
+                       Origin.AGENT))
+    if approve is not None:
+        rid = s.access_requests[0].id
+        s = fold(s, handle(s, cmd.DecideAccess(request_id=rid, approve=approve), Origin.BROWSER))
+    return s
+
+
+def test_an_approval_alone_produces_nothing():
+    """Deciding is the reviewer's move; materializing is the server's, and may not have started."""
+    s = _with_request(approve=True)
+    assert s.access_requests[0].status is AccessStatus.APPROVED
+    assert s.access_requests[0].grant is None
+
+
+def test_a_grant_records_where_the_repository_landed():
+    s = _with_request(approve=True)
+    rid = s.access_requests[0].id
+    s = fold(s, handle(s, cmd.RecordGrant(request_id=rid, grant=Grant(state="materializing")),
+                       Origin.SYSTEM))
+    assert s.access_requests[0].grant.state == "materializing"
+
+    s = fold(s, handle(s, cmd.RecordGrant(
+        request_id=rid, grant=Grant(state="ready", path="/tmp/x")), Origin.SYSTEM))
+    grant = s.access_requests[0].grant
+    assert grant.state == "ready" and grant.path == "/tmp/x"
+
+
+def test_a_failed_materialization_is_recorded_rather_than_dropped():
+    """Otherwise an approval that could not be honoured looks exactly like one still working."""
+    s = _with_request(approve=True)
+    rid = s.access_requests[0].id
+    s = fold(s, handle(s, cmd.RecordGrant(
+        request_id=rid, grant=Grant(state="failed", error="no such project")), Origin.SYSTEM))
+    assert s.access_requests[0].grant.state == "failed"
+    assert "no such project" in s.access_requests[0].grant.error
+
+
+def test_nothing_materializes_for_a_request_the_reviewer_refused():
+    """The consent invariant, enforced where a command is checked rather than where one is sent."""
+    s = _with_request(approve=False)
+    out = handle(s, cmd.RecordGrant(request_id=s.access_requests[0].id,
+                                    grant=Grant(state="ready", path="/tmp/x")), Origin.SYSTEM)
+    assert isinstance(out, Rejection) and "not approved" in out.reason
+
+
+def test_nothing_materializes_for_a_request_nobody_has_answered():
+    s = _with_request()
+    out = handle(s, cmd.RecordGrant(request_id=s.access_requests[0].id, grant=Grant()),
+                 Origin.SYSTEM)
+    assert isinstance(out, Rejection) and "not approved" in out.reason
+
+
+def test_a_grant_for_no_such_request_is_rejected():
+    s = _with_mr()
+    out = handle(s, cmd.RecordGrant(request_id="nope", grant=Grant()), Origin.SYSTEM)
+    assert isinstance(out, Rejection) and "no such access request" in out.reason

@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from review_mate.session.state import (
     AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, CheckRequest, DraftComment,
-    FileEntry, Highlight, MRMetadata, Origin, ReviewThread, Subject,
+    FileEntry, Grant, Highlight, MRMetadata, Origin, ReviewThread, Subject,
 )
 
 
@@ -80,6 +80,13 @@ class AccessRequested(_EventBase):
     request: AccessRequest
 
 
+class AccessGrantChanged(_EventBase):
+    """The server reporting what an approval is producing, or produced."""
+    type: Literal["access_grant_changed"] = "access_grant_changed"
+    request_id: str
+    grant: Grant
+
+
 class AccessDecided(_EventBase):
     type: Literal["access_decided"] = "access_decided"
     request_id: str
@@ -143,7 +150,7 @@ Event = Annotated[
         SessionCreated, MRMetadataApplied, CheckoutSet, FilesApplied,
         HighlightAdded, HighlightRemoved, ContextRequested,
         CardEmitted, CardUpdated, CardRemoved,
-        AccessRequested, AccessDecided,
+        AccessRequested, AccessDecided, AccessGrantChanged,
         ThreadApplied, ThreadsReplaced, InsightsRequested, CheckRequested, MessagePosted,
         ChatCleared,
         DraftSaved, DraftRemoved, DraftPosted, SessionEnded,

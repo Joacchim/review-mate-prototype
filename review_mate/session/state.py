@@ -106,12 +106,29 @@ class Card(BaseModel):
     created_at: str = ""
 
 
+class Grant(BaseModel):
+    """What an approval actually produced: a checkout on disk, or why there is none yet.
+
+    A second axis from the decision, not more values on it. A request is pending, approved or
+    denied — that is the reviewer's answer and it is final. Whether the repository has been
+    materialized is a server-side outcome of an approval that takes seconds and can fail, and
+    folding it into `status` would make "approved" mean two different things depending on when it
+    was read. Absent until something starts the work, so "approved and nothing is materializing it"
+    stays distinguishable from "a clone is running".
+    """
+    state: str = "materializing"       # materializing | ready | failed
+    path: str | None = None            # where it was checked out, once ready
+    error: str = ""
+    at: str = ""
+
+
 class AccessRequest(BaseModel):
     id: str
     repo: str
     reason: str
     status: AccessStatus = AccessStatus.PENDING
     decided_at: str | None = None
+    grant: Grant | None = None         # only ever set on an approved request
 
 
 class ThreadComment(BaseModel):

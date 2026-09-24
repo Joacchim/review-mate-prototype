@@ -16,7 +16,8 @@ from pydantic import BaseModel, Field, TypeAdapter
 from review_mate.session import events as ev
 from review_mate.session.state import (
     AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, CheckRequest, DraftComment, DraftStatus,
-    FileEntry, Highlight, LineRange, MRMetadata, Origin, ReviewThread, Side, Subject, SubjectKind,
+    FileEntry, Grant, Highlight, LineRange, MRMetadata, Origin, ReviewThread, Side, Subject,
+    SubjectKind,
 )
 
 
@@ -111,6 +112,13 @@ class ClearChat(BaseModel):
     anchor: Subject | None = None      # clears that conversation only
 
 
+class RecordGrant(BaseModel):
+    """The server reporting what an approved request is producing. Not a reviewer's move."""
+    type: Literal["record_grant"] = "record_grant"
+    request_id: str
+    grant: Grant
+
+
 class RequestCheck(BaseModel):
     """Ask the agent to verify something already said — the reviewer's words, or the agent's own.
 
@@ -153,7 +161,8 @@ class EndSession(BaseModel):
 
 Command = Union[
     AddHighlight, RemoveHighlight, RequestContext, RequestInsights, EmitCard, UpdateCard, RemoveCard,
-    RequestAccess, DecideAccess, ApplyMRMetadata, SetCheckout, ApplyFiles, ApplyThread, ReplaceThreads,
+    RequestAccess, DecideAccess, RecordGrant, ApplyMRMetadata, SetCheckout, ApplyFiles, ApplyThread,
+    ReplaceThreads,
     PostMessage, ClearChat, RequestCheck, SaveDraft, RemoveDraft, MarkDraftPosted, EndSession,
 ]
 
@@ -183,6 +192,7 @@ AUTHORITY: dict[str, set[Origin]] = {
     "request_check": {Origin.BROWSER},     # verifying something said is the reviewer's to ask for
     "remove_card": {Origin.BROWSER},   # the reviewer dismisses an insight card
     "decide_access": {Origin.BROWSER},
+    "record_grant": {Origin.SYSTEM},       # what an approval produced is the server's to report
     "end_session": {Origin.BROWSER},
     "emit_card": {Origin.AGENT},
     "update_card": {Origin.AGENT},
@@ -281,6 +291,16 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
     if isinstance(command, RequestAccess):
         req = AccessRequest(id=_id(), repo=command.repo, reason=command.reason)
         return emit(ev.AccessRequested, request=req)
+
+    if isinstance(command, RecordGrant):
+        req = next((r for r in state.access_requests if r.id == command.request_id), None)
+        if req is None:
+            return Rejection(reason=f"no such access request: {command.request_id}")
+        if req.status is not AccessStatus.APPROVED:
+            # the consent invariant, restated where it can be enforced: nothing materializes for a
+            # request the reviewer has not approved, whatever the server thinks it is doing
+            return Rejection(reason="access request is not approved")
+        return emit(ev.AccessGrantChanged, request_id=command.request_id, grant=command.grant)
 
     if isinstance(command, DecideAccess):
         req = next((r for r in state.access_requests if r.id == command.request_id), None)

@@ -66,6 +66,10 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
             if r.id == event.request_id:
                 r.status = event.status
                 r.decided_at = event.decided_at
+    elif isinstance(event, ev.AccessGrantChanged):
+        for r in s.access_requests:
+            if r.id == event.request_id:
+                r.grant = event.grant
     elif isinstance(event, ev.ThreadApplied):
         replaced = False
         for i, t in enumerate(s.threads):
