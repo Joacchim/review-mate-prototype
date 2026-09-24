@@ -514,6 +514,13 @@ class Shell:
             spawn(self.client.command("thread.resolve", session=self.diff.session,
                                       thread=thread["id"], resolved=not thread.get("resolved")))
 
+        @kb.add("i")
+        def _review_pass(event) -> None:
+            """Ask Claude to review the change as a whole — alongside your own pass, not instead."""
+            if self.diff is None or not self.diff.review_pass().get("available", True):
+                return
+            spawn(self.client.session_command(self.diff.session, {"type": "request_insights"}))
+
         @kb.add("o")
         def _browse(event) -> None:
             """Show the whole repository in the file list, or only the change."""

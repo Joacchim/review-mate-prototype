@@ -329,6 +329,7 @@ class DiffScreen:
         out.append(("class:muted", f"  mode {self.mode}   [{self.client.status}]"))
         out.extend(self._agent_badge())
         out.extend(self._review_badge())
+        out.extend(self._pass_badge())
         out.extend(self._access_badge())
         if not view.get("head_aligned", True):
             out.append(("class:attention", "   read-only: the MR moved past this session"))
@@ -504,6 +505,18 @@ class DiffScreen:
             out.append((style, answer + ("  (stale)" if highlight.get("stale") else "") + "\n"))
         return out
 
+    def review_pass(self) -> dict:
+        return self.rail.get("review_pass") or {}
+
+    def _pass_badge(self) -> list[tuple[str, str]]:
+        """What the MR-wide pass is doing. Stale says so rather than going quiet."""
+        passed = self.review_pass()
+        if not passed.get("requested"):
+            return []
+        if passed.get("stale"):
+            return [("class:attention", "   that pass was about an earlier version")]
+        return [("class:info", "   Claude is reviewing the change")]
+
     def _access_badge(self) -> list[tuple[str, str]]:
         """Consent is the one thing here that blocks the agent rather than the reviewer, so it says
         so in the header where nothing has to be open to see it."""
@@ -608,8 +621,8 @@ class DiffScreen:
         if self.focus == "threads":
             return ("\n tab pane   j/k move   enter go to it   f open/all   c ask Claude"
                     "   R reply   V resolve   b back   q quit\n")
-        return ("\n tab pane   j/k move   o browse repo   c write   d comment   S send"
-                "   b back   q quit\n")
+        return ("\n tab pane   j/k move   i review pass   o browse repo   c write   d comment"
+                "   S send   b back   q quit\n")
 
     # --- interaction ---------------------------------------------------------
 

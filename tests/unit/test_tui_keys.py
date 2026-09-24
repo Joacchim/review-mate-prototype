@@ -600,3 +600,40 @@ async def test_with_nothing_asked_there_is_nothing_to_decide():
     _asked_for(shell)
     press(shell, "C")
     assert shell.deciding is None
+
+
+# --- asking for a pass over the whole change ----------------------------------
+
+def _pass_state(shell, **fields):
+    rail = dict(shell.client.views.get("rail:s1") or
+                {"session": "s1", "state": "ready", "highlights": [], "insights": []})
+    rail["review_pass"] = {"requested": False, "at": "", "sha": None,
+                           "stale": False, "available": True, **fields}
+    shell.client.views["rail:s1"] = rail
+
+
+async def test_asking_for_a_review_pass():
+    shell, client = shell_on_a_review()
+    _pass_state(shell)
+    press(shell, "i")
+    await settle()
+    assert client.session_commands == [("s1", {"type": "request_insights"})]
+
+
+async def test_a_pass_covering_this_code_cannot_be_asked_for_again():
+    shell, client = shell_on_a_review()
+    _pass_state(shell, requested=True, available=False)
+    press(shell, "i")
+    await settle()
+    assert client.session_commands == []
+    assert "Claude is reviewing the change" in "".join(t for _, t in shell.fragments())
+
+
+async def test_a_pass_the_change_moved_past_says_so_and_can_be_asked_again():
+    """The cue must not go quiet: the reviewer is told why, and the control comes back."""
+    shell, client = shell_on_a_review()
+    _pass_state(shell, requested=True, stale=True, available=True, sha="old")
+    assert "about an earlier version" in "".join(t for _, t in shell.fragments())
+    press(shell, "i")
+    await settle()
+    assert client.session_commands == [("s1", {"type": "request_insights"})]
