@@ -494,8 +494,8 @@ class DiffScreen:
             return ("\n tab pane   j/k move   a ask Claude   c write   d comment   S send"
                     "   b back   q quit\n")
         if self.focus == "threads":
-            return ("\n tab pane   j/k move   enter go to it   f open/all   c write"
-                    "   b back   q quit\n")
+            return ("\n tab pane   j/k move   enter go to it   f open/all   c ask Claude"
+                    "   R reply   V resolve   b back   q quit\n")
         return "\n tab pane   j/k move   c write   d comment   S send   n/p file   b back   q quit\n"
 
     # --- interaction ---------------------------------------------------------

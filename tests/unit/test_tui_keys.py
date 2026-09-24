@@ -282,8 +282,8 @@ async def test_with_nothing_selected_the_comment_is_the_mr_summary():
     press(shell, "d")                          # the rail is unfocused, so this is MR-level
     assert "note>" in "".join(t for _, t in shell.compose_prompt())
     shell.compose.text = "reads well overall"
-    assert shell.compose_command() == {"type": "save_draft", "highlight_id": None,
-                                       "body": "reads well overall"}
+    assert shell.compose_submission() == ("session", {"type": "save_draft", "highlight_id": None,
+                                                      "body": "reads well overall"})
 
 
 async def test_saving_a_comment_sends_it_anchored():
@@ -447,3 +447,91 @@ async def test_approving_alone_is_worth_confirming():
     press(shell, "y")
     await settle()
     assert client.commands == [("review.submit", {"session": "s1", "approve": True})]
+
+
+# --- answering a discussion ---------------------------------------------------
+# Two things can be written about a discussion and they do not go to the same place: `c` asks
+# Claude and only the reviewer sees it, `R` replies and everyone on the merge request does. The
+# prompt says which before a word is typed.
+
+def _threads_on(shell, *rows):
+    shell.client.views["threads:s1"] = {
+        "session": "s1", "state": "ready", "threads": list(rows), "total": len(rows),
+        "unresolved": sum(1 for t in rows if not t["resolved"])}
+    shell.diff.focus = "threads"
+
+
+def disc(id="t1", resolved=False):
+    return {"id": id, "resolved": resolved, "capabilities": {},
+            "anchor": {"file": "a.py", "side": "new", "line": 2},
+            "comments": [{"id": "1", "author": "eric", "body": "prefer a guard",
+                          "created_at": "", "mine": False}]}
+
+
+async def test_replying_reaches_the_merge_request(shell_and_client=None):
+    shell, client = shell_on_a_review()
+    _threads_on(shell, disc())
+    press(shell, "R")
+    assert shell.compose_kind == "reply"
+    assert "reply>" in "".join(t for _, t in shell.compose_prompt())
+    shell.compose.text = "fixed in the next push"
+    press(shell, "c-s")
+    await settle()
+    assert client.commands == [("thread.reply", {"session": "s1", "thread": "t1",
+                                                 "body": "fixed in the next push"})]
+    assert client.session_commands == []          # nothing private was written
+
+
+async def test_asking_claude_about_a_discussion_stays_private():
+    shell, client = shell_on_a_review()
+    _threads_on(shell, disc())
+    press(shell, "c")
+    shell.compose.text = "is this guard actually needed?"
+    press(shell, "enter")
+    await settle()
+    assert client.commands == []                  # nothing reached the merge request
+    assert client.session_commands == [
+        ("s1", {"type": "post_message", "body": "is this guard actually needed?",
+                "anchor": {"kind": "thread", "id": "t1"}})]
+
+
+async def test_resolving_and_reopening_go_both_ways():
+    shell, client = shell_on_a_review()
+    _threads_on(shell, disc())
+    press(shell, "V")
+    await settle()
+    assert client.commands == [("thread.resolve", {"session": "s1", "thread": "t1",
+                                                   "resolved": True})]
+    # a settled discussion is not in the default filter, so reopening one means showing it first
+    _threads_on(shell, disc(resolved=True))
+    press(shell, "V")
+    await settle()
+    assert len(client.commands) == 1, "a filtered-out discussion is not there to act on"
+
+    press(shell, "f")
+    press(shell, "V")
+    await settle()
+    assert client.commands[-1] == ("thread.resolve", {"session": "s1", "thread": "t1",
+                                                      "resolved": False})
+
+
+async def test_with_no_discussion_selected_there_is_nothing_to_answer():
+    shell, client = shell_on_a_review()
+    _threads_on(shell)                            # the filter leaves none
+    press(shell, "R")
+    press(shell, "V")
+    await settle()
+    assert not shell.composing and client.commands == []
+
+
+async def test_a_comment_written_on_a_discussion_is_the_summary_not_a_line_comment():
+    """The cursor is on a thread, so there is no line to hang a comment from. It must not hang one
+    off the thread's id, which is what an anchor taken without looking would do."""
+    shell, client = shell_on_a_review()
+    _threads_on(shell, disc())
+    press(shell, "d")
+    shell.compose.text = "reads well overall"
+    press(shell, "c-s")
+    await settle()
+    assert client.session_commands == [("s1", {"type": "save_draft", "highlight_id": None,
+                                               "body": "reads well overall"})]

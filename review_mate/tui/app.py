@@ -303,31 +303,43 @@ class Shell:
             self._app.layout.focus(self._main_window)
         self.invalidate()
 
-    def compose_command(self) -> dict | None:
-        """What is being written, as a command — about whatever the screen is pointed at.
+    def compose_submission(self) -> tuple[str, dict] | None:
+        """How to send what is being written: which call to make, and what to give it.
 
-        The two kinds go to different places on purpose: a message is a session command only the
-        reviewer sees, a draft is prose the merge request will read once it is submitted.
+        The kinds do not share a path, and the seam names the call rather than assuming one. A
+        message and a comment change this session, so they are session commands. A reply changes
+        the merge request, so it is a view command about a discussion.
         """
         body = self.compose.text.strip()
         if not body or self.diff is None:
             return None
         anchor = self.diff.subject()
+        if self.compose_kind == "reply":
+            thread = self.diff.current_thread()
+            if thread is None:
+                return None
+            return "view", {"cmd": "thread.reply", "session": self.diff.session,
+                            "thread": thread["id"], "body": body}
         if self.compose_kind == "draft":
-            return {"type": "save_draft",
-                    "highlight_id": anchor["id"] if anchor else None, "body": body}
+            # a comment anchors to a line, so a cursor sitting on a discussion writes the summary
+            # rather than hanging a comment off a thread id
+            on_line = anchor["id"] if anchor and anchor["kind"] == "highlight" else None
+            return "session", {"type": "save_draft", "highlight_id": on_line, "body": body}
         command: dict = {"type": "post_message", "body": body}
         if anchor is not None:
             command["anchor"] = anchor
-        return command
+        return "session", command
 
     def compose_prompt(self) -> list[tuple[str, str]]:
+        """Who reads what is being typed, in one word, before it is sent."""
         if self.diff is None:
             return [("class:muted", " ")]
         anchor = self.diff.subject()
+        if self.compose_kind == "reply":
+            return [("class:attention", " reply> ")]      # everyone on the merge request
         if self.compose_kind == "draft":
             return [("class:info", " note> " if anchor is None else " comment> ")]
-        return [("class:info", " say> " if anchor is None else " reply> ")]
+        return [("class:info", " say> " if anchor is None else " ask> ")]
 
     async def run_command(self, coroutine) -> None:
         await coroutine
@@ -459,6 +471,21 @@ class Shell:
             if self.diff is None:
                 spawn(self.client.command("hub.refresh"))
 
+        @kb.add("R")
+        def _reply(event) -> None:
+            """Answer the discussion under the cursor. Everyone on the merge request reads it."""
+            if self.diff is not None and self.diff.current_thread() is not None:
+                self.start_compose("reply")
+
+        @kb.add("V")
+        def _resolve(event) -> None:
+            """Settle a discussion, or reopen one. Reversible, so it goes without asking."""
+            thread = self.diff.current_thread() if self.diff is not None else None
+            if thread is None:
+                return
+            spawn(self.client.command("thread.resolve", session=self.diff.session,
+                                      thread=thread["id"], resolved=not thread.get("resolved")))
+
         @kb.add("f")
         def _filter(event) -> None:
             """Open discussions, or all of them — the filter a reviewer reaches for first."""
@@ -511,11 +538,16 @@ class Shell:
         sending = KeyBindings()          # a message is one line, so enter is its whole gesture
 
         def _commit() -> None:
-            command = self.compose_command()
+            submission = self.compose_submission()
             session = self.diff.session if self.diff is not None else None
             self.cancel_compose()
-            if command is not None and session is not None:
-                spawn(self.client.session_command(session, command))
+            if submission is None or session is None:
+                return
+            via, payload = submission
+            if via == "view":
+                spawn(self.client.command(payload.pop("cmd"), **payload))
+            else:
+                spawn(self.client.session_command(session, payload))
 
         @sending.add("enter")
         def _send(event) -> None:

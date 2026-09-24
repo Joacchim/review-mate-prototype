@@ -110,6 +110,8 @@ class SpyWriter:
     def __init__(self):
         self.posted = []
         self.approved = False
+        self.replied = []
+        self.resolved = []
 
     def capabilities(self):
         from review_mate.host.base import GITLAB_CAPABILITIES
@@ -125,6 +127,14 @@ class SpyWriter:
 
     async def approve(self, ref):
         self.approved = True
+        return {}
+
+    async def reply(self, ref, thread_id, body):
+        self.replied.append((thread_id, body))
+        return {"id": "note-1"}
+
+    async def resolve(self, ref, thread_id, resolved=True):
+        self.resolved.append((thread_id, resolved))
         return {}
 
 
@@ -361,7 +371,7 @@ async def test_writing_in_the_terminal_reaches_the_conversation(tmp_path):
 
             shell.start_compose()
             shell.compose.text = "what is this guard for?"
-            command = shell.compose_command()
+            _via, command = shell.compose_submission()
             shell.cancel_compose()
             assert await client.session_command(session, command), client.last_command_error
 
@@ -415,7 +425,7 @@ async def test_drafting_in_the_terminal_reaches_the_review(tmp_path):
 
             shell.start_compose("draft")
             shell.compose.text = "this needs a test"
-            command = shell.compose_command()
+            _via, command = shell.compose_submission()
             shell.cancel_compose()
             assert await client.session_command(session, command), client.last_command_error
 
@@ -448,7 +458,7 @@ async def test_sending_a_review_from_the_terminal_reaches_the_host(tmp_path):
 
             shell.start_compose("draft")
             shell.compose.text = "reads well overall"
-            command = shell.compose_command()
+            _via, command = shell.compose_submission()
             shell.cancel_compose()
             assert await client.session_command(session, command), client.last_command_error
             await wait_for(lambda: shell.diff.review.get("pending") == 1)
@@ -499,3 +509,53 @@ async def test_the_terminal_reads_the_merge_requests_discussions(tmp_path):
             assert [t["id"] for t in shell.diff.thread_rows()] == ["d1"]   # open ones lead
             rendered = "".join(text for _, text in shell.fragments())
             assert "prefer a guard" in rendered and "1 open of 2" in rendered
+
+
+async def test_replying_from_the_terminal_reaches_the_merge_request(tmp_path):
+    """The reply leaves the terminal, lands on the host, and the discussion comes back carrying it
+    — the re-sync is what makes the pane show what the merge request says rather than a guess."""
+    from review_mate.tui.app import Shell
+    from review_mate.session.commands import ReplaceThreads
+    from review_mate.session.state import Origin, ReviewThread, ThreadComment
+
+    answered = [ReviewThread(id="d1", anchor={"file": "a.py", "side": "new", "line": 2},
+                             comments=[ThreadComment(id="1", author="eric", body="prefer a guard"),
+                                       ThreadComment(id="2", author="reviewer", body="fixed")])]
+
+    class Answering(DiffHost):
+        async def fetch_threads(self, ref):
+            return list(answered)
+
+    writer = SpyWriter()
+    host = Answering()
+    app = build(tmp_path, host, writer=writer)
+
+    async with serving(app) as base:
+        async with connected(base) as (client, watcher):
+            await watcher.until(lambda v: v.get("queue_state") == "ready")
+            await client.command("session.open", ref={"host": "gitlab", "project": "g/p", "iid": 1})
+            session = (await watcher.until(lambda v: v["sessions"]))["sessions"][0]["id"]
+            manager = app.state.manager
+            await manager.get(session).submit(ReplaceThreads(threads=[
+                ReviewThread(id="d1", anchor={"file": "a.py", "side": "new", "line": 2},
+                             comments=[ThreadComment(id="1", author="eric",
+                                                     body="prefer a guard")])]), Origin.SYSTEM)
+
+            shell = Shell(client)
+            watcher.also = shell.on_change
+            await shell.open_review(session)
+            await wait_for(lambda: shell.diff.threads.get("threads"))
+
+            shell.diff.focus = "threads"
+            shell.start_compose("reply")
+            shell.compose.text = "fixed"
+            via, payload = shell.compose_submission()
+            shell.cancel_compose()
+            assert via == "view"
+            assert await client.command(payload.pop("cmd"), **payload), client.last_command_error
+
+            await wait_for(lambda: len(shell.diff.threads["threads"][0]["comments"]) == 2)
+
+    assert writer.replied == [("d1", "fixed")]
+    said = shell.diff.threads["threads"][0]["comments"]
+    assert [(c["body"], c["mine"]) for c in said] == [("prefer a guard", False), ("fixed", True)]
