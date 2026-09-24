@@ -846,7 +846,8 @@ async function renderSuggestions(query) {
   const list = document.createElement("div");
   list.appendChild(empty("searching GitLab…"));
   land.appendChild(list);
-  // escape hatch (D20): only if the direct search misses, route the fuzzy query to the agent
+  // escape hatch (D20): a fuzzy description routed to the agent, always offered — the host search
+  // can return plenty of matches and still miss the one the reviewer meant
   const fallback = document.createElement("div");
   fallback.className = "askrow";
   const claudePanel = document.createElement("div");
@@ -868,18 +869,48 @@ async function renderSuggestions(query) {
       ? "⚠ GitLab authentication failed. Run `glab auth login` (or let glab refresh), then search again — the server reloads credentials automatically, no restart needed."
       : "⚠ GitLab error: " + data.error;
     list.appendChild(err);
+    renderAskRow(fallback, claudePanel, query, "failed");
     return;
   }
   const items = Array.isArray(data) ? data : [];
   items.forEach((it) => list.appendChild(mrItem(it)));
   if (!items.length) list.appendChild(empty("no GitLab matches — try another term, or paste a full MR URL"));
-  // the agent is a fallback, not the default: prompt it more strongly when direct search came up empty
-  fallback.appendChild(document.createTextNode(items.length ? "Not the one? " : "Looking for it by description? "));
-  fallback.appendChild(btn("✦ Ask Claude to find it", "btn ghost", () => askClaude(query, claudePanel)));
+  renderAskRow(fallback, claudePanel, query, items.length ? "hits" : "empty");
+}
+
+// The way to reach Claude about finding an MR, offered whatever the host search did. A search that
+// returned ten matches and none of them the right one is the commonest case of all, and a search
+// that errored is the one where the agent is the only route left.
+//
+// The box is not the search box. What the host search wants is a term; what Claude wants is a
+// description, and making the reviewer overwrite one with the other would re-run the host search
+// and throw away the answer they are reading.
+function renderAskRow(row, panel, query, outcome) {
+  row.innerHTML = "";
+  row.appendChild(document.createTextNode({
+    hits: "Not the one? Describe it instead: ",
+    empty: "Looking for it by description? ",
+    failed: "GitLab search is unavailable — Claude may still find it: ",
+  }[outcome]));
+  const box = document.createElement("input");
+  box.className = "askbox";
+  box.id = "askbox";
+  box.value = query;
+  box.placeholder = "the MR that reworked the retry backoff";
+  const ask = () => {
+    const described = box.value.trim();
+    if (described) askClaude(described, panel);
+  };
+  box.onkeydown = (e) => { if (e.key === "Enter") ask(); };
+  row.appendChild(box);
+  row.appendChild(btn("✦ Ask Claude to find it", "btn ghost", ask));
 }
 
 // route a fuzzy query to Claude's lookup channel; render its answer + loadable candidates
 async function askClaude(query, panel) {
+  // What counts as "the reviewer moved on" is the search box changing, not this description — they
+  // can rewrite the description as often as they like without abandoning the search it belongs to.
+  const searching = $("ref").value.trim();
   panel.innerHTML = "";
   // the lookup channel has no session to hang a wait line on — say it plainly instead. Only once
   // the hub has arrived: an unknown watcher must not read as an absent one.
@@ -896,7 +927,7 @@ async function askClaude(query, panel) {
     id = (await r.json()).id;
   } catch (e) { panel.innerHTML = ""; panel.appendChild(empty("lookup failed")); return; }
   for (let attempt = 0; attempt < 3; attempt++) {
-    if ($("ref").value.trim() !== query) return;  // reviewer moved on
+    if ($("ref").value.trim() !== searching) return;  // reviewer moved on
     let req = null;
     try { req = await fetch(`/api/lookup/${id}`).then((r) => r.json()); } catch (e) {}
     if (req && req.status === "answered") { renderClaudeAnswer(req, panel); return; }

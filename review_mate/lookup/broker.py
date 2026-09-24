@@ -7,6 +7,12 @@ durable log. The browser opens a request; the agent (watching) answers; the brow
 that answer. If no agent is attached, the answer simply never comes and the UI falls back to host
 search.
 
+Losing all of it on a restart is intended, not a gap to close later. Coming back to the hub means
+looking for something else, not resuming the last search, so there is nothing a reviewer would want
+replayed — and a durable record of every idle query is a cost with no reader. The consequence worth
+naming, since it is the one people ask about: a lookup cannot be audited afterwards. Nothing says
+what Claude was asked to find or what it answered. See `docs/surprises.md`.
+
 Single-process, asyncio-only: no locks needed because there is no `await` between reading and
 mutating shared state in any method (atomic under the event loop).
 """

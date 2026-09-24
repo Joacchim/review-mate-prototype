@@ -39,6 +39,18 @@ reviewer watching something that stopped, with nothing arriving and nothing said
 still has somewhere to land. `Highlight.created_sha` is the oldest instance of the rule; `_pass` in
 `review_mate/view/rail.py` is where `stale` and `available` are deliberately kept as two facts.
 
+## Asking Claude to find a merge request leaves no trace
+
+A lookup — the "ask Claude to find it" channel on the landing page — is held in memory and nowhere
+else. Claude's answer and the candidates it offered are gone on a server restart, and there is no
+history of what was ever asked. Nothing records that it happened.
+
+That is what the channel is for. Discovery runs before any session exists and is a question the
+reviewer asks once: coming back to the hub means looking for something else, not resuming the last
+search. Putting it in the durable log would make every idle query a permanent record of a thing
+nobody wanted to keep, and the session log is for a review, which a lookup is not yet. The cost is
+that a lookup cannot be audited or replayed. `review_mate/lookup/broker.py` states the same rule.
+
 ## Submitting advances the watermark even when it posts nothing
 
 The reviewed-up-to mark moves to the current head on **any** submit — no drafts prepared, no

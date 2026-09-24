@@ -82,3 +82,53 @@ class HubPage:
     @property
     def status(self):
         return self.page.locator("#status")
+
+
+class SearchPage:
+    """The landing page's search, and the way through it to Claude's lookup channel."""
+
+    def __init__(self, page, base_url: str) -> None:
+        self.page = page
+        self.base_url = base_url
+
+    def look_for(self, text: str) -> None:
+        self.page.goto(self.base_url)
+        box = self.page.locator("#ref")
+        box.fill(text)
+        box.dispatch_event("input")
+
+    @property
+    def results(self):
+        return self.page.locator(".land > div > .qitem")
+
+    @property
+    def error(self):
+        return self.page.locator(".searcherr")
+
+    @property
+    def ask_row(self):
+        """Offered whatever the host search did — it can hit and still miss the right one."""
+        return self.page.locator(".askrow")
+
+    @property
+    def ask_button(self):
+        return self.page.locator(".askrow .btn")
+
+    @property
+    def described(self):
+        """The description sent to Claude, which is not the term sent to the host."""
+        return self.page.locator(".askrow .askbox")
+
+    def describe(self, text: str) -> None:
+        self.described.fill(text)
+
+    def ask(self) -> None:
+        self.ask_button.click()
+
+    @property
+    def answer(self):
+        return self.page.locator(".claudepanel .claudeans")
+
+    @property
+    def candidates(self):
+        return self.page.locator(".claudepanel .qitem")

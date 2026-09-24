@@ -15,6 +15,8 @@ class StubHost:
         self.commit_files: dict[str, list] = {}
         self.repo_tree: list[str] = []
         self.fail_with: Exception | None = None
+        self.search_hits: list[dict] = []
+        self.search_fails: Exception | None = None
         self.calls = 0
 
     async def review_queue_items(self):
@@ -24,7 +26,9 @@ class StubHost:
         return list(self.queue)
 
     async def search(self, query: str):
-        return []
+        if self.search_fails is not None:
+            raise self.search_fails
+        return list(self.search_hits)
 
     async def mr_versions(self, ref):
         return list(self.versions)

@@ -164,6 +164,32 @@ def as_agent(_fixture_server, fake_manager):
     return submit
 
 
+@pytest.fixture
+def as_claude_lookup(_fixture_server, staged_app):
+    """Answer the reviewer's open lookup, the way an attached agent would.
+
+    On the server's own loop, because answering wakes the browser's long poll through a future and
+    resolving one from another thread is how a test starts passing for the wrong reason.
+    """
+    async def _answer(text: str, candidates):
+        broker = staged_app.state.broker
+        # the click and the POST it starts are not the same moment: wait for the request to arrive
+        # rather than assuming it has, or this passes alone and races under load
+        for _ in range(100):
+            pending = [r for r in broker._by_seq if r.status == "pending"]
+            if pending:
+                break
+            await asyncio.sleep(0.05)
+        assert pending, "nothing asked Claude to find anything"
+        broker.answer(pending[-1].id, text, candidates)
+        return pending[-1].query        # what the reviewer actually asked Claude to find
+
+    def answer(text: str, candidates=None):
+        return asyncio.run_coroutine_threadsafe(
+            _answer(text, candidates or []), _fixture_server.loop).result(timeout=10)
+    return answer
+
+
 @pytest.fixture(autouse=True)
 def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app, stub_writer):
     """Reset the staged state between tests, so a scenario is the only thing a test relies on.
@@ -175,6 +201,8 @@ def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app, stub_
     """
     fake_manager.reset()
     stub_host.queue = list(QUEUE)
+    stub_host.search_hits = []
+    stub_host.search_fails = None
     stub_host.files.clear()
     stub_host.fail_with = None
     stub_host.versions = []
