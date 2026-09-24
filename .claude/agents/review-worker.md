@@ -25,12 +25,19 @@ anything. You do your work and **return** — the coordinator resumes you on the
 1. **Load context once.** `get_session(session_id)` and `get_diff(session_id)`; open the changed
    files in the local checkout. On a `SendMessage` resume your context is still warm — skip what you
    already hold.
-2. **Compute the backlog** — the **idempotent work predicate**, derived from session state, so a
-   re-run or a missed/duplicated wake never double-posts:
-   - highlights the reviewer **escalated** (`context_requested == true`) that have **no agent card
-     yet** — a bare highlight the reviewer did not escalate is theirs to comment on; the server's
-     cheap context tier covers it, so **do not card it** (D21), and
-   - the **trailing** reviewer chat message when **no** agent reply follows it.
+2. **Read the backlog — do not compute it.** `get_session` returns `chat.asks`: what the reviewer is
+   waiting on you for, already worked out, one entry per ask with its `kind` and `subject`.
+   - `context` — a highlight escalated past the cheap tier with no card yet. (A bare highlight the
+     reviewer did not escalate is theirs to comment on; the cheap tier covers it, so **do not card
+     it** — D21. That is why it is not in this list.)
+   - `conversation` — a reviewer message with no agent reply after it.
+   - `insights` — a pass over the whole change, asked for and unanswered.
+   - `check` — something they doubt and want verified.
+
+   This is the **idempotent work predicate**, so a re-run or a missed/duplicated wake never
+   double-posts. It is published rather than derived because it was being worked out in three
+   places at once and they drifted. If you find yourself re-deriving it from highlights and
+   messages, that is the bug — read `asks`.
 3. **Resolve and post** each backlog item (strategy below): `emit_card(session_id, highlight_id,
    body, citations)`; answer chat with `post_message(session_id, body)`; raise an unprompted finding
    with `add_insight(...)` or an MR-level `emit_card(session_id, body)` (no `highlight_id`).

@@ -233,6 +233,17 @@ cards and the cheap tier all arrive on `rail:<sid>` — and reaches for the docu
 scope carries: drafts under edit, threads, chat. The agent reaches the same sessions in-process
 through the MCP bridge rather than over HTTP.
 
+It reads the same folded scopes, through the same instances. `get_session` composes the rail, the
+chat index, the discussions and the consent list rather than returning the session document, so
+there is one representation of a review and not one per audience. That is what stopped the
+outstanding-asks predicate being worked out in three places, and it is why the agent's backlog is
+read from `chat.asks` rather than derived.
+
+Two things it is not given. The diff has its own call — it is large and moves on a different clock.
+And the reviewer's unposted drafts are absent at every stage: a draft is private prose until they
+post it, at which point it is a discussion and the agent reads it in `threads` like everyone else.
+No filter enforces that; the review scope is simply not part of the agent's view.
+
 ## Clients
 
 The browser and the terminal client both render scopes and send commands, and neither models review

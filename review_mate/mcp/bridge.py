@@ -22,10 +22,12 @@ from review_mate.session.state import (
 
 
 class AgentBridge:
-    def __init__(self, manager: SessionManager, broker=None, provider=None):
+    def __init__(self, manager: SessionManager, broker=None, provider=None, view=None):
         self._m = manager
         self._broker = broker      # LookupBroker (MR-discovery channel); None in the baseline
         self._provider = provider  # HostProvider, for search_mrs; None when no host configured
+        self._view = view          # AgentView — the folded read; injected so it shares the clients'
+                                   # scope instances, and with them their caches
 
     def _actor(self, session_id: str):
         actor = self._m.get(session_id)
@@ -39,7 +41,14 @@ class AgentBridge:
         return self._m.list()
 
     def snapshot(self, session_id: str) -> SessionState:
+        """The raw session. Internal — `view` is what the agent reads."""
         return self._actor(session_id).snapshot()
+
+    async def view(self, session_id: str) -> dict:
+        """The session as the agent sees it: the same folded scopes the reviewer's clients read."""
+        if self._view is None:
+            raise RuntimeError("this server was built without an agent view")
+        return await self._view.build(session_id)
 
     def diff(self, session_id: str) -> list[FileEntry]:
         return self._actor(session_id).snapshot().files
@@ -113,22 +122,18 @@ class AgentBridge:
             RequestAccess(repo=repo, reason=reason), Origin.AGENT,
         )
 
-    def access_state(self, session_id: str) -> list[dict]:
+    async def access_state(self, session_id: str) -> list[dict]:
         """Every repository asked about, what the reviewer said, and what that produced.
 
         The agent's half of consent. Asking and then having no way to learn the answer is how a
         request becomes a guess: an agent that cannot see a refusal reads its own silence as a
         maybe, and one that cannot see a path has nothing to do with an approval.
+
+        Off the same scope the reviewer's clients render, so the two cannot come apart.
         """
-        rows = []
-        for req in self._actor(session_id).snapshot().access_requests or []:
-            grant = req.grant
-            rows.append({"id": req.id, "repo": req.repo, "reason": req.reason,
-                         "status": getattr(req.status, "value", str(req.status)),
-                         "state": grant.state if grant else None,
-                         "path": grant.path if grant else None,
-                         "error": grant.error if grant else ""})
-        return rows
+        if self._view is None:
+            raise RuntimeError("this server was built without an agent view")
+        return await self._view.access(session_id)
 
     async def wait_for_access(self, session_id: str, since: int = 0,
                               timeout: float | None = None) -> dict | None:

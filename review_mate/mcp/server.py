@@ -25,9 +25,21 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
         return [s.model_dump(mode="json") for s in bridge.list_sessions()]
 
     @mcp.tool()
-    def get_session(session_id: str) -> dict:
-        """Get the full current state of a session (mr, files, highlights, cards, …)."""
-        return bridge.snapshot(session_id).model_dump(mode="json")
+    async def get_session(session_id: str) -> dict:
+        """The session as the reviewer sees it: the merge request, the rail, the conversations and
+        their `asks`, the discussions, and the consent list.
+
+        `chat.asks` is your backlog — what the reviewer is waiting on you for, already worked out.
+        Do not re-derive it from the highlights and messages; that predicate lives in one place and
+        this is it.
+
+        `checkout_path` is the on-disk worktree of the merge request — the root for Read, Grep, LSP
+        and the code-graph CLI. The diff is not here: `get_diff` has it.
+
+        What the reviewer has prepared but not yet posted is deliberately absent. Once they post it,
+        it is a discussion and you will find it in `threads`.
+        """
+        return await bridge.view(session_id)
 
     @mcp.tool()
     def get_diff(session_id: str) -> list[dict]:
@@ -82,7 +94,7 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
         one. A denied repository stays denied; asking again for what was refused is a worse move
         than working without it, and says so to the reviewer.
         """
-        return bridge.access_state(session_id)
+        return await bridge.access_state(session_id)
 
     @mcp.tool()
     async def wait_for_access(session_id: str, since: int = 0,

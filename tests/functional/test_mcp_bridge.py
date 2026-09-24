@@ -1,19 +1,29 @@
 """Functional tests for the agent bridge + MCP server wiring."""
 import asyncio
+import json
 
 import pytest
 
 from review_mate.mcp.bridge import AgentBridge
 from review_mate.mcp.server import build_mcp_server
 from review_mate.session.manager import SessionManager
-from review_mate.session.commands import AddHighlight, DecideAccess, RecordGrant
+from review_mate.session.commands import (
+    AddHighlight, DecideAccess, RecordGrant, SaveDraft,
+)
 from review_mate.session.state import Grant, LineRange, Origin, Side
 
 
 @pytest.fixture
 async def setup(tmp_path):
+    from review_mate.view.access import AccessScope
+    from review_mate.view.agent import AgentView
+    from review_mate.view.chat import ChatScopes
+    from review_mate.view.rail import RailScope
+    from review_mate.view.threads import ThreadsScope
     manager = SessionManager(root=tmp_path / "sessions")
-    bridge = AgentBridge(manager)
+    view = AgentView(manager, rail=RailScope(manager), chat=ChatScopes(manager),
+                     threads=ThreadsScope(manager), access=AccessScope(manager))
+    bridge = AgentBridge(manager, view=view)
     sid = await manager.create()
     yield manager, bridge, sid
     await manager.shutdown()
@@ -117,7 +127,7 @@ async def test_the_agent_can_read_what_it_was_refused(setup):
     await bridge.request_access(sid, repo="g/other", reason="contract")
     rid = bridge.snapshot(sid).access_requests[0].id
     await _decide(manager, sid, rid, approve=False)
-    row = bridge.access_state(sid)[0]
+    row = (await bridge.access_state(sid))[0]
     assert row["status"] == "denied" and row["state"] is None and row["path"] is None
 
 
@@ -126,18 +136,18 @@ async def test_the_agent_reads_the_path_only_once_it_is_ready(setup):
     await bridge.request_access(sid, repo="g/other", reason="contract")
     rid = bridge.snapshot(sid).access_requests[0].id
     await _decide(manager, sid, rid, approve=True)
-    assert bridge.access_state(sid)[0] == {
+    assert (await bridge.access_state(sid))[0] == {
         "id": rid, "repo": "g/other", "reason": "contract", "status": "approved",
         "state": None, "path": None, "error": ""}, "approved is not yet readable"
 
     await manager.get(sid).submit(
         RecordGrant(request_id=rid, grant=Grant(state="materializing")), Origin.SYSTEM)
-    assert bridge.access_state(sid)[0]["state"] == "materializing"
-    assert bridge.access_state(sid)[0]["path"] is None
+    assert (await bridge.access_state(sid))[0]["state"] == "materializing"
+    assert (await bridge.access_state(sid))[0]["path"] is None
 
     await manager.get(sid).submit(
         RecordGrant(request_id=rid, grant=Grant(state="ready", path="/tmp/x")), Origin.SYSTEM)
-    row = bridge.access_state(sid)[0]
+    row = (await bridge.access_state(sid))[0]
     assert row["state"] == "ready" and row["path"] == "/tmp/x"
 
 
@@ -171,3 +181,45 @@ async def test_waiting_times_out_rather_than_hanging(setup):
     manager, bridge, sid = setup
     await bridge.request_access(sid, repo="g/other", reason="contract")
     assert await bridge.wait_for_access(sid, since=0, timeout=0.1) is None
+
+
+async def test_the_real_app_gives_the_agent_the_folded_view(tmp_path):
+    """A bridge built by hand proves nothing about the one the server builds — that is how the
+    cross-repo broker stayed unwired for its whole life."""
+    from review_mate.server.app import create_app
+    manager = SessionManager(root=tmp_path / "sessions")
+    app = create_app(manager=manager, with_mcp=True)
+    async with app.router.lifespan_context(app):
+        sid = await manager.create()
+        actor = manager.get(sid)
+        await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+                                        line_range=LineRange(start=1, end=1)), Origin.BROWSER)
+        hid = actor.snapshot().highlights[0].id
+        await actor.submit(SaveDraft(highlight_id=hid, body="a candid unsent note"), Origin.BROWSER)
+
+        built = await app.state.bridge.view(sid)
+        assert "rail" in built and "chat" in built and "access" in built
+        assert "a candid unsent note" not in repr(built)
+        assert "files" not in built
+
+
+async def test_the_tool_the_agent_actually_calls_returns_the_folded_view(setup):
+    """Through `call_tool`, not the bridge beneath it: the tool layer is the agent's real contract,
+    and a bridge test passes whether or not the tool is wired to it."""
+    manager, bridge, sid = setup
+    actor = manager.get(sid)
+    await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+                                    line_range=LineRange(start=1, end=1)), Origin.BROWSER)
+    hid = actor.snapshot().highlights[0].id
+    await actor.submit(SaveDraft(highlight_id=hid, body="a candid unsent note"), Origin.BROWSER)
+
+    server = build_mcp_server(bridge)
+    returned = await server.call_tool("get_session", {"session_id": sid})
+    # what the agent literally receives: the serialized tool result, not the object behind it
+    text = "".join(part.text for part in (returned[0] if isinstance(returned, tuple) else returned))
+    payload = json.loads(text)
+
+    assert "rail" in payload and "chat" in payload
+    assert "asks" in payload["chat"]["agent"], "the backlog, so the worker stops deriving it"
+    assert "a candid unsent note" not in repr(payload)
+    assert "files" not in payload, "the diff has its own tool"
