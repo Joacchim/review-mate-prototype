@@ -193,6 +193,9 @@ class Shell:
         # sending a review reaches the merge request, so it asks first and the answer is a keypress
         self.approve = False
         self.confirming = False
+        # the consent prompt is modal: it blocks the agent, and answering it by accident while
+        # navigating would grant a repository read
+        self.deciding: dict | None = None
         self.compose = Buffer(multiline=Condition(lambda: self.compose_kind == "draft"))
         self._compose_window: Window | None = None
         self._main_window: Window | None = None
@@ -205,8 +208,17 @@ class Shell:
         screen = self.screen
         if isinstance(screen, DiffScreen):
             screen.rows = self._rows()
-            return screen.fragments() + self._sending_line()
+            return screen.fragments() + self._deciding_line() + self._sending_line()
         return screen.fragments()
+
+    def _deciding_line(self) -> list[tuple[str, Any]]:
+        """What is being granted, spelled out. A repository read is not undone by reopening it."""
+        request = self.deciding
+        if request is None:
+            return []
+        return [("class:attention",
+                 f" let Claude read {request['repo']}?  {request.get('reason', '')}\n"
+                 f" y to allow, n to refuse, esc to leave it waiting\n")]
 
     def _sending_line(self) -> list[tuple[str, Any]]:
         """What pressing S is about to do, in the reviewer's words, before it happens.
@@ -298,6 +310,9 @@ class Shell:
         # sending a review reaches the merge request, so it asks first and the answer is a keypress
         self.approve = False
         self.confirming = False
+        # the consent prompt is modal: it blocks the agent, and answering it by accident while
+        # navigating would grant a repository read
+        self.deciding: dict | None = None
         self.compose.reset()
         if self._app is not None and self._main_window is not None:
             self._app.layout.focus(self._main_window)
@@ -486,6 +501,14 @@ class Shell:
             spawn(self.client.command("thread.resolve", session=self.diff.session,
                                       thread=thread["id"], resolved=not thread.get("resolved")))
 
+        @kb.add("C")
+        def _consent(event) -> None:
+            """Decide what Claude has asked to read. Nothing is read until this is answered."""
+            waiting = self.diff.pending_access() if self.diff is not None else []
+            if waiting:
+                self.deciding = waiting[0]
+                self.invalidate()
+
         @kb.add("f")
         def _filter(event) -> None:
             """Open discussions, or all of them — the filter a reviewer reaches for first."""
@@ -534,6 +557,30 @@ class Shell:
                 self.diff.session,
                 {"type": "remove_draft", "highlight_id": anchor["id"] if anchor else None}))
 
+        deciding_kb = KeyBindings()      # a consent prompt, which takes the keyboard while open
+
+        def _decide(approve: bool) -> None:
+            request, session = self.deciding, self.diff.session if self.diff else None
+            self.deciding = None
+            if request is not None and session is not None:
+                spawn(self.client.session_command(
+                    session, {"type": "decide_access", "request_id": request["id"],
+                              "approve": approve}))
+            self.invalidate()
+
+        @deciding_kb.add("y")
+        def _grant(event) -> None:
+            _decide(True)
+
+        @deciding_kb.add("n")
+        def _refuse(event) -> None:
+            _decide(False)
+
+        @deciding_kb.add("escape", eager=True)
+        def _leave(event) -> None:
+            self.deciding = None
+            self.invalidate()
+
         writing = KeyBindings()          # whichever kind is open
         sending = KeyBindings()          # a message is one line, so enter is its whole gesture
 
@@ -562,12 +609,14 @@ class Shell:
             self.cancel_compose()
 
         composing = Condition(lambda: self.composing)
+        deciding = Condition(lambda: self.deciding is not None)
         one_line = Condition(lambda: self.compose_kind == "message")
         # enter belongs to the buffer while a comment is being written — that is what makes it
         # prose rather than a line — so only the one-line kind binds it
-        return merge_key_bindings([ConditionalKeyBindings(kb, ~composing),
+        return merge_key_bindings([ConditionalKeyBindings(kb, ~composing & ~deciding),
                                    ConditionalKeyBindings(sending, composing & one_line),
-                                   ConditionalKeyBindings(writing, composing)])
+                                   ConditionalKeyBindings(writing, composing),
+                                   ConditionalKeyBindings(deciding_kb, deciding)])
 
     def build(self) -> Application:
         control = FormattedTextControl(self.fragments, focusable=True, show_cursor=False)

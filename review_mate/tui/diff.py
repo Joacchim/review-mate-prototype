@@ -129,6 +129,14 @@ class DiffScreen:
         return self.client.views.get(f"chat:{self.session}") or {}
 
     @property
+    def access(self) -> dict:
+        """What Claude has asked to read, and what was decided."""
+        return self.client.views.get(f"access:{self.session}") or {}
+
+    def pending_access(self) -> list[dict]:
+        return [r for r in (self.access.get("requests") or []) if r.get("status") == "pending"]
+
+    @property
     def review(self) -> dict:
         """What is prepared to send: the drafts, the approval, and whether this has moved on."""
         return self.client.views.get(f"review:{self.session}") or {}
@@ -243,7 +251,8 @@ class DiffScreen:
 
     def wanted(self) -> list[str]:
         scopes = [self.listing, f"rail:{self.session}", f"chat:{self.session}",
-                  f"review:{self.session}", f"threads:{self.session}", self.conversation_scope()]
+                  f"review:{self.session}", f"threads:{self.session}", f"access:{self.session}",
+                  self.conversation_scope()]
         body = self.body_scope
         if body:
             scopes.append(body)
@@ -262,6 +271,7 @@ class DiffScreen:
         out.append(("class:muted", f"  mode {self.mode}   [{self.client.status}]"))
         out.extend(self._agent_badge())
         out.extend(self._review_badge())
+        out.extend(self._access_badge())
         if not view.get("head_aligned", True):
             out.append(("class:attention", "   read-only: the MR moved past this session"))
         if view.get("clean") is False:
@@ -400,6 +410,15 @@ class DiffScreen:
             out.append(COMMENT_MARK.get(highlight.get("comment_state"), ("class:muted", "  ")))
             out.append((style, answer + ("  (stale)" if highlight.get("stale") else "") + "\n"))
         return out
+
+    def _access_badge(self) -> list[tuple[str, str]]:
+        """Consent is the one thing here that blocks the agent rather than the reviewer, so it says
+        so in the header where nothing has to be open to see it."""
+        waiting = len(self.pending_access())
+        if not waiting:
+            return []
+        what = "repo" if waiting == 1 else "repos"
+        return [("class:attention", f"   Claude is waiting on {waiting} {what}  (C to decide)")]
 
     def _review_badge(self) -> list[tuple[str, str]]:
         """What is waiting to be sent, and whether this has already been approved.

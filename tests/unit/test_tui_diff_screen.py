@@ -82,7 +82,7 @@ def test_the_file_scope_is_the_listing_plus_the_path():
 def test_it_watches_everything_the_review_screen_shows():
     screen = DiffScreen(StubClient({"diff:s1:full": listing([row("a.py"), row("b.py")])}), "s1")
     assert screen.wanted() == ["diff:s1:full", "rail:s1", "chat:s1", "review:s1", "threads:s1",
-                               "chat:s1:review", "diff:s1:full:a.py"]
+                               "access:s1", "chat:s1:review", "diff:s1:full:a.py"]
 
 
 def test_the_diff_renders_with_gutters_and_markers():

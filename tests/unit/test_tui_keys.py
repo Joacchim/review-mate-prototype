@@ -535,3 +535,68 @@ async def test_a_comment_written_on_a_discussion_is_the_summary_not_a_line_comme
     await settle()
     assert client.session_commands == [("s1", {"type": "save_draft", "highlight_id": None,
                                                "body": "reads well overall"})]
+
+
+# --- deciding what Claude may read --------------------------------------------
+# Consent blocks the agent rather than the reviewer, and granting a repository read is not undone
+# by changing your mind. So the prompt is modal: while it is open nothing else answers to a key.
+
+def _asked_for(shell, *repos, status="pending"):
+    shell.client.views["access:s1"] = {
+        "session": "s1", "state": "ready",
+        "requests": [{"id": f"r{i}", "repo": r, "reason": "it defines the type this calls",
+                      "status": status, "decided_at": None} for i, r in enumerate(repos)],
+        "pending": len(repos) if status == "pending" else 0}
+
+
+async def test_the_header_says_the_agent_is_waiting():
+    shell, _ = shell_on_a_review()
+    _asked_for(shell, "platform/virtu/vmdesc")
+    assert "Claude is waiting on 1 repo" in "".join(t for _, t in shell.fragments())
+
+
+async def test_allowing_a_repository_says_which():
+    shell, client = shell_on_a_review()
+    _asked_for(shell, "platform/virtu/vmdesc")
+    press(shell, "C")
+    assert "let Claude read platform/virtu/vmdesc?" in "".join(t for _, t in shell.fragments())
+    press(shell, "y")
+    await settle()
+    assert client.session_commands == [("s1", {"type": "decide_access", "request_id": "r0",
+                                               "approve": True})]
+
+
+async def test_refusing_is_the_other_answer_not_the_absence_of_one():
+    shell, client = shell_on_a_review()
+    _asked_for(shell, "platform/virtu/vmdesc")
+    press(shell, "C")
+    press(shell, "n")
+    await settle()
+    assert client.session_commands == [("s1", {"type": "decide_access", "request_id": "r0",
+                                               "approve": False})]
+
+
+async def test_leaving_it_waiting_answers_nothing():
+    shell, client = shell_on_a_review()
+    _asked_for(shell, "platform/virtu/vmdesc")
+    press(shell, "C")
+    press(shell, "escape")
+    await settle()
+    assert client.session_commands == [] and shell.deciding is None
+
+
+async def test_nothing_else_answers_while_the_prompt_is_open():
+    """`n` is next-file the rest of the time. A modal answer must not also move the reviewer."""
+    shell, _ = shell_on_a_review()
+    _asked_for(shell, "platform/virtu/vmdesc")
+    press(shell, "C")
+    for key in ("j", "tab", "d", "S"):
+        with pytest.raises(AssertionError):
+            press(shell, key)
+
+
+async def test_with_nothing_asked_there_is_nothing_to_decide():
+    shell, _ = shell_on_a_review()
+    _asked_for(shell)
+    press(shell, "C")
+    assert shell.deciding is None
