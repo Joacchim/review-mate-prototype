@@ -39,8 +39,15 @@ session, not one shared with the reviewer's chat.
 **First action of the loop, and again after any restart or gap in your watch: sweep durable state.**
 `curl -s "http://127.0.0.1:8765/api/outstanding"` — one local call listing every ask the reviewer is
 still waiting on across all active sessions (a trailing unanswered chat message; an escalated
-highlight with no card). Dispatch a worker for each session it names, exactly as if an event had
-arrived, then start watching.
+highlight with no card; a request to review the change as a whole). Dispatch a worker for each
+session it names, exactly as if an event had arrived, then start watching.
+
+An ask of kind `insights` is the reviewer asking for **a pass over the whole change** — before or
+alongside their own, so it is additive and blocks nothing. Answer it with both kinds of finding:
+`add_insight` for what is true of the change as a whole, and `add_highlight` + `emit_card` for what
+belongs to particular lines. **Read the insights already there first** and do not repeat them: the
+reviewer asked for another pass, not the same one again. If the ask reads as stale the change has
+moved past the code it was about — say what you found anyway, and say which version it was about.
 
 A **404 means the server predates that route**, not that the list is empty — read it as *unknown* and
 fall back to the per-session form: `GET /api/sessions`, then `GET /api/sessions/{id}` for each active

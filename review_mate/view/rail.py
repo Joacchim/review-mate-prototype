@@ -55,11 +55,27 @@ class RailHighlight(BaseModel):
     card: RailCard | None = None
 
 
+class ReviewPass(BaseModel):
+    """The MR-wide pass: whether one was asked for, and whether asking now would say anything new.
+
+    `stale` and `available` are not the same fact. A pass asked about code the change has moved
+    past stays visible and stale — a waiting cue that disappeared with nothing arriving would be
+    the worst answer available — while `available` says only that the *current* code has not been
+    passed over, which is what the control reflects.
+    """
+    requested: bool = False
+    at: str = ""
+    sha: str | None = None
+    stale: bool = False
+    available: bool = True
+
+
 class RailView(BaseModel):
     session: str
     state: str = "ready"         # ready | unknown-session
     highlights: list[RailHighlight] = Field(default_factory=list)
     insights: list[RailCard] = Field(default_factory=list)
+    review_pass: ReviewPass = Field(default_factory=ReviewPass)
 
 
 class RailScope:
@@ -105,7 +121,18 @@ class RailScope:
             ))
         insights = [self._card(c) for c in snapshot.cards if not c.highlight_id]
         return RailView(session=session_id, highlights=rows,
-                        insights=[c for c in insights if c]).model_dump(mode="json")
+                        insights=[c for c in insights if c],
+                        review_pass=self._pass(snapshot, head)).model_dump(mode="json")
+
+    @staticmethod
+    def _pass(snapshot, head: str) -> ReviewPass:
+        if not snapshot.insights_requested:
+            return ReviewPass(available=True)
+        sha = snapshot.insights_requested_sha
+        stale = bool(sha and head and sha != head)
+        # the current code has not been passed over if the pass was about something else
+        return ReviewPass(requested=True, at=snapshot.insights_requested_at, sha=sha,
+                          stale=stale, available=stale)
 
     @staticmethod
     def _card(card) -> RailCard | None:
