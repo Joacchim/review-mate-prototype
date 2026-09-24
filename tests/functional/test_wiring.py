@@ -120,8 +120,10 @@ async def test_repo_tree_and_file_endpoints(tmp_path):
     from httpx import ASGITransport
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         sid = (await c.post("/api/sessions", json={"ref": "g/p!7"})).json()["id"]
-        tree = (await c.get(f"/api/sessions/{sid}/repo-tree")).json()
-        assert tree == ["a.py", "pkg/b.py", "pkg/c.py"]
+        from review_mate.view.browse import BrowseScopes
+        scopes = BrowseScopes(manager, provider=_TreeProvider())
+        await scopes.fetch_tree(sid)
+        assert (await scopes.build_tree(sid))["paths"] == ["a.py", "pkg/b.py", "pkg/c.py"]
     await manager.shutdown()
 
 

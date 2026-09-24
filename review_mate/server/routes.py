@@ -120,18 +120,6 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
             return JSONResponse({"error": "unknown lookup"}, status_code=404)
         return JSONResponse(req.model_dump(mode="json"))
 
-    async def repo_tree(request: Request) -> JSONResponse:
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        mr = actor.snapshot().mr
-        if provider is None or mr is None or not hasattr(provider, "get_repo_tree"):
-            return JSONResponse([])
-        try:
-            return JSONResponse(await provider.get_repo_tree(mr.project, mr.sha))
-        except Exception as exc:
-            return JSONResponse({"error": str(exc)}, status_code=502)
-
     async def list_sessions(request: Request) -> JSONResponse:
         return JSONResponse([s.model_dump(mode="json") for s in manager.list()])
 
@@ -153,18 +141,6 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         if not result.ok:
             return JSONResponse({"ok": False, "reason": result.reason}, status_code=400)
         return JSONResponse({"ok": True, "seq": result.seq})
-
-    async def commits(request: Request) -> JSONResponse:
-        """The MR's commits, for per-commit review. Greyed (available:False) where unsupported."""
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
-            return JSONResponse({"error": "unknown session"}, status_code=404)
-        snap = actor.snapshot()
-        cap = snap.mr and (snap.mr.capabilities or {}).get("commits", False)
-        if snap.mr is None or provider is None or not hasattr(provider, "commits") or not cap:
-            return JSONResponse({"available": False, "commits": []})
-        ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)
-        return JSONResponse({"available": True, "commits": await provider.commits(ref)})
 
     async def end_session(request: Request) -> JSONResponse:
         try:
@@ -201,13 +177,11 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         Route("/api/lookup/{id}", poll_lookup, methods=["GET"]),
         Route("/api/activity", activity, methods=["GET"]),
         Route("/api/outstanding", outstanding, methods=["GET"]),
-        Route("/api/sessions/{id}/repo-tree", repo_tree, methods=["GET"]),
         Route("/api/sessions", create_session, methods=["POST"]),
         Route("/api/sessions", list_sessions, methods=["GET"]),
         Route("/api/sessions/{id}", get_session, methods=["GET"]),
         Route("/api/sessions/{id}", end_session, methods=["DELETE"]),
         Route("/api/sessions/{id}/commands", submit_command, methods=["POST"]),
-        Route("/api/sessions/{id}/commits", commits, methods=["GET"]),
         WebSocketRoute("/api/sessions/{id}/stream", stream),
     ]
 

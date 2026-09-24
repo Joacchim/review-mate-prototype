@@ -306,18 +306,21 @@ async def test_commits_route_lists_the_mrs_commits(tmp_path):
     app = create_app(manager=manager, with_mcp=False, provider=CProvider())
     sid = await manager.create()
     await manager.get(sid).submit(ApplyMRMetadata(mr=mr), Origin.SYSTEM)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-        cs = (await c.get(f"/api/sessions/{sid}/commits")).json()
-    assert cs["available"] is True and [x["sha"] for x in cs["commits"]] == ["s1"]
+    from review_mate.view.browse import BrowseScopes
+    scopes = BrowseScopes(manager, provider=CProvider())
+    await scopes.fetch_commits(sid)
+    listed = await scopes.build_commits(sid)
+    assert listed["state"] == "ready" and [x["sha"] for x in listed["commits"]] == ["s1"]
     await manager.shutdown()
 
 
-async def test_commits_greyed_without_capability(tmp_path):
-    # the module MR fixture advertises no "commits" capability → the route greys out
+async def test_commits_unavailable_without_capability(tmp_path):
+    # the module MR fixture advertises no "commits" capability → the scope says so
+    from review_mate.view.browse import BrowseScopes
     manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
     async with client:
-        r = (await client.get(f"/api/sessions/{sid}/commits")).json()
-    assert r == {"available": False, "commits": []}
+        scopes = BrowseScopes(manager, provider=StubProvider())
+        assert (await scopes.build_commits(sid))["state"] == "unavailable"
     await manager.shutdown()
 
 
