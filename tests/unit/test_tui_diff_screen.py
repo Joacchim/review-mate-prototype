@@ -143,11 +143,12 @@ def rail(highlights=(), insights=()):
             "highlights": list(highlights), "insights": list(insights)}
 
 
-def hl(n=1, file="a.py", start=1, end=2, card=None, context=None, stale=False):
+def hl(n=1, file="a.py", start=1, end=2, card=None, context=None, stale=False, addressed=None):
     return {"id": f"h{n}", "n": n, "file": file, "side": "new", "start": start, "end": end,
             "question": None, "status": "open", "stale": stale, "comment_state": "context",
-            "created_at": "", "context": context or {"state": "idle", "blame": [],
-                                                      "linked_issues": [], "error": ""},
+            "created_at": "", "addressed": addressed,
+            "context": context or {"state": "idle", "blame": [],
+                                   "linked_issues": [], "error": ""},
             "card": card}
 
 
@@ -397,6 +398,27 @@ def test_the_cursor_spans_both_kinds():
     assert screen.subject() == {"kind": "highlight", "id": "h1"}
     screen.move(1)
     assert screen.subject() == {"kind": "highlight", "id": "h1"}, "the cursor stops at the end"
+
+
+def test_a_subject_the_agent_fixed_reads_as_fixed_not_stale():
+    """Reviewing your own branch makes a moved head the ordinary case, and it is not a warning."""
+    screen = screen_with([hl(n=1, stale=True,
+                             addressed={"sha": "def4567abc", "summary": "bounded it", "at": ""})])
+    rendered = text_of(screen)
+    assert "(fixed def4567)" in rendered and "(stale)" not in rendered
+
+
+def test_a_subject_that_only_drifted_still_warns():
+    screen = screen_with([hl(n=1, stale=True)])
+    assert "(stale)" in text_of(screen)
+
+
+def test_an_insight_the_agent_fixed_says_so_too():
+    screen = screen_with([], [insight(1, "the retry is unbounded", label("bug", "high"))])
+    assert "(fixed" not in text_of(screen)
+    screen = screen_with([], [dict(insight(1, "the retry is unbounded", label("bug", "high")),
+                                   addressed={"sha": "ccc3330", "summary": "", "at": ""})])
+    assert "(fixed ccc3330)" in text_of(screen)
 
 
 def test_the_worst_finding_is_first():

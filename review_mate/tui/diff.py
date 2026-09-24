@@ -55,6 +55,19 @@ COMMENT_MARK = {"comment": ("class:info", "✎ "), "posted": ("class:ok", "✓ "
 INSIGHT_STYLE = {"high": "class:error", "medium": "class:attention", "low": "class:muted"}
 
 
+def _moved(row: dict) -> str:
+    """Why this subject's code is no longer where it was — a warning, or an answer.
+
+    Staleness alone says "its lines may have moved, read warily", which is right when the head
+    moved for reasons nobody here caused and wrong when the agent moved it *because* this is what
+    was asked for. The addressing record is what tells them apart.
+    """
+    done = row.get("addressed")
+    if done:
+        return f"  (fixed {(done.get('sha') or '')[:7]})"
+    return "  (stale)" if row.get("stale") else ""
+
+
 def _one_line(body: str, width: int = 68) -> str:
     """A message as one row: the terminal shows the exchange, not the prose."""
     line = next((ln for ln in (body or "").splitlines() if ln.strip()), "")
@@ -545,7 +558,7 @@ class DiffScreen:
                         f" #{highlight['n']:<3}"))
             out.append(("class:muted", f"{where:<22} "))
             out.append(COMMENT_MARK.get(highlight.get("comment_state"), ("class:muted", "  ")))
-            out.append((style, answer + ("  (stale)" if highlight.get("stale") else "") + "\n"))
+            out.append((style, answer + _moved(highlight) + "\n"))
         return out
 
     def _insight_line(self, card: dict, selected: bool) -> list[tuple[str, str]]:
@@ -565,7 +578,7 @@ class DiffScreen:
         return [("class:selected" if selected else "class:info", " \u2726   "),
                 (style, f"{where:<22} "),
                 ("class:muted", "  "),
-                ("class:ok", card.get("body", "").splitlines()[0][:60] + "\n")]
+                ("class:ok", card.get("body", "").splitlines()[0][:60] + _moved(card) + "\n")]
 
     def review_pass(self) -> dict:
         return self.rail.get("review_pass") or {}

@@ -48,6 +48,13 @@ class RailPage:
 
     # --- reading the findings by what matters --------------------------------
 
+    def addressed(self, n: int):
+        """The chip saying the agent changed the code over this row, rather than that it drifted."""
+        return self.row(n).locator(".chip.fixed")
+
+    def stale(self, n: int):
+        return self.row(n).locator(".chip.stale")
+
     @property
     def insight_labels(self):
         """The theme·criticality chip on each insight, in the order the rail lists them."""

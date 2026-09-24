@@ -1715,6 +1715,25 @@ function openSubject(sel) {
   renderRail();
 }
 
+// Whether a subject's code moving is a warning or a result.
+//
+// `stale` alone means "made on an earlier version, its lines may have moved" — the right reading
+// when the head moved for reasons nobody here caused. It is the wrong reading when the agent moved
+// it *because* this was what the reviewer asked for, which is the ordinary case while reviewing a
+// branch before it leaves the machine. The addressing record is what tells the two apart, so a
+// client reads the pair and never staleness alone.
+function staleChip(row) {
+  const done = row.addressed;
+  if (done) {
+    const at = done.sha ? done.sha.slice(0, 7) : "";
+    const why = done.summary ? `${done.summary} (${at})` : `changed at ${at}`;
+    return `<span class="chip fixed" title="${esc(why)}">✓ addressed</span>`;
+  }
+  return row.stale
+    ? `<span class="chip stale" title="made on an earlier version — its lines may have moved">older ver</span>`
+    : "";
+}
+
 function hlRow(hl, n) {
   const st = hl.comment_state;
   const card = hl.card;
@@ -1732,7 +1751,7 @@ function hlRow(hl, n) {
     `<button class="x" title="discard">×</button>` +
     `<div class="top"><span class="num">#${n}</span>` +
     `<span class="chip ${st}">${chipLabel}</span>` +
-    (hl.stale ? `<span class="chip stale" title="made on an earlier version — its lines may have moved">older ver</span>` : "") +
+    staleChip(hl) +
     `<span class="loc">${esc(loc)}</span></div>` +
     `<div class="prev">${esc(prev)}</div>`;
   // the index is the always-visible surface, so an escalation still waiting shows a live cue here
@@ -1762,7 +1781,7 @@ function insightRow(c) {
     : "";
   row.innerHTML =
     `<button class="x" title="dismiss">×</button>` +
-    `<div class="top"><span class="chip insight">MR-level</span>${label}</div>` +
+    `<div class="top"><span class="chip insight">MR-level</span>${label}${staleChip(c)}</div>` +
     (l && l.about ? `<div class="about">${esc(l.about)}</div>` : "") +
     `<div class="prev">${esc(firstLine(c.body))}</div>`;
   const mark = owedMarker({ kind: "insight", id: c.id });
