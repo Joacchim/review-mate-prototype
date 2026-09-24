@@ -51,6 +51,8 @@ AGENT_LABEL = {"working": "Claude is on it", "stalled": "nothing is listening",
 # whether a line already has a comment prepared for it, or one already sent — the rail says so
 # without the reviewer opening anything
 COMMENT_MARK = {"comment": ("class:info", "✎ "), "posted": ("class:ok", "✓ ")}
+# how much a finding matters, in the column a reviewer scans to decide what to open
+INSIGHT_STYLE = {"high": "class:error", "medium": "class:attention", "low": "class:muted"}
 
 
 def _one_line(body: str, width: int = 68) -> str:
@@ -299,6 +301,16 @@ class DiffScreen:
         """This session's highlights, newest last. The rail is session-wide; the overlay selects."""
         return self.rail.get("highlights", [])
 
+    def _insight_order(self) -> list[dict]:
+        """Worst first, unclassified last — the same reading the browser's pin gives.
+
+        Unlabelled sorts after the lows rather than among them: nobody classified it, which is not
+        a decision that it does not matter, and ranking it lowest would make that decision quietly.
+        """
+        rank = {"high": 0, "medium": 1, "low": 2}
+        return sorted(self.insights,
+                      key=lambda c: rank.get((c.get("label") or {}).get("criticality"), 3))
+
     def rail_rows(self) -> list[dict]:
         """What the rail cursor moves over: the change's own findings, then what was asked.
 
@@ -307,7 +319,7 @@ class DiffScreen:
         than two panes because the cursor is the terminal's only selection, and a second one would
         need its own key to reach.
         """
-        return ([{"kind": "insight", "data": card} for card in self.insights]
+        return ([{"kind": "insight", "data": card} for card in self._insight_order()]
                 + [{"kind": "highlight", "data": h} for h in self.highlights])
 
     def rail_row(self) -> dict | None:
@@ -537,9 +549,21 @@ class DiffScreen:
         return out
 
     def _insight_line(self, card: dict, selected: bool) -> list[tuple[str, str]]:
-        """A finding about the change rather than a line, so it carries no file and no number."""
+        """A finding about the change rather than a line, so it carries no file and no number.
+
+        Where a highlight shows where it is, this shows what it is: the label stands in for the
+        file column, because that is the column a reviewer scans to decide what to open.
+        """
+        label = card.get("label") or {}
+        if label:
+            where = f"{label.get('theme', '')}·{label.get('criticality', '')}"
+            style = INSIGHT_STYLE.get(label.get("criticality"), "class:muted")
+            if label.get("by") == "browser":
+                where += " \u2713"          # the reviewer's word, not Claude's
+        else:
+            where, style = "unclassified", "class:muted"
         return [("class:selected" if selected else "class:info", " \u2726   "),
-                ("class:muted", f"{'the change':<22} "),
+                (style, f"{where:<22} "),
                 ("class:muted", "  "),
                 ("class:ok", card.get("body", "").splitlines()[0][:60] + "\n")]
 
@@ -673,8 +697,8 @@ class DiffScreen:
         if self.focus == "body":
             return "\n tab pane   j/k line   v select   n/p file   m mode   b back   q quit\n"
         if self.focus == "rail":
-            return ("\n tab pane   j/k move   a ask Claude   D double-check   c write   d comment"
-                    "   S send   b back   q quit\n")
+            return ("\n tab pane   j/k move   a ask Claude   D double-check   L label   c write"
+                    "   d comment   S send   b back   q quit\n")
         if self.focus == "threads":
             return ("\n tab pane   j/k move   enter go to it   f open/all   c ask Claude"
                     "   D double-check   R reply   V resolve   b back   q quit\n")

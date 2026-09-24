@@ -14,6 +14,8 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.key_binding import ConditionalKeyBindings, KeyBindings, merge_key_bindings
+
+from review_mate.session.state import Criticality, Theme
 from prompt_toolkit.layout import Layout, Window
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, VSplit
@@ -21,6 +23,10 @@ from prompt_toolkit.styles import Style
 
 from review_mate.tui.client import ViewClient
 from review_mate.tui.diff import DiffScreen
+
+# the vocabulary, read off the model so the prompt and the command cannot disagree
+THEMES = [t.value for t in Theme]
+CRITICALITIES = [c.value for c in Criticality]
 
 STATE_BADGE = {
     "merged": ("merged", "class:merged"),
@@ -196,6 +202,8 @@ class Shell:
         # the consent prompt is modal: it blocks the agent, and answering it by accident while
         # navigating would grant a repository read
         self.deciding: dict | None = None
+        # the insight being relabelled, and which half is being chosen
+        self.labelling: dict | None = None
         self.compose = Buffer(multiline=Condition(lambda: self.compose_kind == "draft"))
         self._compose_window: Window | None = None
         self._main_window: Window | None = None
@@ -208,7 +216,8 @@ class Shell:
         screen = self.screen
         if isinstance(screen, DiffScreen):
             screen.rows = self._rows()
-            return screen.fragments() + self._deciding_line() + self._sending_line()
+            return (screen.fragments() + self._deciding_line() + self._labelling_line()
+                    + self._sending_line())
         return screen.fragments()
 
     def _deciding_line(self) -> list[tuple[str, Any]]:
@@ -219,6 +228,23 @@ class Shell:
         return [("class:attention",
                  f" let Claude read {request['repo']}?  {request.get('reason', '')}\n"
                  f" y to allow, n to refuse, esc to leave it waiting\n")]
+
+    def _labelling_line(self) -> list[tuple[str, Any]]:
+        """Disagreeing with how Claude classified a finding, one half at a time.
+
+        Theme first because it is the harder of the two to change your mind about; criticality is
+        then a three-way choice. Escape leaves the label exactly as it was — abandoning halfway
+        must not write half a label.
+        """
+        if self.labelling is None:
+            return []
+        if self.labelling.get("theme") is None:
+            options = "  ".join(f"{i + 1} {name}" for i, name in enumerate(THEMES))
+            return [("class:attention", f" what is it about?  {options}   esc cancel\n")]
+        options = "  ".join(f"{i + 1} {name}" for i, name in enumerate(CRITICALITIES))
+        return [("class:attention",
+                 f" {self.labelling['theme']} — how much does it matter?  {options}"
+                 f"   esc cancel\n")]
 
     def _sending_line(self) -> list[tuple[str, Any]]:
         """What pressing S is about to do, in the reviewer's words, before it happens.
@@ -469,6 +495,15 @@ class Shell:
                 return
             spawn(self.client.session_command(self.diff.session, command))
 
+        @kb.add("L")
+        def _relabel(event) -> None:
+            """Disagree with how Claude classified the finding under the cursor."""
+            row = self.diff.rail_row() if self.diff is not None else None
+            if row is None or row["kind"] != "insight" or self.diff.focus != "rail":
+                return
+            self.labelling = {"card_id": row["data"]["id"], "theme": None}
+            self.invalidate()
+
         @kb.add("n")
         def _next_file(event) -> None:
             if self.diff is not None:
@@ -620,6 +655,36 @@ class Shell:
             self.deciding = None
             self.invalidate()
 
+        labelling_kb = KeyBindings()     # a relabel prompt, which takes the keyboard while open
+
+        def _choose(index: int) -> None:
+            if self.labelling is None:
+                return
+            if self.labelling["theme"] is None:
+                if index < len(THEMES):
+                    self.labelling["theme"] = THEMES[index]
+                self.invalidate()
+                return
+            if index >= len(CRITICALITIES):
+                return
+            pending, session = self.labelling, self.diff.session if self.diff else None
+            self.labelling = None
+            if session is not None:
+                spawn(self.client.session_command(session, {
+                    "type": "label_card", "card_id": pending["card_id"],
+                    "label": {"theme": pending["theme"],
+                              "criticality": CRITICALITIES[index], "about": ""}}))
+            self.invalidate()
+
+        for _slot in range(max(len(THEMES), len(CRITICALITIES))):
+            labelling_kb.add(str(_slot + 1))(
+                lambda event, index=_slot: _choose(index))
+
+        @labelling_kb.add("escape", eager=True)
+        def _abandon_label(event) -> None:
+            self.labelling = None       # halfway out must not write half a label
+            self.invalidate()
+
         writing = KeyBindings()          # whichever kind is open
         sending = KeyBindings()          # a message is one line, so enter is its whole gesture
 
@@ -649,13 +714,16 @@ class Shell:
 
         composing = Condition(lambda: self.composing)
         deciding = Condition(lambda: self.deciding is not None)
+        labelling = Condition(lambda: self.labelling is not None)
         one_line = Condition(lambda: self.compose_kind == "message")
         # enter belongs to the buffer while a comment is being written — that is what makes it
         # prose rather than a line — so only the one-line kind binds it
-        return merge_key_bindings([ConditionalKeyBindings(kb, ~composing & ~deciding),
-                                   ConditionalKeyBindings(sending, composing & one_line),
-                                   ConditionalKeyBindings(writing, composing),
-                                   ConditionalKeyBindings(deciding_kb, deciding)])
+        return merge_key_bindings([
+            ConditionalKeyBindings(kb, ~composing & ~deciding & ~labelling),
+            ConditionalKeyBindings(sending, composing & one_line),
+            ConditionalKeyBindings(writing, composing),
+            ConditionalKeyBindings(deciding_kb, deciding),
+            ConditionalKeyBindings(labelling_kb, labelling)])
 
     def build(self) -> Application:
         control = FormattedTextControl(self.fragments, focusable=True, show_cursor=False)

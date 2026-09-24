@@ -637,3 +637,61 @@ async def test_a_pass_the_change_moved_past_says_so_and_can_be_asked_again():
     press(shell, "i")
     await settle()
     assert client.session_commands == [("s1", {"type": "request_insights"})]
+
+
+# --- disagreeing with how Claude classified a finding --------------------------
+
+def _with_insight(criticality="high"):
+    shell, client = shell_on_a_review()
+    client.views["rail:s1"] = {
+        "session": "s1", "state": "ready", "highlights": [],
+        "insights": [{"id": "c1", "body": "this name is confusing", "citations": [],
+                      "status": "", "created_at": "",
+                      "label": {"theme": "bug", "criticality": criticality, "about": "",
+                                "by": "agent"}}]}
+    shell.diff.focus = "rail"
+    return shell, client
+
+
+async def test_relabelling_takes_both_halves_before_it_sends():
+    """Half a label is not one, so nothing leaves until the second choice is made."""
+    shell, client = _with_insight()
+    press(shell, "L")
+    assert shell.labelling is not None and shell.labelling["theme"] is None
+
+    press(shell, "7")                      # naming
+    assert shell.labelling["theme"] == "naming"
+    assert client.session_commands == [], "still only half a label"
+
+    press(shell, "1")                      # low
+    await settle()
+    session, command = client.session_commands[-1]
+    assert command == {"type": "label_card", "card_id": "c1",
+                       "label": {"theme": "naming", "criticality": "low", "about": ""}}
+    assert shell.labelling is None
+
+
+async def test_leaving_halfway_writes_nothing():
+    shell, client = _with_insight()
+    press(shell, "L")
+    press(shell, "7")
+    press(shell, "escape")
+    await settle()
+    assert shell.labelling is None and client.session_commands == []
+
+
+async def test_the_prompt_takes_the_keyboard_while_it_is_open():
+    """`n` is next-file normally. It must not move the file list out from under the prompt."""
+    shell, _client = _with_insight()
+    press(shell, "n")                      # reachable before the prompt opens
+    press(shell, "L")
+    with pytest.raises(AssertionError, match="nothing is bound"):
+        press(shell, "n")
+
+
+async def test_nothing_happens_on_a_highlight_or_off_the_rail():
+    """Only an insight carries a label, so only an insight offers the prompt."""
+    shell, _client = shell_on_a_review()
+    shell.diff.focus = "body"
+    press(shell, "L")
+    assert shell.labelling is None

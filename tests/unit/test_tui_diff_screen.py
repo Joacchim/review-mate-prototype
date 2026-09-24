@@ -151,8 +151,13 @@ def hl(n=1, file="a.py", start=1, end=2, card=None, context=None, stale=False):
             "card": card}
 
 
-def insight(n=1, body="Three call sites still assume a single queue."):
-    return {"id": f"c{n}", "body": body, "citations": [], "status": "", "created_at": ""}
+def insight(n=1, body="Three call sites still assume a single queue.", label=None):
+    return {"id": f"c{n}", "body": body, "citations": [], "status": "", "created_at": "",
+            "label": label}
+
+
+def label(theme="bug", criticality="high", about="", by="agent"):
+    return {"theme": theme, "criticality": criticality, "about": about, "by": by}
 
 
 def screen_with(highlights=(), insights=(), **kwargs):
@@ -392,6 +397,32 @@ def test_the_cursor_spans_both_kinds():
     assert screen.subject() == {"kind": "highlight", "id": "h1"}
     screen.move(1)
     assert screen.subject() == {"kind": "highlight", "id": "h1"}, "the cursor stops at the end"
+
+
+def test_the_worst_finding_is_first():
+    screen = screen_with([], [insight(1, "a naming preference", label("naming", "low")),
+                              insight(2, "an unbounded retry", label("bug", "high"))])
+    rendered = text_of(screen)
+    assert rendered.index("an unbounded retry") < rendered.index("a naming preference")
+
+
+def test_an_unclassified_finding_sorts_last_and_says_so():
+    """Nobody looked at it that way — which is not a decision that it does not matter."""
+    screen = screen_with([], [insight(1, "nobody classified this"),
+                              insight(2, "a naming preference", label("naming", "low"))])
+    rendered = text_of(screen)
+    assert rendered.index("a naming preference") < rendered.index("nobody classified this")
+    assert "unclassified" in rendered
+
+
+def test_a_finding_shows_what_it_is_where_a_highlight_shows_where_it_is():
+    screen = screen_with([], [insight(1, "x", label("security", "high"))])
+    assert "security·high" in text_of(screen)
+
+
+def test_a_label_the_reviewer_set_is_marked_as_theirs():
+    screen = screen_with([], [insight(1, "x", label("style", "low", by="browser"))])
+    assert "style·low \u2713" in text_of(screen)
 
 
 def test_claudes_own_finding_can_be_double_checked_from_the_terminal():
