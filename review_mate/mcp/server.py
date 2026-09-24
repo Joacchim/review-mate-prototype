@@ -25,6 +25,24 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
         return [s.model_dump(mode="json") for s in bridge.list_sessions()]
 
     @mcp.tool()
+    async def open_local_review(path: str, branch: str, base: str = "") -> dict:
+        """Open a review of a branch in a repository on this machine, and get the link to it.
+
+        For work you have just written and nobody has seen: the reviewer reads it here, comments on
+        it here, and you answer them here — before it becomes a merge request anyone else is asked
+        to look at. The diff is the branch against where it left its base, the same one a merge
+        request would show. `base` defaults to whatever the repository merges into.
+
+        **Give the reviewer the `url`, not the session id.** A link is somewhere to look; an id is
+        homework. Then watch the session as you would any other — their comments arrive as messages
+        on subjects, and `get_session` lists what they are waiting on you for in `chat.asks`.
+
+        Nothing is copied: the review points at the working repository, so you can edit the code you
+        are being asked about and the diff follows.
+        """
+        return await bridge.open_local_review(path, branch, base)
+
+    @mcp.tool()
     async def get_session(session_id: str) -> dict:
         """The session as the reviewer sees it: the merge request, the rail, the conversations and
         their `asks`, the discussions, and the consent list.

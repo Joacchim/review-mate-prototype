@@ -29,6 +29,7 @@ from review_mate.host.config import build_provider_from_env, build_writer_from_e
 from review_mate.server.routes import build_routes
 from review_mate.session.manager import SessionManager
 from review_mate.seams import RepoRef
+from review_mate.host.local import LocalBranchProvider
 from review_mate.workspace.manager import WorkspaceManager
 from review_mate.writeback.service import Writeback
 
@@ -52,10 +53,13 @@ def build_manager_from_env(activity_broker=None):
     so the manager owns it from construction, before restore_all attaches the republishers.
     """
     provider, resolve_ref = build_provider_from_env()
+    # a branch on disk needs git and nothing else, so it is wired whether or not a forge is
+    local = LocalBranchProvider()
     if provider is None:
-        return SessionManager(activity_broker=activity_broker), None, None, None
+        return (SessionManager(activity_broker=activity_broker, local_source=local,
+                               workspace=WorkspaceManager()), None, None, None)
     manager = SessionManager(mr_source=provider, workspace=WorkspaceManager(),
-                             activity_broker=activity_broker)
+                             activity_broker=activity_broker, local_source=local)
     writer = build_writer_from_env()
     writeback = Writeback(manager, writer) if writer is not None else None
     return manager, resolve_ref, provider, writeback

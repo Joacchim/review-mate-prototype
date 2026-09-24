@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from review_mate.seams import MRRef
+from review_mate.seams import MRRef, serves
 from review_mate.session.state import SessionStatus
 
 
@@ -69,7 +69,7 @@ class BrowseScopes:
         if snapshot is None:
             return TreeView(session=session_id, state="unknown-session").model_dump(mode="json")
         sha = snapshot.mr.sha if snapshot.mr else ""
-        if not sha or not self._can("get_repo_tree"):
+        if not sha or not self._can("get_repo_tree") or not serves(self._provider, snapshot):
             return TreeView(session=session_id, state="unavailable").model_dump(mode="json")
         state = self._tree_state.get(sha, "idle")
         return TreeView(session=session_id, state=state, sha=sha,
@@ -81,7 +81,8 @@ class BrowseScopes:
         if snapshot is None or snapshot.mr is None or self._provider is None:
             return
         sha = snapshot.mr.sha
-        if not sha or not self._can("get_repo_tree") or sha in self._tree_state:
+        if not sha or not self._can("get_repo_tree") or not serves(self._provider, snapshot) \
+                or sha in self._tree_state:
             return                            # already asked, or nothing to ask about
         self._tree_state[sha] = "loading"
         await self._republish(f"tree:{session_id}")
@@ -142,7 +143,8 @@ class BrowseScopes:
 
     def _commits_supported(self, snapshot) -> bool:
         cap = bool(snapshot.mr and (snapshot.mr.capabilities or {}).get("commits", False))
-        return bool(snapshot.mr) and cap and self._can("commits")
+        return (bool(snapshot.mr) and cap and self._can("commits")
+                and serves(self._provider, snapshot))
 
     def _can(self, method: str) -> bool:
         return self._provider is not None and hasattr(self._provider, method)

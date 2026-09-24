@@ -42,6 +42,23 @@ class LocalRef(BaseModel):
 SessionRef = Union[MRRef, LocalRef]
 
 
+def serves(provider, snapshot) -> bool:
+    """Whether `provider` is the source this session was loaded from.
+
+    A scope holds one provider for every session on the server, which was harmless while there was
+    one kind of session. It is not any more: asking the forge to blame a file in a branch that has
+    never left this machine sends a local directory name to a remote API, and the reviewer gets an
+    error where the honest answer is that this host has nothing to say about that review.
+
+    A provider that does not name a host serves everything, which keeps every stub and fake working
+    without having to know about this.
+    """
+    host = getattr(provider, "host", None)
+    if provider is None or host is None:
+        return provider is not None
+    return snapshot is not None and snapshot.mr is not None and snapshot.mr.host == host
+
+
 class MRPayload(BaseModel):
     """What a host returns for an MR — the data the loader applies into a session."""
     mr: MRMetadata

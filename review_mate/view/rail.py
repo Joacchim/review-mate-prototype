@@ -18,6 +18,7 @@ from contextlib import suppress
 
 from pydantic import BaseModel, Field
 
+from review_mate.seams import serves
 from review_mate.session.state import DraftStatus, SessionStatus
 
 
@@ -168,7 +169,8 @@ class RailScope:
         if found is not None:
             return RailContext(state="ready", blame=found["blame"],
                                linked_issues=found["linked_issues"])
-        if self._provider is None or not hasattr(self._provider, "blame"):
+        if self._provider is None or not hasattr(self._provider, "blame") \
+                or not serves(self._provider, snapshot):
             return RailContext(state="unavailable")
         self._start(key, snapshot.mr.project, snapshot.mr.iid, session_id)
         return RailContext(state="loading")

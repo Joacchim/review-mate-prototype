@@ -7,6 +7,7 @@ primitive the MCP layer exposes so the agent can react to new highlights without
 from __future__ import annotations
 
 import asyncio
+from review_mate.seams import LocalRef
 
 from review_mate.session.actor import CommandResult
 from review_mate.session.commands import (
@@ -22,6 +23,13 @@ from review_mate.session.state import (
 )
 
 
+def _default_base_url() -> str:
+    """Where a reviewer reads this server. Overridable, because the port is not always the default
+    and the link is useless if it points somewhere nobody is listening."""
+    import os
+    return os.environ.get("REVIEW_MATE_URL", "http://127.0.0.1:8765")
+
+
 def _label(theme: str | None, criticality: str | None, about: str = "") -> Label | None:
     """A label needs both halves or it is not one: a theme with no weight cannot be sorted, and a
     weight with no theme cannot be filtered. Neither given means the card is simply unclassified."""
@@ -33,12 +41,14 @@ def _label(theme: str | None, criticality: str | None, about: str = "") -> Label
 
 
 class AgentBridge:
-    def __init__(self, manager: SessionManager, broker=None, provider=None, view=None):
+    def __init__(self, manager: SessionManager, broker=None, provider=None, view=None,
+                 base_url: str = ""):
         self._m = manager
         self._broker = broker      # LookupBroker (MR-discovery channel); None in the baseline
         self._provider = provider  # HostProvider, for search_mrs; None when no host configured
         self._view = view          # AgentView — the folded read; injected so it shares the clients'
                                    # scope instances, and with them their caches
+        self._base_url = (base_url or _default_base_url()).rstrip("/")
 
     def _actor(self, session_id: str):
         actor = self._m.get(session_id)
@@ -50,6 +60,19 @@ class AgentBridge:
 
     def list_sessions(self) -> list[SessionSummary]:
         return self._m.list()
+
+    async def open_local_review(self, path: str, branch: str, base: str = "") -> dict:
+        """Open a review of a branch in a repository on this machine, and say where to read it.
+
+        The link is the point as much as the session is: this exists so an agent can hand the
+        reviewer somewhere to look at what it just wrote, and a session id alone is not that.
+        """
+        sid = await self._m.create(ref=LocalRef(path=path, branch=branch, base=base))
+        snapshot = self._m.get(sid).snapshot()
+        return {"session_id": sid, "url": f"{self._base_url}/?session={sid}",
+                "branch": snapshot.mr.source_branch if snapshot.mr else branch,
+                "base": snapshot.mr.target_branch if snapshot.mr else base,
+                "files": len(snapshot.files)}
 
     def snapshot(self, session_id: str) -> SessionState:
         """The raw session. Internal — `view` is what the agent reads."""

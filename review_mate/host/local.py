@@ -29,7 +29,10 @@ from review_mate.session.state import ChangeType, FileEntry, MRMetadata
 # What a branch on disk can offer. Read as a subset of GITLAB_CAPABILITIES: what is missing is
 # missing because there is no forge to ask, not because it is unimplemented.
 LOCAL_CAPABILITIES: dict[str, bool] = {
-    "commits": True,          # a branch has its own commits, and they step the same way
+    # a branch has commits, but nothing routes a per-commit read to git yet: the scopes hold one
+    # provider and it is the forge's. False because nothing can answer it today, not because a
+    # branch has no commits — see `serves` in seams.py for why the two are different questions.
+    "commits": False,
     "diff_versions": False,   # "since you last looked" needs a forge's versions; git has no record
     "threads": False,         # nobody else is here to discuss it with
     "approvals": False,       # there is nothing to approve yet

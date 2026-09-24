@@ -18,7 +18,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 from review_mate.config import sessions_dir
-from review_mate.seams import MRRef, RepoRef
+from review_mate.seams import LocalRef, MRRef, RepoRef
 from review_mate.session import events as ev
 from review_mate.session.actor import SessionActor
 from review_mate.session.commands import (
@@ -37,11 +37,12 @@ def _now() -> str:
 
 class SessionManager:
     def __init__(self, root: Path | str | None = None, mr_source=None, workspace=None,
-                 activity_broker=None):
+                 activity_broker=None, local_source=None):
         self.root = Path(root) if root is not None else sessions_dir()
         self.root.mkdir(parents=True, exist_ok=True)
         self._actors: dict[str, SessionActor] = {}
         self._mr_source = mr_source   # MRSource seam (optional, injected) — host-adapter impl
+        self._local_source = local_source  # the same seam for a branch that has not left this machine
         self._workspace = workspace   # Workspace seam (optional, injected) — workspace-manager impl
         self._activity_broker = activity_broker  # ActivityBroker (optional) — review-fleet notify spine
         self._republishers: list[asyncio.Task] = []  # per-actor taps feeding the activity channel
@@ -66,7 +67,7 @@ class SessionManager:
         actor.start()
         self._actors[sid] = actor
 
-        if ref is not None and self._mr_source is not None:
+        if ref is not None and self._source_for(ref) is not None:
             try:
                 await self.load(sid, ref)
             except Exception:
@@ -135,14 +136,24 @@ class SessionManager:
         actor = self._actors.get(session_id)
         if actor is None:
             raise KeyError(session_id)
-        if self._mr_source is None:
-            raise RuntimeError("no MRSource configured")
-        payload = await self._mr_source.load(ref)
+        source = self._source_for(ref)
+        if source is None:
+            raise RuntimeError("no source for this kind of reference")
+        payload = await source.load(ref)
         await actor.submit(ApplyMRMetadata(mr=payload.mr), Origin.SYSTEM)
         await actor.submit(ApplyFiles(files=payload.files), Origin.SYSTEM)
         for thread in payload.threads:
             await actor.submit(ApplyThread(thread=thread), Origin.SYSTEM)
         await self._materialize_checkout(session_id, actor, payload)
+
+    def _source_for(self, ref):
+        """The source that understands this kind of reference.
+
+        Dispatch is on the reference, not on configuration: a branch on disk needs git and nothing
+        else, so reviewing your own work before it leaves the machine works on a server with no
+        forge configured at all.
+        """
+        return self._local_source if isinstance(ref, LocalRef) else self._mr_source
 
     async def _materialize_checkout(self, session_id, actor, payload) -> None:
         """Eagerly check out the MR on disk (a worktree off the bare mirror) so the agent can run

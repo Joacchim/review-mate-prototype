@@ -37,7 +37,7 @@ from contextlib import suppress
 
 from pydantic import BaseModel, Field
 
-from review_mate.seams import MRRef, RepoRef
+from review_mate.seams import MRRef, RepoRef, serves
 from review_mate.session.state import ChangeType, FileEntry, SessionStatus
 from review_mate.view.diffdoc import build as build_hunks
 from review_mate.view.diffdoc import split_files
@@ -233,6 +233,8 @@ class DiffScopes:
         MR's versions or its commits says so through the capabilities on the metadata, and asking
         anyway produces an error where the honest answer is that the mode is unavailable here.
         """
+        if not serves(self._provider, snapshot):
+            return False        # this host did not load this review and cannot resolve its modes
         capabilities = (snapshot.mr.capabilities or {}) if snapshot.mr else {}
         if mode.startswith(COMMIT_PREFIX):
             return (bool(capabilities.get("commits"))

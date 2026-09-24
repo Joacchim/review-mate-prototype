@@ -92,8 +92,8 @@ async def test_it_advertises_what_a_branch_can_and_cannot_do(provider, repo):
     """The review channel, the approval bar and the discussion list turn themselves off on these."""
     payload = await provider.load(LocalRef(path=str(repo), branch="feat/retry", base="main"))
     caps = payload.mr.capabilities
-    assert caps["commits"] is True
     assert caps["threads"] is False and caps["approvals"] is False
+    assert caps["commits"] is False, "nothing routes a per-commit read to git yet"
     assert caps["diff_versions"] is False, "git keeps no record of what you last read"
     assert payload.threads == []
 
@@ -149,7 +149,7 @@ async def test_a_local_session_borrows_the_repository_and_never_copies_it(tmp_pa
     from review_mate.workspace.manager import WorkspaceManager
 
     workspace = WorkspaceManager(root=tmp_path / "home")
-    manager = SessionManager(root=tmp_path / "sessions", mr_source=LocalBranchProvider(),
+    manager = SessionManager(root=tmp_path / "sessions", local_source=LocalBranchProvider(),
                              workspace=workspace)
     sid = await manager.create(ref=LocalRef(path=str(repo), branch="feat/retry", base="main"))
     assert manager.get(sid).snapshot().checkout_path == str(repo)
@@ -159,3 +159,70 @@ async def test_a_local_session_borrows_the_repository_and_never_copies_it(tmp_pa
     await manager.end(sid)
     assert (repo / "queue.py").exists(), "closing the review must not touch the reviewer's repo"
     await manager.shutdown()
+
+
+async def test_the_forge_is_not_asked_about_a_branch_it_has_never_seen(tmp_path, repo):
+    """A scope holds one provider for every session. Sending a local directory name to a remote API
+    gets the reviewer an error where the honest answer is "this host knows nothing about that"."""
+    from review_mate.session.manager import SessionManager
+    from review_mate.view.rail import RailScope
+
+    class Forge:
+        host = "gitlab"
+        asked = 0
+
+        async def blame(self, *args, **kwargs):
+            Forge.asked += 1
+            raise AssertionError("the forge was asked about a local branch")
+
+    manager = SessionManager(root=tmp_path / "sessions", local_source=LocalBranchProvider())
+    sid = await manager.create(ref=LocalRef(path=str(repo), branch="feat/retry", base="main"))
+    actor = manager.get(sid)
+    from review_mate.session.commands import AddHighlight
+    from review_mate.session.state import LineRange, Origin, Side
+    await actor.submit(AddHighlight(file="queue.py", side=Side.NEW,
+                                    line_range=LineRange(start=1, end=1)), Origin.BROWSER)
+
+    view = await RailScope(manager, provider=Forge()).build(sid)
+    assert view["highlights"][0]["context"]["state"] == "unavailable"
+    assert Forge.asked == 0
+    await manager.shutdown()
+
+
+# --- the agent opening the review ---------------------------------------------
+
+@pytest.fixture
+async def agent_on(tmp_path, repo):
+    from review_mate.mcp.bridge import AgentBridge
+    from review_mate.session.manager import SessionManager
+    manager = SessionManager(root=tmp_path / "sessions", local_source=LocalBranchProvider())
+    yield manager, AgentBridge(manager, base_url="http://127.0.0.1:9999"), repo
+    await manager.shutdown()
+
+
+async def test_the_agent_opens_the_review_and_gets_somewhere_to_send_them(agent_on):
+    """A session id is homework; a link is somewhere to look."""
+    manager, bridge, repo = agent_on
+    opened = await bridge.open_local_review(str(repo), "feat/retry", "main")
+    assert opened["url"] == f"http://127.0.0.1:9999/?session={opened['session_id']}"
+    assert opened["branch"] == "feat/retry" and opened["base"] == "main"
+    assert opened["files"] == 3
+    assert manager.get(opened["session_id"]) is not None
+
+
+async def test_the_review_it_opened_is_of_the_branch(agent_on):
+    manager, bridge, repo = agent_on
+    opened = await bridge.open_local_review(str(repo), "feat/retry", "main")
+    built = await bridge.view(opened["session_id"]) if bridge._view else None
+    snapshot = manager.get(opened["session_id"]).snapshot()
+    assert snapshot.mr.source_branch == "feat/retry"
+    assert sorted(f.path for f in snapshot.files) == ["README.md", "queue.py", "retry.py"]
+    assert snapshot.checkout_path == str(repo), "it edits the code it is asked about"
+    assert built is None or built["state"] == "ready"
+
+
+async def test_a_branch_that_will_not_load_fails_loudly(agent_on):
+    manager, bridge, repo = agent_on
+    with pytest.raises(Exception):
+        await bridge.open_local_review(str(repo), "feat/nope", "main")
+    assert manager.list() == [], "a session that could not load must not be left behind"
