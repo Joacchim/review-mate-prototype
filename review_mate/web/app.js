@@ -144,6 +144,17 @@ function setStatus(msg) { $("status").textContent = msg || ""; }
 // agent's own question back is not an ask — lives in review_mate/view/asks.py. The browser renders
 // the word it is given.
 
+// what Claude has asked to read, and what was decided
+function accessView() {
+  const view = scopeViews[`access:${SID}`];
+  return view && view.state === "ready" ? view : null;
+}
+
+function pendingAccess() {
+  const view = accessView();
+  return view ? view.requests.filter((r) => r.status === "pending") : [];
+}
+
 // the discussions on the merge request, as the host last reported them
 function threadsView() {
   const view = scopeViews[`threads:${SID}`];
@@ -322,7 +333,8 @@ function diffMode() {
 function diffScopes() {
   const mode = diffMode();
   const listing = `diff:${SID}:${mode}`;
-  const scopes = [listing, `rail:${SID}`, `chat:${SID}`, `review:${SID}`, `threads:${SID}`];
+  const scopes = [listing, `rail:${SID}`, `chat:${SID}`, `review:${SID}`, `threads:${SID}`,
+                  `access:${SID}`];
   if (currentFile) scopes.push(`${listing}:${currentFile}`);
   if (selected) scopes.push(conversationScope(selected));   // only the conversation on screen
   blobWanted.forEach((path) => scopes.push(`blob:${SID}:${mode}:${path}`));
@@ -1438,7 +1450,7 @@ function renderRail() {
 
   renderThreads(list);          // existing MR discussions — reply / resolve / refresh
 
-  const pending = state.access_requests.filter((r) => r.status === "pending");
+  const pending = pendingAccess();
   list.appendChild(h3("Access requests"));
   if (!pending.length) list.appendChild(empty("none"));
   pending.forEach((r) => {

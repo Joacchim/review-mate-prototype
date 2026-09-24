@@ -90,7 +90,7 @@ async def test_tracking_moves_an_mr_into_open_reviews(hub: HubPage):
 ```
 
 One page object per surface: `HubPage`, `DiffPage`, `RailPage`, `ShellPage`, `DetailPage`,
-`ReviewBarPage`, `ThreadsPage`. Each exposes
+`ReviewBarPage`, `ThreadsPage`, `ConsentPage`. Each exposes
 intent (`track`, `unfold`, `highlight_lines`, `submit`), not clicks.
 
 Use Playwright's web-first assertions (`expect(...).to_*`) rather than reading values and asserting
