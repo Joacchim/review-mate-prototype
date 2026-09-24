@@ -559,3 +559,43 @@ async def test_replying_from_the_terminal_reaches_the_merge_request(tmp_path):
     assert writer.replied == [("d1", "fixed")]
     said = shell.diff.threads["threads"][0]["comments"]
     assert [(c["body"], c["mine"]) for c in said] == [("prefer a guard", False), ("fixed", True)]
+
+
+async def test_browsing_the_repository_from_the_terminal(tmp_path):
+    """The repository listing is read while the browser is open and not otherwise, and a file that
+    the change never touched is read from its blob rather than from a diff that does not exist."""
+    from review_mate.tui.app import Shell
+
+    class Browsable(DiffHost):
+        async def get_repo_tree(self, project, ref, max_pages=30):
+            return ["a.py", "docs/README.md"]
+
+        async def get_file(self, project, path, ref):
+            return "# the readme\nsecond line\n"
+
+    async with serving(build(tmp_path, Browsable())) as base:
+        async with connected(base) as (client, watcher):
+            await watcher.until(lambda v: v.get("queue_state") == "ready")
+            await client.command("session.open", ref={"host": "gitlab", "project": "g/p", "iid": 1})
+            session = (await watcher.until(lambda v: v["sessions"]))["sessions"][0]["id"]
+
+            shell = Shell(client)
+            watcher.also = shell.on_change
+            await shell.open_review(session)
+            assert f"tree:{session}" not in client.views      # nobody has asked to browse
+
+            previous = shell.diff.wanted()
+            shell.diff.toggle_browse()
+            await shell.resync(previous)
+            await wait_for(lambda: shell.diff.repo_paths())
+            assert "docs/README.md" in shell.diff.repo_paths()
+
+            shell.diff.file_index = [r["path"] for r in shell.diff.browse_rows()].index(
+                "docs/README.md")
+            previous = shell.diff.wanted()
+            assert shell.diff.open_current() is True
+            await shell.resync(previous)
+            await wait_for(lambda: shell.diff.blob.get("state") == "ready")
+
+            rendered = "".join(text for _, text in shell.fragments())
+            assert "# the readme" in rendered and "second line" in rendered

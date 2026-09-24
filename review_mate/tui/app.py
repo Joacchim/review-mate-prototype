@@ -373,13 +373,26 @@ class Shell:
         def _quit(event) -> None:
             event.app.exit()
 
+        def _opened() -> None:
+            """Reading a repository file is a subscription change — it is read from its blob."""
+            if self.diff is None:
+                return
+            previous = self.diff.wanted()
+            self.diff.open_current()
+            spawn(self.resync(previous))
+
         def _moved(delta: int) -> None:
             # the rail cursor picks the subject, so moving it changes which conversation is watched
             previous = self.diff.wanted() if self.diff is not None else []
             self.screen.move(delta)
-            # both the rail and the discussions pick a subject, so moving either changes which
-            # conversation is watched
-            if self.diff is not None and self.diff.focus in ("rail", "threads"):
+            if self.diff is None:
+                return
+            # the rail and the discussions pick a subject, so moving either changes which
+            # conversation is watched; the file list picks what the body reads
+            if self.diff.focus in ("rail", "threads") or (self.diff.focus == "files"
+                                                          and self.diff.browsing):
+                if self.diff.focus == "files":
+                    self.diff.open_current()
                 spawn(self.resync(previous))
 
         @kb.add("j")
@@ -500,6 +513,15 @@ class Shell:
                 return
             spawn(self.client.command("thread.resolve", session=self.diff.session,
                                       thread=thread["id"], resolved=not thread.get("resolved")))
+
+        @kb.add("o")
+        def _browse(event) -> None:
+            """Show the whole repository in the file list, or only the change."""
+            if self.diff is None:
+                return
+            previous = self.diff.wanted()
+            self.diff.toggle_browse()
+            spawn(self.resync(previous))
 
         @kb.add("C")
         def _consent(event) -> None:

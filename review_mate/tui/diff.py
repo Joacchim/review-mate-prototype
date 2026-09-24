@@ -93,6 +93,8 @@ class DiffScreen:
         self.focus = "files"          # files | body | rail | threads
         self.thread_index = 0
         self.thread_filter = "unresolved"   # unresolved | all
+        self.browsing = False         # the file list shows the whole repository, not just the diff
+        self.viewing: str | None = None    # a repository file open as itself, rather than as a diff
         self.rows = 24
 
     # --- what it watches --------------------------------------------------
@@ -107,7 +109,7 @@ class DiffScreen:
 
     @property
     def current(self) -> dict | None:
-        rows = self.files
+        rows = self.browse_rows()
         if not rows:
             return None
         self.file_index = max(0, min(self.file_index, len(rows) - 1))
@@ -116,8 +118,10 @@ class DiffScreen:
     @property
     def body_scope(self) -> str | None:
         row = self.current
+        if row is None or not row.get("changed", True):
+            return None        # a repository file is read from its blob, not from a diff
         # a file's scope name is the list's name with the path appended — nothing to assemble
-        return f"{self.listing}:{row['path']}" if row else None
+        return f"{self.listing}:{row['path']}"
 
     @property
     def rail(self) -> dict:
@@ -127,6 +131,37 @@ class DiffScreen:
     def chat(self) -> dict:
         """The index: every conversation this review holds, and the state the agent is in."""
         return self.client.views.get(f"chat:{self.session}") or {}
+
+    @property
+    def tree(self) -> dict:
+        """Every file in the repository at this change's sha, while the browser is open."""
+        return self.client.views.get(f"tree:{self.session}") or {}
+
+    def repo_paths(self) -> list[str]:
+        view = self.tree
+        return view.get("paths", []) if view.get("state") == "ready" else []
+
+    def browse_rows(self) -> list[dict]:
+        """The file list: what the change touched, then the rest of the repository under it.
+
+        A changed file keeps its counts; a repository file is listed as itself. They are one list
+        because the reviewer is picking a file, not picking a kind of file.
+        """
+        rows = [dict(f, changed=True) for f in self.files]
+        if not self.browsing:
+            return rows
+        touched = {f["path"] for f in rows}
+        rows.extend({"path": p, "changed": False}
+                    for p in self.repo_paths() if p not in touched)
+        return rows
+
+    @property
+    def blob(self) -> dict:
+        return self.client.views.get(self.blob_scope) or {} if self.blob_scope else {}
+
+    @property
+    def blob_scope(self) -> str | None:
+        return f"blob:{self.session}:{self.mode}:{self.viewing}" if self.viewing else None
 
     @property
     def access(self) -> dict:
@@ -157,6 +192,24 @@ class DiffScreen:
             return None
         self.thread_index = max(0, min(self.thread_index, len(rows) - 1))
         return rows[self.thread_index]
+
+    def toggle_browse(self) -> bool:
+        """Show the whole repository in the file list, or only what the change touched."""
+        self.browsing = not self.browsing
+        if not self.browsing:
+            self.viewing = None        # a repository file has nowhere to be listed any more
+        self.file_index = 0
+        self.scroll = self.body_cursor = 0
+        return self.browsing
+
+    def open_current(self) -> bool:
+        """Open the selected row. A changed file is a diff; anything else is the file itself."""
+        row = self.current
+        if row is None:
+            return False
+        self.viewing = None if row.get("changed", True) else row["path"]
+        self.scroll = self.body_cursor = 0
+        return self.viewing is not None
 
     def cycle_thread_filter(self) -> str:
         self.thread_filter = "all" if self.thread_filter == "unresolved" else "unresolved"
@@ -253,6 +306,11 @@ class DiffScreen:
         scopes = [self.listing, f"rail:{self.session}", f"chat:{self.session}",
                   f"review:{self.session}", f"threads:{self.session}", f"access:{self.session}",
                   self.conversation_scope()]
+        if self.browsing:
+            scopes.append(f"tree:{self.session}")
+        blob = self.blob_scope
+        if blob:
+            scopes.append(blob)       # a repository file is read from the blob, not from a diff
         body = self.body_scope
         if body:
             scopes.append(body)
@@ -299,27 +357,59 @@ class DiffScreen:
         return out
 
     def _file_pane(self) -> list[tuple[str, str]]:
-        rows = self.files
+        rows = self.browse_rows()
         if not rows:
             return [("class:muted", "  no files in this view\n")]
-        out = []
+        out: list[tuple[str, str]] = []
+        if self.browsing:
+            state = self.tree.get("state", "idle")
+            note = {"ready": f"{len(self.repo_paths())} files in the repository",
+                    "loading": "reading the repository\u2026",
+                    "unavailable": "this host cannot list the repository",
+                    "error": self.tree.get("error", "")}.get(state, "reading the repository\u2026")
+            out.append(("class:muted", f"  {note}\n"))
         top = max(0, min(self.file_index - FILE_PANE_ROWS // 2, len(rows) - FILE_PANE_ROWS))
         for index in range(top, min(top + FILE_PANE_ROWS, len(rows))):
             row = rows[index]
             selected = index == self.file_index
             marker = "\u203a" if selected else " "
-            counts = f"+{row.get('additions', 0)} -{row.get('deletions', 0)}"
+            # a repository file has no counts to show — it is not part of the change
+            counts = (f"+{row.get('additions', 0)} -{row.get('deletions', 0)}"
+                      if row.get("changed") else "")
             style = "class:selected" if selected and self.focus == "files" else ""
             asked = sum(1 for h in self.highlights if h["file"] == row.get("path"))
             out.append(("class:muted", f" {marker} {counts:>9}  "))
-            out.append((style, f"{row.get('path', '')}"))
+            out.append((style if row.get("changed") else (style or "class:muted"),
+                        f"{row.get('path', '')}"))
             out.append(("class:info", f"  {asked} asked\n" if asked else "\n"))
         if len(rows) > FILE_PANE_ROWS:
             out.append(("class:muted", f"   \u2026 {len(rows)} files\n"))
         return out
 
+    def blob_rows(self) -> list[dict]:
+        """A repository file as itself: numbered lines, coloured by the same token kinds.
+
+        It is not a diff, so there are no sides and nothing to select — reading is all this offers,
+        which is what browsing beyond the change is for.
+        """
+        view = self.blob
+        state = view.get("state")
+        if state != "ready":
+            note = {"loading": "reading the file\u2026",
+                    "unknown-file": "no such file at this version",
+                    "unavailable": "this host cannot read files"}.get(state, view.get("error", ""))
+            return [{"line": None, "pieces": [("class:muted", f"  {note or 'reading…'}\n")]}]
+        rows: list[dict] = []
+        for line in view.get("lines", []):
+            pieces = line_fragments(line.get("text", ""), line.get("tokens") or [], "")
+            rows.append({"line": None, "pieces": [("class:muted", f"{line['n']:>5}  ")] + pieces
+                         + [("", "\n")]})
+        return rows or [{"line": None, "pieces": [("class:muted", "  empty file\n")]}]
+
     def body_rows(self) -> list[dict]:
         """Every rendered body row, each carrying the new-side line it stands for (or None)."""
+        if self.viewing:
+            return self.blob_rows()
         scope = self.body_scope
         view = self.client.views.get(scope) if scope else None
         if view is None or view.get("state") != "ready":
@@ -347,14 +437,17 @@ class DiffScreen:
         return rows
 
     def _body_pane(self) -> list[tuple[str, str]]:
-        scope = self.body_scope
-        if scope is None:
-            return []
-        view = self.client.views.get(scope)
-        if view is None:
-            return [("class:muted", "  loading the file\u2026\n")]
-        if view.get("state") != "ready":
-            return [("class:muted", f"  {view.get('error') or view.get('state')}\n")]
+        # a repository file speaks for itself: `blob_rows` says what state it is in, so the
+        # readiness checks below belong to the diff it is standing in place of
+        if not self.viewing:
+            scope = self.body_scope
+            if scope is None:
+                return []
+            view = self.client.views.get(scope)
+            if view is None:
+                return [("class:muted", "  loading the file\u2026\n")]
+            if view.get("state") != "ready":
+                return [("class:muted", f"  {view.get('error') or view.get('state')}\n")]
         rows = self.body_rows()
         height = max(self.rows - FILE_PANE_ROWS - RAIL_PANE_ROWS - 8, 4)
         self.body_cursor = max(0, min(self.body_cursor, max(len(rows) - 1, 0)))
@@ -515,7 +608,8 @@ class DiffScreen:
         if self.focus == "threads":
             return ("\n tab pane   j/k move   enter go to it   f open/all   c ask Claude"
                     "   R reply   V resolve   b back   q quit\n")
-        return "\n tab pane   j/k move   c write   d comment   S send   n/p file   b back   q quit\n"
+        return ("\n tab pane   j/k move   o browse repo   c write   d comment   S send"
+                "   b back   q quit\n")
 
     # --- interaction ---------------------------------------------------------
 
@@ -536,7 +630,7 @@ class DiffScreen:
 
     def move(self, delta: int) -> None:
         if self.focus == "files":
-            rows = self.files
+            rows = self.browse_rows()
             if rows:
                 self.file_index = max(0, min(self.file_index + delta, len(rows) - 1))
                 self.scroll = self.body_cursor = 0
@@ -553,7 +647,7 @@ class DiffScreen:
             self.body_cursor = max(0, min(self.body_cursor + delta, max(len(rows) - 1, 0)))
 
     def next_file(self, delta: int) -> None:
-        rows = self.files
+        rows = self.browse_rows()
         if rows:
             self.file_index = max(0, min(self.file_index + delta, len(rows) - 1))
             self.scroll = self.body_cursor = 0

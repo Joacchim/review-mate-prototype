@@ -409,3 +409,89 @@ def test_a_discussion_with_nowhere_to_go_says_so_rather_than_guessing():
     screen.focus = "threads"
     assert screen.jump_to_thread() is False
     assert screen.focus == "threads"      # the cursor stays where it was
+
+
+# --- browsing beyond the change -----------------------------------------------
+
+def repo(paths=(), state="ready"):
+    return {"session": "s1", "state": state, "sha": "abc", "paths": list(paths), "error": ""}
+
+
+def blob(lines=(), state="ready"):
+    return {"session": "s1", "mode": "full", "path": "README.md", "sha": "abc",
+            "language": "markdown", "state": state, "error": "",
+            "lines": [{"n": i + 1, "text": t, "tokens": []} for i, t in enumerate(lines)]}
+
+
+def browsing_screen(paths=("a.py", "README.md"), **views):
+    client = StubClient({"diff:s1:full": listing([row("a.py")]),
+                         "diff:s1:full:a.py": body(),
+                         "rail:s1": rail(),
+                         "tree:s1": repo(paths), **views})
+    screen = DiffScreen(client, "s1")
+    return screen
+
+
+def test_the_file_list_shows_the_change_until_asked_for_the_repository():
+    screen = browsing_screen()
+    assert [r["path"] for r in screen.browse_rows()] == ["a.py"]
+    screen.toggle_browse()
+    assert [r["path"] for r in screen.browse_rows()] == ["a.py", "README.md"]
+
+
+def test_a_changed_file_is_not_listed_twice():
+    """It is in the change and in the repository; the reviewer is picking a file, not a kind."""
+    screen = browsing_screen(paths=("a.py", "README.md"))
+    screen.toggle_browse()
+    assert [r["path"] for r in screen.browse_rows()].count("a.py") == 1
+
+
+def test_browsing_subscribes_the_repository_and_stops_when_it_closes():
+    screen = browsing_screen()
+    assert "tree:s1" not in screen.wanted()
+    screen.toggle_browse()
+    assert "tree:s1" in screen.wanted()
+    screen.toggle_browse()
+    assert "tree:s1" not in screen.wanted()
+
+
+def test_opening_a_repository_file_reads_it_from_its_blob():
+    screen = browsing_screen(**{"blob:s1:full:README.md": blob(["# title", "prose"])})
+    screen.toggle_browse()
+    screen.file_index = 1                      # README.md
+    assert screen.open_current() is True
+    assert screen.blob_scope == "blob:s1:full:README.md"
+    assert screen.body_scope is None           # it is not part of the change, so it has no diff
+    rendered = "".join(t for _, t in screen.fragments())
+    assert "# title" in rendered and "prose" in rendered
+
+
+def test_opening_a_changed_file_stays_a_diff():
+    screen = browsing_screen()
+    screen.toggle_browse()
+    screen.file_index = 0                      # a.py, which the change touched
+    assert screen.open_current() is False
+    assert screen.viewing is None and screen.body_scope == "diff:s1:full:a.py"
+
+
+def test_a_repository_still_being_read_says_so():
+    screen = browsing_screen()
+    screen.client.views["tree:s1"] = repo(state="loading")
+    screen.toggle_browse()
+    assert "reading the repository" in "".join(t for _, t in screen.fragments())
+
+
+def test_a_host_that_cannot_list_a_repository_says_so():
+    screen = browsing_screen()
+    screen.client.views["tree:s1"] = repo(state="unavailable")
+    screen.toggle_browse()
+    assert "cannot list the repository" in "".join(t for _, t in screen.fragments())
+
+
+def test_closing_the_browser_closes_the_file_it_opened():
+    screen = browsing_screen(**{"blob:s1:full:README.md": blob(["# title"])})
+    screen.toggle_browse()
+    screen.file_index = 1
+    screen.open_current()
+    screen.toggle_browse()
+    assert screen.viewing is None              # it has nowhere to be listed any more
