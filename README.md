@@ -15,6 +15,11 @@ It reads a merge request from a forge, or a branch that has never left your mach
 you can read what an agent just wrote, with the agent answering your comments and fixing what you
 ask, before anyone else is shown it.
 
+**GitLab is the only forge implemented** — self-hosted or gitlab.com. **GitHub is intended and not
+built yet.** The review model is host-neutral and a forge sits behind a seam, so adding one is a
+provider rather than a rework; that is a claim about the design, not a date. Reviewing a local
+branch needs no forge at all.
+
 ![Reading a change in review-mate](docs/images/diff.png)
 
 **[What it does, in pictures →](docs/features.md)**
@@ -42,8 +47,9 @@ survives a server restart and resumes where you left it.
 
 ## Getting it
 
-You need `git`, [uv](https://docs.astral.sh/uv/), and either the
+You need `git`, [uv](https://docs.astral.sh/uv/), and — for reviewing merge requests — either the
 [`glab`](https://gitlab.com/gitlab-org/cli) CLI already authenticated or a GitLab API token.
+Reviewing a local branch needs neither.
 [Claude Code](https://claude.com/claude-code) is optional — the whole review works without an agent,
 which is the point of the cheap context tier.
 

@@ -104,8 +104,12 @@ Start it from an agent session with `/self-review`, and the agent hands you the 
 
 ## Hosts
 
-GitLab, read and write, self-hosted or gitlab.com. A branch on this machine needs git and nothing
-else — no forge, no token.
+**GitLab** — read and write, self-hosted or gitlab.com. The only forge implemented.
 
-The review model is host-neutral and the provider is a seam, but GitLab is the only forge
-implemented today.
+**GitHub** — intended, and not built. Nothing in the review model is GitLab-shaped: what a forge can
+do is advertised as capabilities, and the parts of the UI a host cannot serve turn themselves off
+rather than being special-cased. So a second forge is a provider behind the existing seam. That is
+what the design buys, not a promise about when.
+
+**A branch on this machine** — needs git and nothing else. No forge, no token, and the review works
+the same way apart from the parts that need somewhere to post to.
