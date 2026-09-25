@@ -614,82 +614,96 @@ class _Files:
         return "x" * self._size
 
 
-async def _blob(scopes, sid, sha_mode, path):
-    return await scopes.build(f"{sid}:{sha_mode}:{path}")
-
-
-async def test_unfolded_content_is_bounded_by_what_it_holds(tmp_path):
-    """A blob entry is keyed on head *and* file, and reviewing your own branch moves the head on
-    every fix — so a long session accumulates a head's worth of content per comment answered."""
+async def _blobs(tmp_path, budget, size=1000):
     from review_mate.view.diffscope import BlobScopes
-    host = _Files(size=1000)
+    host = _Files(size=size)
     app, _ = build_versioned(tmp_path, watermark=None)
     manager = app.state.manager
     sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
-    scopes = BlobScopes(manager, provider=host, budget=2500)      # room for two, not three
+    return manager, sid, host, BlobScopes(manager, provider=host, budget=budget)
 
-    for path in ("a.py", "b.py", "c.py"):
-        await _blob(scopes, sid, "full", path)
-        for _ in range(50):
-            if (await _blob(scopes, sid, "full", path))["state"] == "ready":
-                break
-            await asyncio.sleep(0.01)
+
+async def _settled(scopes, sid, sha, path):
+    """One file at one version of the code, once its content has landed."""
+    for _ in range(50):
+        view = await scopes.build(f"{sid}:commit@{sha}:{path}")
+        if view["state"] == "ready":
+            return view
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"{sha}:{path} never settled")
+
+
+async def test_unfolded_content_is_bounded_by_what_it_holds(tmp_path):
+    """A blob entry is keyed on the version *and* the file, and reviewing your own branch moves the
+    head on every fix — so a long session accumulates a version's worth per comment answered."""
+    manager, sid, _host, scopes = await _blobs(tmp_path, budget=2500)
+    for sha in ("aaaaaa1", "bbbbbb2", "cccccc3"):
+        await _settled(scopes, sid, sha, "a.py")
 
     assert scopes._held <= 2500
-    assert len(scopes._content) == 2, scopes._content.keys()
+    assert list(scopes._generations) == ["bbbbbb2", "cccccc3"], scopes._generations.keys()
     await scopes.aclose()
     await manager.shutdown()
 
 
-async def test_the_file_being_read_is_not_the_one_dropped(tmp_path):
-    """Least recently read, so a reviewer scrolling one file does not evict it by opening another."""
-    from review_mate.view.diffscope import BlobScopes
-    host = _Files(size=1000)
-    app, _ = build_versioned(tmp_path, watermark=None)
-    manager = app.state.manager
-    sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
-    scopes = BlobScopes(manager, provider=host, budget=2500)
+async def test_a_whole_version_goes_at_once(tmp_path):
+    """The unit that stops being useful together: when the head moves, every file read at the old
+    one goes cold at the same moment."""
+    manager, sid, _host, scopes = await _blobs(tmp_path, budget=3500)
+    for path in ("a.py", "b.py", "c.py"):
+        await _settled(scopes, sid, "aaaaaa1", path)
+    assert len(scopes._generations["aaaaaa1"]) == 3
 
-    async def settled_blob(path):
-        for _ in range(50):
-            view = await _blob(scopes, sid, "full", path)
-            if view["state"] == "ready":
-                return view
-            await asyncio.sleep(0.01)
-        raise AssertionError(f"{path} never settled")
+    await _settled(scopes, sid, "bbbbbb2", "a.py")      # the head moved; the first version is now cold
+    assert list(scopes._generations) == ["bbbbbb2"]
+    assert scopes._held == 1000, "the whole old version went, not one file of it"
+    await scopes.aclose()
+    await manager.shutdown()
 
-    await settled_blob("a.py")
-    await settled_blob("b.py")
-    await settled_blob("a.py")          # read again: a.py is now the most recent
-    await settled_blob("c.py")          # pushes one out
 
-    held = {path for _sha, path in scopes._content}
-    assert held == {"a.py", "c.py"}, held
+async def test_the_version_being_read_is_not_the_one_dropped(tmp_path):
+    """Reading any file of a version keeps the version, so stepping back to an older commit and
+    working there does not lose it to whatever was opened most recently."""
+    manager, sid, _host, scopes = await _blobs(tmp_path, budget=2500)
+    await _settled(scopes, sid, "aaaaaa1", "a.py")
+    await _settled(scopes, sid, "bbbbbb2", "a.py")
+    await _settled(scopes, sid, "aaaaaa1", "a.py")      # back to the first: it is the recent one now
+    await _settled(scopes, sid, "cccccc3", "a.py")      # pushes one out
+
+    assert list(scopes._generations) == ["aaaaaa1", "cccccc3"], scopes._generations.keys()
     await scopes.aclose()
     await manager.shutdown()
 
 
 async def test_a_dropped_file_is_fetched_again_rather_than_lost(tmp_path):
     """Nothing depends on a hit: eviction costs a read, never a view that cannot recover."""
-    from review_mate.view.diffscope import BlobScopes
-    host = _Files(size=1000)
-    app, _ = build_versioned(tmp_path, watermark=None)
-    manager = app.state.manager
-    sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
-    scopes = BlobScopes(manager, provider=host, budget=1500)      # room for exactly one
+    manager, sid, host, scopes = await _blobs(tmp_path, budget=1500)
+    await _settled(scopes, sid, "aaaaaa1", "a.py")
+    await _settled(scopes, sid, "bbbbbb2", "a.py")      # evicts the first
+    again = await _settled(scopes, sid, "aaaaaa1", "a.py")
 
-    async def settled_blob(path):
-        for _ in range(50):
-            view = await _blob(scopes, sid, "full", path)
-            if view["state"] == "ready":
-                return view
-            await asyncio.sleep(0.01)
-        raise AssertionError(f"{path} never settled")
-
-    await settled_blob("a.py")
-    await settled_blob("b.py")          # evicts a.py
-    again = await settled_blob("a.py")  # and it comes back, read a second time
     assert again["state"] == "ready" and again["lines"]
-    assert [p for p, _ in host.reads].count("a.py") == 2
+    assert [ref for _p, ref in host.reads].count("aaaaaa1") == 2
     await scopes.aclose()
     await manager.shutdown()
+
+
+async def test_the_last_version_is_kept_even_when_it_is_too_big(tmp_path):
+    """Dropping it would only make the next build fetch all of it again — the reviewer is reading
+    it, and a budget is not a reason to guarantee a miss."""
+    manager, sid, _host, scopes = await _blobs(tmp_path, budget=100, size=1000)
+    await _settled(scopes, sid, "aaaaaa1", "a.py")
+    assert list(scopes._generations) == ["aaaaaa1"] and scopes._held == 1000
+    await scopes.aclose()
+    await manager.shutdown()
+
+
+async def test_the_budget_can_be_set_without_touching_the_code(tmp_path, monkeypatch):
+    from review_mate.config import blob_budget_bytes
+    from review_mate.view.diffscope import BlobScopes
+    monkeypatch.setenv("REVIEW_MATE_BLOB_BUDGET_MB", "4")
+    assert blob_budget_bytes() == 4 * 1024 * 1024
+    assert BlobScopes(None)._budget == 4 * 1024 * 1024
+
+    monkeypatch.setenv("REVIEW_MATE_BLOB_BUDGET_MB", "not a number")
+    assert BlobScopes(None)._budget == 16 * 1024 * 1024, "a typo must not stop a server starting"

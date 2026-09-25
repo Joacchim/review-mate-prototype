@@ -194,6 +194,8 @@ start, so starting the server midway will not make them appear — relaunch the 
 | `REVIEW_MATE_GITLAB_URL` | API base URL, e.g. `https://gitlab.example.com/api/v4` | `glab`'s host, else `https://gitlab.com/api/v4` |
 | `REVIEW_MATE_GIT_PROTOCOL` | `ssh` or `https`, for cloning | `glab`'s `git_protocol`, else `https` |
 | `REVIEW_MATE_HOME` | Where sessions, mirrors and the review KB live | `~/.review-mate` |
+| `REVIEW_MATE_BLOB_BUDGET_MB` | How much whole-file text is kept for unfolding, oldest version dropped first | `16` |
+| `REVIEW_MATE_URL` | Where a reviewer reads this server, for links an agent hands them | `http://127.0.0.1:8765` |
 
 ## Development
 

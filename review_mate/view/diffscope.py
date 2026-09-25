@@ -39,6 +39,7 @@ from contextlib import suppress
 
 from pydantic import BaseModel, Field
 
+from review_mate.config import blob_budget_bytes
 from review_mate.seams import MRRef, RepoRef, ref_of, serves
 from review_mate.session.state import ChangeType, FileEntry, SessionStatus
 from review_mate.view.diffdoc import build as build_hunks
@@ -408,43 +409,61 @@ class BlobScopes:
     generous for the large ones wastes nothing but memory, and one sized for the median evicts a
     reviewer's open file while they are reading it.
 
+    **What it evicts is a whole sha's worth at a time**, because that is the unit that stops being
+    useful together. When the head moves, every file read at the old one goes cold at the same
+    moment — the reviewer is looking at the new head now. Ageing files individually would let a dead
+    generation linger a file at a time behind whatever happened to be read most recently, and would
+    drip out one file per eviction where a whole generation was already worthless.
+
+    The sha alone names a generation. A repository is not part of the key because the sha already
+    determines it; adding one would be a second field saying what the first says.
+
     Eviction is safe because nothing depends on a hit. A view whose content was dropped reports
     `loading` and fetches again, exactly as it did the first time.
     """
-
-    #: how much file text to keep. Several whole repositories' worth of tracked text — large enough
-    #: that a reviewer never evicts what they are reading, small enough to be a bound.
-    BUDGET = 16 * 1024 * 1024
 
     def __init__(self, manager, provider=None, publish=None, budget: int | None = None) -> None:
         self._manager = manager
         self._provider = provider
         self._publish = publish
-        self._content: OrderedDict[tuple[str, str], str] = OrderedDict()   # (sha, path) -> text
-        self._held = 0                                     # bytes in `_content`, kept as we go
-        self._budget = self.BUDGET if budget is None else budget
+        # sha -> {path: text}, in least-recently-read order: one entry per version of the code
+        self._generations: OrderedDict[str, dict[str, str]] = OrderedDict()
+        self._sizes: dict[str, int] = {}                   # sha -> bytes, kept as we go
+        self._held = 0
+        self._budget = blob_budget_bytes() if budget is None else budget
         self._failed: OrderedDict[tuple[str, str], str] = OrderedDict()
         self._tasks: dict[tuple[str, str], asyncio.Task] = {}
 
     def _remember(self, key: tuple[str, str], text: str) -> None:
-        """Hold a file's text, dropping the least recently read until the budget is met."""
-        self._forget(key)
-        self._content[key] = text
+        """Hold a file's text, dropping whole cold generations until the budget is met."""
+        sha, path = key
+        generation = self._generations.setdefault(sha, {})
+        held = generation.pop(path, None)
+        if held is not None:
+            self._sizes[sha] -= len(held)
+            self._held -= len(held)
+        generation[path] = text
+        self._sizes[sha] = self._sizes.get(sha, 0) + len(text)
         self._held += len(text)
-        while self._held > self._budget and len(self._content) > 1:
-            self._forget(next(iter(self._content)))
+        self._generations.move_to_end(sha)
+        # never the last one: a single version larger than the budget is still the version being
+        # read, and dropping it would only make the next build fetch all of it again
+        while self._held > self._budget and len(self._generations) > 1:
+            self._forget(next(iter(self._generations)))
 
-    def _forget(self, key: tuple[str, str]) -> None:
-        text = self._content.pop(key, None)
-        if text is not None:
-            self._held -= len(text)
+    def _forget(self, sha: str) -> None:
+        """Drop every file held at one version of the code."""
+        if self._generations.pop(sha, None) is not None:
+            self._held -= self._sizes.pop(sha, 0)
 
     def _recall(self, key: tuple[str, str]) -> str | None:
-        """What is held for a key, if anything — and reading it is what keeps it."""
-        text = self._content.get(key)
-        if text is not None:
-            self._content.move_to_end(key)
-        return text
+        """What is held for a key, if anything — and reading it keeps its whole generation."""
+        sha, path = key
+        generation = self._generations.get(sha)
+        if generation is None or path not in generation:
+            return None
+        self._generations.move_to_end(sha)
+        return generation[path]
 
     async def build(self, argument: str) -> dict:
         address = parse_address(argument)
@@ -525,6 +544,8 @@ class BlobScopes:
     def reset(self) -> None:
         """Drop every cached blob. Content at a sha cannot change, so nothing invalidates this in
         use — a caller that reuses a sha for different content has to say so."""
-        self._content.clear()
+        self._generations.clear()
+        self._sizes.clear()
+        self._held = 0
         self._failed.clear()
 
