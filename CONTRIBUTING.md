@@ -1,0 +1,73 @@
+# Working on review-mate
+
+## Getting set up
+
+```bash
+git clone git@github.com:Joacchim/review-mate-prototype.git
+cd review-mate-prototype
+uv sync
+uv run review-mate            # http://127.0.0.1:8765
+```
+
+`uv run` is the development path — it runs from the checkout, so an edit is one restart away. For
+using it rather than working on it, install it properly and run it as a service: see
+[running it](docs/running.md).
+
+The UI is served uncached, so a reload picks up `app.js` / `index.html` edits immediately. Python is
+frozen at launch — **restart the server after backend changes**. Sessions are restored on startup,
+so nothing is lost.
+
+## Tests
+
+```bash
+uv run pytest --ignore=tests/webui            # unit, functional, integration, boundary
+uv run pytest tests/webui --browser chromium  # the browser suite
+uv run pytest tests/webui --browser firefox
+```
+
+The browser suite needs the `webtest` extra (`uv sync --extra webtest`) and its browsers
+(`uv run playwright install chromium firefox`). It runs the production application over staged
+sessions, so a test failure is the product's, not a mock's —
+[how the web UI is tested](docs/testing/web-ui.md) explains the arrangement and what belongs there.
+
+Screenshots in the documentation are generated, not taken:
+
+```bash
+uv run --extra webtest python tools/screenshots.py
+```
+
+That drives the real application too. Regenerate them when a screen changes rather than describing
+the difference in prose.
+
+## Layout
+
+| Path | What lives there |
+|---|---|
+| `review_mate/server/` | ASGI app, HTTP routes, websocket stream |
+| `review_mate/session/` | Event-sourced session model (commands → events → state) |
+| `review_mate/view/` | Server-folded client state — scopes, the view bus, the hub scope |
+| `review_mate/host/` | Host providers — GitLab read/write, a local branch, credential resolution |
+| `review_mate/workspace/` | The isolated clone workspace (mirrors, worktrees, diffs) |
+| `review_mate/writeback/` | Posting a review, and the thread verbs |
+| `review_mate/mcp/` | The agent seam, mounted at `/mcp` |
+| `review_mate/web/` | The browser UI (vanilla JS, no build step) |
+| `review_mate/tui/` | The terminal client — a renderer over the view protocol |
+| `docs/` | Architecture, features, running it, glossary, known surprises, testing method |
+| `tools/` | Documentation machinery — the screenshot generator |
+| `packaging/` | A systemd user unit |
+| `.claude/` | Claude Code skills (watching a fleet, reviewing your own branch), the worker agent, the startup hook |
+
+## Reading the design first
+
+- [Architecture](docs/architecture.md) — the view protocol, the two planes, what each scope carries.
+  Read this before adding a scope or a command; both have one place they belong.
+- [Glossary](docs/glossary.md) — the words, used precisely and consistently.
+- [Known surprises](docs/surprises.md) — behaviour that is correct by design and still catches
+  people out. If you find yourself explaining something twice, it belongs there.
+- [How the web UI is tested](docs/testing/web-ui.md) — and the map of what that suite covers.
+
+## Feedback
+
+This is a prototype and it is meant to be pushed on. Issues and merge/pull requests are welcome —
+particularly on the interactions that feel clunky, since that is exactly what has not been refined
+yet.

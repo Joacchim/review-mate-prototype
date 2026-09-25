@@ -1,0 +1,333 @@
+"""Regenerate the screenshots the feature documentation is built around.
+
+    uv run --extra webtest python tools/screenshots.py
+
+Drives the real application — the production `create_app` over staged sessions, the same
+arrangement the browser tests use — so a picture cannot show a screen the product does not have.
+Which is the point of scripting them: hand-taken screenshots go stale silently, and a reader
+trusts a picture more than prose.
+
+Add a shot by adding a `@shot` function. It gets a page on a staged session and saves one file.
+"""
+from __future__ import annotations
+
+import sys
+import threading
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests" / "webui"))
+sys.path.insert(0, str(ROOT / "tests"))
+
+import uvicorn  # noqa: E402
+from playwright.sync_api import sync_playwright  # noqa: E402
+
+from review_mate.server.app import create_app  # noqa: E402
+from review_mate.seams import MRRef  # noqa: E402
+from review_mate.session.state import (  # noqa: E402
+    AccessRequest, Addressed, Card, ChangeType, ChatMessage, Criticality, DraftComment,
+    DraftStatus, FileEntry, Highlight, Label, LineRange, MRMetadata, ReviewThread, ThreadComment,
+    SessionState, SessionStatus, Side, Subject, SubjectKind, Theme,
+)
+from webui.fixtures.host import StubHost  # noqa: E402
+from webui.fixtures.manager import FakeManager  # noqa: E402
+
+IMAGES = ROOT / "docs" / "images"
+VIEWPORT = {"width": 1500, "height": 900}
+
+SHOTS: list = []
+
+
+def shot(name: str, description: str):
+    def register(fn):
+        SHOTS.append((name, description, fn))
+        return fn
+    return register
+
+
+# --- the change under review ---------------------------------------------------
+
+CAPACITY = """@@ -38,12 +38,18 @@ class Scheduler:
+     def reserve(self, pu: ProcessingUnit) -> Reservation:
+-        queue = self._queues[pu.fleet]
+-        return queue.take(pu.size)
++        queue = self._queues.get(pu.fleet)
++        if queue is None:
++            queue = self._legacy
++        while True:
++            try:
++                return queue.take(pu.size)
++            except Contended:
++                continue
+ 
+     def release(self, reservation: Reservation) -> None:
+         reservation.queue.give_back(reservation.size)
+@@ -71,9 +77,13 @@ class Scheduler:
+     def drain(self, fleet: str) -> int:
+         # give every reservation on a fleet back, and say how many there were
+-        held = self._held.pop(fleet, [])
+-        for reservation in held:
+-            self.release(reservation)
+-        return len(held)
++        held = self._held.pop(fleet, [])
++        drained = 0
++        for reservation in held:
++            self.release(reservation)
++            drained += 1
++        if drained:
++            log.info("drained %d reservations from %s", drained, fleet)
++        return drained
+"""
+
+CONFIG = """@@ -10,7 +10,7 @@
+ # how long a reservation may be held before the scheduler takes it back
+-RESERVATION_TIMEOUT = 30
++RESERVATION_TIMEOUT = 120
+ 
+ # the fleet a processing unit falls back to when its own is unknown
+ LEGACY_FLEET = "legacy"
+"""
+
+FLEET = """@@ -0,0 +1,9 @@
++from dataclasses import dataclass
++
++
++@dataclass(frozen=True)
++class Fleet:
++    name: str
++    capacity: int
++
++    def can_take(self, size: int) -> bool:
++        return size <= self.capacity
+"""
+
+
+def showcase(session_id: str = "s1") -> SessionState:
+    """A review far enough along to show what the tool is for: lines marked, context answered,
+    a comment being written, and Claude's own reading of the change beside the reviewer's."""
+    anchor = Subject(kind=SubjectKind.HIGHLIGHT, id="h1")
+    return SessionState(
+        id=session_id, status=SessionStatus.ACTIVE, created_at="2026-02-01T09:00:00+00:00", seq=42,
+        mr=MRMetadata(
+            host="gitlab", project="platform/virtu/control-plane", iid=137,
+            title="reserve scheduler capacity per fleet", source_branch="feat/fleet-capacity",
+            target_branch="main", sha="abc123def", author="luigi",
+            url="https://gitlab.example/mr/137",
+            capabilities={"threads": True, "approvals": True, "commits": True,
+                          "diff_versions": True, "inline_comments": True},
+            diff_refs={"base_sha": "0ldbase", "head_sha": "abc123def"}),
+        files=[
+            FileEntry(path="scheduler/capacity.py", change_type=ChangeType.MODIFIED,
+                      language="python", hunks=[{"diff": CAPACITY}]),
+            FileEntry(path="scheduler/config.py", change_type=ChangeType.MODIFIED,
+                      language="python", hunks=[{"diff": CONFIG}]),
+            FileEntry(path="scheduler/fleet.py", change_type=ChangeType.ADDED,
+                      language="python", hunks=[{"diff": FLEET}]),
+        ],
+        highlights=[
+            Highlight(id="h1", ordinal=1, file="scheduler/capacity.py", side=Side.NEW,
+                      line_range=LineRange(start=45, end=48),
+                      question="why retry forever instead of bounding it?",
+                      created_at="2026-02-01T09:12:00+00:00", created_sha="abc123def",
+                      context_requested=True, context_requested_at="2026-02-01T09:12:00+00:00"),
+            Highlight(id="h2", ordinal=2, file="scheduler/config.py", side=Side.NEW,
+                      line_range=LineRange(start=12, end=12),
+                      created_at="2026-02-01T09:20:00+00:00", created_sha="abc123def"),
+        ],
+        cards=[
+            Card(id="c1", highlight_id="h1", created_at="2026-02-01T09:13:00+00:00",
+                 body=("`Contended` is raised when another scheduler holds the fleet's lock. The "
+                       "previous code let it propagate and the caller retried with backoff — "
+                       "`retry_reserve` in `api/reserve.py:88`, which this bypasses.\n\n"
+                       "Nothing bounds this loop, so a fleet that stays contended spins.")),
+            Card(id="c2", highlight_id=None, created_at="2026-02-01T09:30:00+00:00",
+                 label=Label(theme=Theme.BUG, criticality=Criticality.HIGH,
+                             about="the retry path", by="agent"),
+                 body=("The reservation loop has no bound and no sleep. Under contention this is a "
+                       "busy-wait holding the GIL.")),
+            Card(id="c3", highlight_id=None, created_at="2026-02-01T09:31:00+00:00",
+                 label=Label(theme=Theme.TEST, criticality=Criticality.MEDIUM,
+                             about="no coverage for the legacy fallback", by="agent"),
+                 body="`_legacy` is reached only when a fleet is unknown, and no test constructs that."),
+            Card(id="c4", highlight_id=None, created_at="2026-02-01T09:32:00+00:00",
+                 label=Label(theme=Theme.NAMING, criticality=Criticality.LOW, by="agent"),
+                 body="`can_take` reads as a question but is used as a guard; `fits` would be plainer."),
+        ],
+        messages=[
+            ChatMessage(id="m1", role="user", anchor=anchor,
+                        body="is anything else relying on Contended propagating?",
+                        created_at="2026-02-01T09:15:00+00:00"),
+            ChatMessage(id="m2", role="agent", anchor=anchor,
+                        body=("Two call sites. `api/reserve.py:88` catches it and backs off, and "
+                              "`tests/test_contention.py` asserts it reaches the caller — that test "
+                              "will fail with this change."),
+                        created_at="2026-02-01T09:16:00+00:00"),
+        ],
+        drafts=[
+            DraftComment(id="d1", highlight_id="h1", status=DraftStatus.DRAFT,
+                         created_at="2026-02-01T09:25:00+00:00",
+                         body=("This loop is unbounded — a contended fleet busy-waits. Could we keep "
+                               "letting `Contended` propagate and leave the backoff to "
+                               "`retry_reserve`? `tests/test_contention.py` expects that too.")),
+        ],
+        threads=[
+            ReviewThread(id="t1", file="scheduler/config.py", line=12, resolved=False,
+                         capabilities={"reply": True, "resolve": True},
+                         comments=[ThreadComment(id="tc1", author="ana", created_at="2026-02-01T08:40:00+00:00",
+                                                 body="120s is four times the old value — deliberate?")]),
+        ],
+        access_requests=[
+            AccessRequest(id="a1", repo="platform/virtu/fleet-api", status="pending",
+                          reason="`Fleet` is defined there; the capacity check mirrors it"),
+        ],
+    )
+
+
+# --- the shots -----------------------------------------------------------------
+
+@shot("hub", "the landing page: what is open, and what is waiting on you")
+def _hub(page, base, stage):
+    stage(showcase())
+    page.goto(base)
+    page.wait_for_selector(".land, #diff")
+    page.wait_for_timeout(400)
+
+
+@shot("diff", "reading a change: the file tree, the diff, and the rail beside it")
+def _diff(page, base, stage):
+    stage(showcase())
+    _open(page, base)
+
+
+@shot("side-by-side", "the same hunk with both versions on one row")
+def _side_by_side(page, base, stage):
+    stage(showcase())
+    _open(page, base)
+    page.locator("#t-split").click()
+    page.wait_for_timeout(300)
+
+
+@shot("claude-channel", "what Claude found on a line, and the conversation under it")
+def _claude(page, base, stage):
+    stage(showcase())
+    _open(page, base)
+    page.locator("#hlist .hrow").first.click()
+    page.wait_for_selector("#detail .msgs .msg")
+    page.wait_for_timeout(300)
+
+
+@shot("review-channel", "the comment you are preparing, which nobody else sees yet")
+def _review(page, base, stage):
+    stage(showcase())
+    _open(page, base)
+    page.locator("#hlist .hrow").first.click()
+    page.locator("#detail .tab", has_text="Review").click()
+    page.wait_for_timeout(300)
+
+
+@shot("insights", "Claude's own read of the change, worst first")
+def _insights(page, base, stage):
+    stage(showcase())
+    _open(page, base)
+    page.wait_for_selector(".railpin .railinsights .hrow")
+    page.wait_for_timeout(300)
+
+
+@shot("consent", "Claude asking to read another repository, and nothing read until you answer")
+def _consent(page, base, stage):
+    stage(showcase())
+    _open(page, base)
+    page.locator(".rail").evaluate("el => el.scrollTo(0, el.scrollHeight)")
+    page.wait_for_timeout(300)
+
+
+@shot("self-review", "reviewing your own branch: no merge request, and fixes landing as you comment")
+def _self_review(page, base, stage):
+    stage(branch_review())
+    _open(page, base)
+
+
+def branch_review(session_id: str = "s1") -> SessionState:
+    """The same review, of a branch that has not left this machine — no merge request to post to,
+    and the agent answering by changing the code rather than explaining it."""
+    state = showcase(session_id)
+    state.mr = MRMetadata(
+        host="local", project="control-plane", iid=0,
+        title="reserve scheduler capacity per fleet", source_branch="feat/fleet-capacity",
+        target_branch="main", sha="9f3c1ab", author="you",
+        url="/home/you/src/control-plane", clone_url="/home/you/src/control-plane",
+        capabilities={"threads": False, "approvals": False, "commits": True,
+                      "diff_versions": False},
+        diff_refs={"base_sha": "0ldbase", "head_sha": "9f3c1ab"})
+    state.threads = []
+    state.access_requests = []
+    state.drafts = []
+    state.addressed = [
+        Addressed(subject=Subject(kind=SubjectKind.HIGHLIGHT, id="h1"), sha="9f3c1ab",
+                  summary="bounded the retry at five attempts", at="2026-02-01T09:40:00+00:00"),
+    ]
+    state.messages = state.messages + [
+        ChatMessage(id="m3", role="user", anchor=Subject(kind=SubjectKind.HIGHLIGHT, id="h1"),
+                    body="bound it at five and let Contended through after that",
+                    created_at="2026-02-01T09:38:00+00:00"),
+        ChatMessage(id="m4", role="agent", anchor=Subject(kind=SubjectKind.HIGHLIGHT, id="h1"),
+                    body=("Done — five attempts, then it propagates. `tests/test_contention.py` "
+                          "passes unchanged now."),
+                    created_at="2026-02-01T09:40:00+00:00"),
+    ]
+    return state
+
+
+def _open(page, base):
+    page.goto(f"{base}/?s=s1")          # `s` is the parameter the page reads
+    page.wait_for_selector("table.hunk tr")
+    page.wait_for_timeout(500)
+
+
+# --- the harness ---------------------------------------------------------------
+
+def main() -> int:
+    IMAGES.mkdir(parents=True, exist_ok=True)
+    manager = FakeManager()
+    app = create_app(manager=manager, provider=StubHost(), with_mcp=False,
+                     resolve_ref=lambda raw: MRRef(host="gitlab", project="p", iid=1))
+    config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 20
+    while not server.started:
+        if time.time() > deadline:
+            raise SystemExit("the screenshot server did not start")
+        time.sleep(0.02)
+    base = f"http://127.0.0.1:{server.servers[0].sockets[0].getsockname()[1]}"
+
+    def stage(state):
+        manager.reset()
+        manager.put(state)
+
+    written = []
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        for name, description, take in SHOTS:
+            page = browser.new_page(viewport=VIEWPORT, device_scale_factor=2)
+            try:
+                take(page, base, stage)
+                target = IMAGES / f"{name}.png"
+                page.screenshot(path=str(target))
+                written.append((name, description, target.stat().st_size))
+            finally:
+                page.close()
+        browser.close()
+    server.should_exit = True
+    thread.join(timeout=5)
+
+    for name, description, size in written:
+        print(f"  docs/images/{name}.png  {size // 1024:>4} kB  — {description}")
+    print(f"{len(written)} screenshots written to {IMAGES}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
