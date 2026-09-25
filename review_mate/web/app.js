@@ -868,6 +868,7 @@ async function renderSuggestions(query) {
   land.innerHTML = `<h2>Search results</h2><p>GitLab matches for “${esc(query)}”</p>`;
   // GitLab search (code-first, D20) is the default; results render here first
   const list = document.createElement("div");
+  list.className = "searchresults";     // its own name: the answer panel below renders the same rows
   list.appendChild(empty("searching GitLab…"));
   land.appendChild(list);
   // escape hatch (D20): a fuzzy description routed to the agent, always offered — the host search

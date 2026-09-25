@@ -57,6 +57,10 @@ def test_asking_sends_the_description_not_the_search_term(search, staged, stub_h
     search.ask()
     asked = as_claude_lookup("that is !137", [HIT])
     assert asked == "the one that made retries jittered instead of fixed"
+
+    # wait for the answer to paint before checking the results, so this asserts in the state that
+    # matters rather than resolving before Claude's candidate arrives and happening to be right
+    expect(search.candidates).to_have_count(1)
     expect(search.results).to_have_count(1)     # the host search was left alone
 
 

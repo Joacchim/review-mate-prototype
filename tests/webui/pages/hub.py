@@ -99,7 +99,7 @@ class SearchPage:
 
     @property
     def results(self):
-        return self.page.locator(".land > div > .qitem")
+        return self.page.locator(".land .searchresults .qitem")
 
     @property
     def error(self):
