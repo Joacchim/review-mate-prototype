@@ -39,9 +39,15 @@ VIEWPORT = {"width": 1500, "height": 900}
 SHOTS: list = []
 
 
-def shot(name: str, description: str):
+def shot(name: str, description: str, shows: str):
+    """Register a shot. `shows` is a selector that must be visible when the picture is taken.
+
+    Without it a mis-aimed shot is silent: the page renders *something*, the file is written, and
+    the caption claims a screen the picture does not contain. That happened — a shot meant to show
+    a consent prompt scrolled the wrong element and produced a second copy of the diff.
+    """
     def register(fn):
-        SHOTS.append((name, description, fn))
+        SHOTS.append((name, description, shows, fn))
         return fn
     return register
 
@@ -186,7 +192,7 @@ def showcase(session_id: str = "s1") -> SessionState:
 
 # --- the shots -----------------------------------------------------------------
 
-@shot("hub", "the landing page: what is open, and what is waiting on you")
+@shot("hub", "the landing page: what is open, and what is waiting on you", shows=".land")
 def _hub(page, base, stage):
     stage(showcase())
     page.goto(base)
@@ -194,13 +200,15 @@ def _hub(page, base, stage):
     page.wait_for_timeout(400)
 
 
-@shot("diff", "reading a change: the file tree, the diff, and the rail beside it")
+@shot("diff", "reading a change: the file tree, the diff, and the rail beside it",
+      shows="table.hunk .add")
 def _diff(page, base, stage):
     stage(showcase())
     _open(page, base)
 
 
-@shot("side-by-side", "the same hunk with both versions on one row")
+# a `gap` cell is produced only by the split renderer, so it proves the mode rather than the toggle
+@shot("side-by-side", "the same hunk with both versions on one row", shows="table.hunk td.gap")
 def _side_by_side(page, base, stage):
     stage(showcase())
     _open(page, base)
@@ -208,7 +216,8 @@ def _side_by_side(page, base, stage):
     page.wait_for_timeout(300)
 
 
-@shot("claude-channel", "what Claude found on a line, and the conversation under it")
+@shot("claude-channel", "what Claude found on a line, and the conversation under it",
+      shows="#detail .card")
 def _claude(page, base, stage):
     stage(showcase())
     _open(page, base)
@@ -217,7 +226,8 @@ def _claude(page, base, stage):
     page.wait_for_timeout(300)
 
 
-@shot("review-channel", "the comment you are preparing, which nobody else sees yet")
+@shot("review-channel", "the comment you are preparing, which nobody else sees yet",
+      shows="#detail textarea.draftbox")
 def _review(page, base, stage):
     stage(showcase())
     _open(page, base)
@@ -226,7 +236,8 @@ def _review(page, base, stage):
     page.wait_for_timeout(300)
 
 
-@shot("insights", "Claude's own read of the change, worst first")
+@shot("insights", "Claude's own read of the change, worst first",
+      shows=".railpin .railinsights .chip.crit")
 def _insights(page, base, stage):
     stage(showcase())
     _open(page, base)
@@ -234,15 +245,17 @@ def _insights(page, base, stage):
     page.wait_for_timeout(300)
 
 
-@shot("consent", "Claude asking to read another repository, and nothing read until you answer")
+@shot("consent", "Claude asking to read another repository, and nothing read until you answer",
+      shows=".rail .req button")
 def _consent(page, base, stage):
     stage(showcase())
     _open(page, base)
-    page.locator(".rail").evaluate("el => el.scrollTo(0, el.scrollHeight)")
+    page.locator(".rail .req").first.scroll_into_view_if_needed()
     page.wait_for_timeout(300)
 
 
-@shot("self-review", "reviewing your own branch: no merge request, and fixes landing as you comment")
+@shot("self-review", "reviewing your own branch: no merge request, and fixes landing as you comment",
+      shows=".chip.fixed")
 def _self_review(page, base, stage):
     stage(branch_review())
     _open(page, base)
@@ -310,10 +323,14 @@ def main() -> int:
     written = []
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
-        for name, description, take in SHOTS:
+        for name, description, shows, take in SHOTS:
             page = browser.new_page(viewport=VIEWPORT, device_scale_factor=2)
             try:
                 take(page, base, stage)
+                if not page.locator(shows).first.is_visible():
+                    raise SystemExit(
+                        f"{name}: nothing matching {shows!r} is on screen, so the picture would "
+                        f"not show what it claims — fix the shot rather than the caption")
                 target = IMAGES / f"{name}.png"
                 page.screenshot(path=str(target))
                 written.append((name, description, target.stat().st_size))
