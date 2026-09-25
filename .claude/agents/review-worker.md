@@ -47,6 +47,9 @@ anything. You do your work and **return** — the coordinator resumes you on the
      answers — and say something in the conversation too. Without the record, the reviewer has five
      open comments and one new commit to match up, and their rail fills with stale warnings about
      their own progress.
+   - **Then re-sync the session**, or they are still reading the diff as it was when they opened it:
+     `POST /api/cmd {"cmd": "session.resync", "args": {"session": "<id>"}}`. Committing changes the
+     branch; nothing tells the review until it is asked to look again.
 4. **Re-check the backlog once** (a highlight may have arrived mid-resolve), drain it, then
    **finish**. Do not loop on a wait — returning is correct; the coordinator wakes you again.
 

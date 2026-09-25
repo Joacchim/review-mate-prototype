@@ -391,3 +391,53 @@ async def test_a_branch_is_never_behind_a_watermark_it_cannot_have(tmp_path, rep
     assert row["behind"] is False
     assert row["mr"]["label"] == "feat/retry → main"
     await manager.shutdown()
+
+
+# --- the loop: the agent changes the code, and the review follows ---------------
+
+async def test_resyncing_a_branch_picks_up_what_the_agent_just_committed(tmp_path, repo):
+    """The hot path of reviewing your own work. Without it the reviewer reads a diff frozen at the
+    moment the session opened, and every fix the agent makes is invisible to them."""
+    from review_mate.session.manager import SessionManager
+    from review_mate.writeback.threads import ThreadVerbs
+
+    local = LocalBranchProvider()
+    manager = SessionManager(root=tmp_path / "sessions", local_source=local)
+    sid = await manager.create(ref=LocalRef(path=str(repo), branch="feat/retry", base="main"))
+    opened = manager.get(sid).snapshot()
+    assert "bound.py" not in [f.path for f in opened.files]
+
+    (repo / "bound.py").write_text("LIMIT = 5\n")      # the agent answers a comment
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "bound the retry")
+    landed = git(repo, "rev-parse", "HEAD")
+
+    verbs = ThreadVerbs(manager, writeback=None)
+    answer = await verbs.resync(sid)
+    assert answer["ok"] and answer["head"] == landed
+
+    after = manager.get(sid).snapshot()
+    assert after.mr.sha == landed
+    assert "bound.py" in [f.path for f in after.files], "the reviewer sees what was just written"
+    await manager.shutdown()
+
+
+async def test_a_branch_has_no_merge_request_to_write_a_reply_to(tmp_path, repo):
+    """Reaching for the writer anyway would send a repository path to a forge and report back
+    whatever it made of it."""
+    from review_mate.session.manager import SessionManager
+    from review_mate.writeback.threads import ThreadVerbs
+
+    manager = SessionManager(root=tmp_path / "sessions", local_source=LocalBranchProvider())
+    sid = await manager.create(ref=LocalRef(path=str(repo), branch="feat/retry", base="main"))
+
+    class Writer:
+        called = False
+
+        async def reply(self, *args, **kwargs):
+            Writer.called = True
+
+    answer = await ThreadVerbs(manager, writeback=Writer()).reply(sid, "t1", "hello")
+    assert answer == {"error": "this review has no merge request to write to"}
+    assert Writer.called is False
+    await manager.shutdown()

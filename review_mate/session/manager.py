@@ -67,7 +67,7 @@ class SessionManager:
         actor.start()
         self._actors[sid] = actor
 
-        if ref is not None and self._source_for(ref) is not None:
+        if ref is not None and self.source_for(ref) is not None:
             try:
                 await self.load(sid, ref)
             except Exception:
@@ -136,7 +136,7 @@ class SessionManager:
         actor = self._actors.get(session_id)
         if actor is None:
             raise KeyError(session_id)
-        source = self._source_for(ref)
+        source = self.source_for(ref)
         if source is None:
             raise RuntimeError("no source for this kind of reference")
         payload = await source.load(ref)
@@ -146,7 +146,7 @@ class SessionManager:
             await actor.submit(ApplyThread(thread=thread), Origin.SYSTEM)
         await self._materialize_checkout(session_id, actor, payload)
 
-    def _source_for(self, ref):
+    def source_for(self, ref):
         """The source that understands this kind of reference.
 
         Dispatch is on the reference, not on configuration: a branch on disk needs git and nothing

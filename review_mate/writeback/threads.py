@@ -10,7 +10,7 @@ answering a discussion cannot get the sequence subtly different.
 """
 from __future__ import annotations
 
-from review_mate.seams import MRRef
+from review_mate.seams import MRRef, ref_of
 from review_mate.session.commands import ApplyFiles, ApplyMRMetadata, ReplaceThreads
 from review_mate.session.state import Origin
 
@@ -20,6 +20,17 @@ class ThreadVerbs:
         self._manager = manager
         self._writeback = writeback
         self._provider = provider
+
+    def _source(self, ref):
+        """The source that can re-read this session's change.
+
+        Asked of the manager rather than kept here: which source understands a reference is one
+        decision, and a second copy of it is a second thing to get wrong when a third kind arrives.
+        A manager that names no source for this kind falls back to the one handed in, which is how
+        an application can be given a provider its manager was never told about.
+        """
+        chosen = getattr(self._manager, "source_for", None)
+        return (chosen(ref) if chosen is not None else None) or self._provider
 
     async def reply(self, session_id: str, thread_id: str, body: str) -> dict:
         text = (body or "").strip()
@@ -54,8 +65,9 @@ class ThreadVerbs:
         actor, ref, failure = self._target(session_id)
         if actor is None or ref is None:
             return failure or {"error": "unknown session"}
-        if self._provider is not None and hasattr(self._provider, "load"):
-            payload = await self._provider.load(ref)
+        source = self._source(ref)
+        if source is not None and hasattr(source, "load"):
+            payload = await source.load(ref)
             await actor.submit(ApplyMRMetadata(mr=payload.mr), Origin.SYSTEM)
             await actor.submit(ApplyFiles(files=payload.files), Origin.SYSTEM)
             await actor.submit(ReplaceThreads(threads=payload.threads), Origin.SYSTEM)
@@ -79,7 +91,7 @@ class ThreadVerbs:
         return {"ok": True}
 
     def _target(self, session_id: str, needs_writer: bool = False):
-        """The session and the merge request a verb acts on, or why it cannot."""
+        """The session and the change a verb acts on, or why it cannot."""
         actor = self._manager.get(session_id)
         if actor is None:
             return None, None, {"error": "unknown session"}
@@ -88,13 +100,19 @@ class ThreadVerbs:
         snapshot = actor.snapshot()
         if snapshot.mr is None:
             return None, None, {"error": "no MR loaded"}
-        return actor, MRRef(host=snapshot.mr.host, project=snapshot.mr.project,
-                            iid=snapshot.mr.iid), None
+        ref = ref_of(snapshot)
+        if needs_writer and not isinstance(ref, MRRef):
+            # every verb but re-syncing writes to a merge request, and a branch that has not left
+            # this machine has none — refusing says that, where reaching for the writer anyway
+            # would send a repository path to a forge and report whatever it made of it
+            return None, None, {"error": "this review has no merge request to write to"}
+        return actor, ref, None
 
-    async def _remirror(self, actor, ref: MRRef) -> int:
+    async def _remirror(self, actor, ref) -> int:
         """Re-mirror the discussions and say how many came back."""
-        if self._provider is None or not hasattr(self._provider, "fetch_threads"):
+        source = self._source(ref)
+        if source is None or not hasattr(source, "fetch_threads"):
             return 0
-        threads = await self._provider.fetch_threads(ref)
+        threads = await source.fetch_threads(ref)
         await actor.submit(ReplaceThreads(threads=threads), Origin.SYSTEM)
         return len(threads)
