@@ -60,3 +60,38 @@ def test_an_untouched_highlight_says_nothing_either_way(diff, rail, staged):
     diff.load("s1")
     expect(rail.addressed(1)).to_have_count(0)
     expect(rail.stale(1)).to_have_count(0)
+
+
+# --- a branch is not a merge request ------------------------------------------
+
+def _branch(state):
+    from review_mate.session.state import MRMetadata
+    state.mr = MRMetadata(
+        host="local", project="control-plane", iid=0, title="reserve scheduler capacity",
+        source_branch="feat/fleet-capacity", target_branch="main", sha="9f3c1ab", author="you",
+        url="/home/you/src/control-plane", clone_url="/home/you/src/control-plane",
+        capabilities={"threads": False, "approvals": False})
+    state.threads = []
+    return state
+
+
+def test_a_branch_is_named_by_where_it_is_going_not_by_a_number(diff, page, staged):
+    """`!0` is what a client invents when it assumes every review is a merge request."""
+    staged.put(_branch(review_with_highlights("s1")))
+    diff.load("s1")
+    header = page.locator("#mr")
+    expect(header).to_contain_text("feat/fleet-capacity → main")
+    expect(header).not_to_contain_text("!0")
+
+
+def test_a_branch_is_not_called_the_merge_request(diff, page, staged):
+    staged.put(_branch(review_with_highlights("s1")))
+    diff.load("s1")
+    expect(page.locator(".railpin h3")).to_contain_text("The branch")
+    expect(page.locator(".rail")).to_contain_text("nobody else is reading this yet")
+
+
+def test_a_merge_request_still_links_back_to_the_host(diff, page, staged):
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    expect(page.locator("#mr .mrlink")).to_contain_text("!137")

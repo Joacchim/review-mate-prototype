@@ -86,3 +86,16 @@ def test_a_second_description_can_be_asked_after_the_first(search, staged, stub_
     asked = as_claude_lookup("that is !137", [HIT])
     assert asked == "the one touching the scheduler's queue"
     expect(search.candidates).to_have_count(1)
+
+
+def test_the_link_an_agent_hands_over_actually_opens_the_review(page, base_url, staged):
+    """The self-review loop is only worth having if the link works: an agent opens a session and
+    gives the reviewer a URL, and a wrong parameter lands them on the hub with nothing to say so."""
+    from review_mate.mcp.bridge import AgentBridge
+    from webui.fixtures.scenarios import review_with_highlights
+
+    staged.put(review_with_highlights("s1"))
+    handed = AgentBridge(staged, base_url=base_url).session_url("s1")
+    page.goto(handed)          # exactly the link an agent would give them
+    page.wait_for_selector("#rail .hrow")
+    assert page.locator("#sid").inner_text().startswith("s1")

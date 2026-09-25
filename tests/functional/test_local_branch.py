@@ -205,7 +205,7 @@ async def test_the_agent_opens_the_review_and_gets_somewhere_to_send_them(agent_
     """A session id is homework; a link is somewhere to look."""
     manager, bridge, repo = agent_on
     opened = await bridge.open_local_review(str(repo), "feat/retry", "main")
-    assert opened["url"] == f"http://127.0.0.1:9999/?session={opened['session_id']}"
+    assert opened["url"] == f"http://127.0.0.1:9999/?s={opened['session_id']}"
     assert opened["branch"] == "feat/retry" and opened["base"] == "main"
     assert opened["files"] == 3
     assert manager.get(opened["session_id"]) is not None

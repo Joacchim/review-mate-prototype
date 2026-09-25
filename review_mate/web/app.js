@@ -970,12 +970,20 @@ function renderClaudeAnswer(req, panel) {
   (req.candidates || []).forEach((it) => panel.appendChild(mrItem(it)));
 }
 
+// Whether this review is of a branch on this machine rather than a merge request on a forge. It
+// changes what several things are called: there is nothing to link to, nobody else to discuss it
+// with, and "the merge request" is the wrong name for what the findings are about.
+function local() {
+  return !!(state.mr && state.mr.host === "local");
+}
+
 function render() {
   if (state.mr) {
     const m = state.mr;
-    // the project!iid path links back to the MR on the host, so reviewers can jump to the source
-    const path = `${esc(m.project)} !${m.iid}`;
-    const link = m.url ? `<a class="mrlink" href="${esc(m.url)}" target="_blank" rel="noopener">${path} ↗</a>` : path;
+    // the server names the change — a branch has no `!iid` to show, and building one here is how
+    // a session that is not a merge request ends up claiming to be merge request zero
+    const path = esc(m.label || "");
+    const link = m.url && !local() ? `<a class="mrlink" href="${esc(m.url)}" target="_blank" rel="noopener">${path} ↗</a>` : path;
     $("mr").innerHTML = `${link} — ${esc(m.title)}`;
   } else {
     $("mr").textContent = "(no MR loaded)";
@@ -1599,8 +1607,8 @@ function renderMrZone() {
   const zone = document.createElement("div");
   zone.className = "railpin";
   const insights = railInsights();
-  zone.appendChild(h3(insights.length ? `The merge request · ${insights.length} insights`
-                                      : "The merge request"));
+  const whole = local() ? "The branch" : "The merge request";
+  zone.appendChild(h3(insights.length ? `${whole} · ${insights.length} insights` : whole));
   zone.appendChild(reviewPassRow());
   renderMrRow(zone);
   const themes = insightThemes();
@@ -2260,7 +2268,11 @@ function renderThreads(el) {
   head.appendChild(h3("Discussions"));
   head.appendChild(btn("↻ refresh", "btn ghost", refreshThreads));
   el.appendChild(head);
-  if (!threads.length) { el.appendChild(empty("no discussions on this MR")); return; }
+  if (!threads.length) {
+    el.appendChild(empty(local() ? "nobody else is reading this yet"
+                                 : "no discussions on this MR"));
+    return;
+  }
 
   const seg = document.createElement("div");
   // named apart from the index's own filter: both sit in the same scroller and read alike

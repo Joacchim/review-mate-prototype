@@ -61,6 +61,15 @@ class AgentBridge:
     def list_sessions(self) -> list[SessionSummary]:
         return self._m.list()
 
+    def session_url(self, session_id: str) -> str:
+        """Where a reviewer opens one session.
+
+        One owner for the link, because the parameter is not guessable from the outside: the page
+        reads `s`, and a link built with anything else lands them on the hub with nothing to say
+        the link was wrong.
+        """
+        return f"{self._base_url}/?s={session_id}"
+
     async def open_local_review(self, path: str, branch: str, base: str = "") -> dict:
         """Open a review of a branch in a repository on this machine, and say where to read it.
 
@@ -69,7 +78,7 @@ class AgentBridge:
         """
         sid = await self._m.create(ref=LocalRef(path=path, branch=branch, base=base))
         snapshot = self._m.get(sid).snapshot()
-        return {"session_id": sid, "url": f"{self._base_url}/?session={sid}",
+        return {"session_id": sid, "url": self.session_url(sid),
                 "branch": snapshot.mr.source_branch if snapshot.mr else branch,
                 "base": snapshot.mr.target_branch if snapshot.mr else base,
                 "files": len(snapshot.files)}
