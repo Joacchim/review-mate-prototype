@@ -3,6 +3,7 @@
 The property that matters is isolation — re-reading one file must not move the others — because it
 is the whole reason the diff is split into scopes at all.
 """
+import asyncio
 import json
 
 from starlette.testclient import TestClient
@@ -597,3 +598,98 @@ def test_a_failed_resolution_is_dropped_with_the_rest(tmp_path):
         assert [k for k in scopes._failed if k[0] == sid]
         tc.post("/api/cmd", json={"cmd": "session.close", "args": {"id": sid}})
         assert [k for k in scopes._failed if k[0] == sid] == []
+
+
+# --- what a long review stops costing -----------------------------------------
+
+class _Files:
+    """A host that serves file content and counts how often it is asked for the same one."""
+
+    def __init__(self, size: int = 1000):
+        self.reads: list[tuple[str, str]] = []
+        self._size = size
+
+    async def get_file(self, project: str, path: str, ref: str) -> str:
+        self.reads.append((path, ref))
+        return "x" * self._size
+
+
+async def _blob(scopes, sid, sha_mode, path):
+    return await scopes.build(f"{sid}:{sha_mode}:{path}")
+
+
+async def test_unfolded_content_is_bounded_by_what_it_holds(tmp_path):
+    """A blob entry is keyed on head *and* file, and reviewing your own branch moves the head on
+    every fix — so a long session accumulates a head's worth of content per comment answered."""
+    from review_mate.view.diffscope import BlobScopes
+    host = _Files(size=1000)
+    app, _ = build_versioned(tmp_path, watermark=None)
+    manager = app.state.manager
+    sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
+    scopes = BlobScopes(manager, provider=host, budget=2500)      # room for two, not three
+
+    for path in ("a.py", "b.py", "c.py"):
+        await _blob(scopes, sid, "full", path)
+        for _ in range(50):
+            if (await _blob(scopes, sid, "full", path))["state"] == "ready":
+                break
+            await asyncio.sleep(0.01)
+
+    assert scopes._held <= 2500
+    assert len(scopes._content) == 2, scopes._content.keys()
+    await scopes.aclose()
+    await manager.shutdown()
+
+
+async def test_the_file_being_read_is_not_the_one_dropped(tmp_path):
+    """Least recently read, so a reviewer scrolling one file does not evict it by opening another."""
+    from review_mate.view.diffscope import BlobScopes
+    host = _Files(size=1000)
+    app, _ = build_versioned(tmp_path, watermark=None)
+    manager = app.state.manager
+    sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
+    scopes = BlobScopes(manager, provider=host, budget=2500)
+
+    async def settled_blob(path):
+        for _ in range(50):
+            view = await _blob(scopes, sid, "full", path)
+            if view["state"] == "ready":
+                return view
+            await asyncio.sleep(0.01)
+        raise AssertionError(f"{path} never settled")
+
+    await settled_blob("a.py")
+    await settled_blob("b.py")
+    await settled_blob("a.py")          # read again: a.py is now the most recent
+    await settled_blob("c.py")          # pushes one out
+
+    held = {path for _sha, path in scopes._content}
+    assert held == {"a.py", "c.py"}, held
+    await scopes.aclose()
+    await manager.shutdown()
+
+
+async def test_a_dropped_file_is_fetched_again_rather_than_lost(tmp_path):
+    """Nothing depends on a hit: eviction costs a read, never a view that cannot recover."""
+    from review_mate.view.diffscope import BlobScopes
+    host = _Files(size=1000)
+    app, _ = build_versioned(tmp_path, watermark=None)
+    manager = app.state.manager
+    sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
+    scopes = BlobScopes(manager, provider=host, budget=1500)      # room for exactly one
+
+    async def settled_blob(path):
+        for _ in range(50):
+            view = await _blob(scopes, sid, "full", path)
+            if view["state"] == "ready":
+                return view
+            await asyncio.sleep(0.01)
+        raise AssertionError(f"{path} never settled")
+
+    await settled_blob("a.py")
+    await settled_blob("b.py")          # evicts a.py
+    again = await settled_blob("a.py")  # and it comes back, read a second time
+    assert again["state"] == "ready" and again["lines"]
+    assert [p for p, _ in host.reads].count("a.py") == 2
+    await scopes.aclose()
+    await manager.shutdown()

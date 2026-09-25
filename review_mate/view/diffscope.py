@@ -31,6 +31,8 @@ with a confident "no such file".
 """
 from __future__ import annotations
 
+from collections import OrderedDict
+
 import asyncio
 import re
 from contextlib import suppress
@@ -46,6 +48,10 @@ from review_mate.view.tokens import tokenize
 FULL = "full"
 SINCE = "since"
 COMMIT_PREFIX = "commit@"
+
+# how many blob failures to remember. They are error strings rather than file text, so the cost is
+# not the reason for a bound — outliving the review that produced them is.
+_FAILED_KEPT = 256
 
 # A session id is opaque but must not carry the separator; a mode is a closed set, with the commit
 # form using "@" precisely so that a sha needs no second colon.
@@ -389,16 +395,56 @@ class BlobScopes:
 
     Reading a blob is a host call, so `build` never performs one: it reports `loading` and starts a
     one-shot fetch that republishes when it lands — the same shape the hub's queue uses. Content at
-    a fixed sha cannot change, so what it caches never needs invalidating.
+    a fixed sha cannot change, so what it holds never needs *invalidating* — but it does need
+    bounding, which is a different question and was not asked for a long time.
+
+    It cannot be swept per session the way resolved diffs are. A diff entry is keyed on the head and
+    a review has few heads; a blob entry is keyed on head *and* file, and reviewing your own branch
+    moves the head on every fix — so one long session accumulates a head's worth of content per
+    comment answered, and a sweep on close would free it long after it mattered.
+
+    So it is bounded by bytes rather than by count. Real repositories put the median file around a
+    few kB and the largest near half a megabyte, which is a sixty-fold spread: a count that is
+    generous for the large ones wastes nothing but memory, and one sized for the median evicts a
+    reviewer's open file while they are reading it.
+
+    Eviction is safe because nothing depends on a hit. A view whose content was dropped reports
+    `loading` and fetches again, exactly as it did the first time.
     """
 
-    def __init__(self, manager, provider=None, publish=None) -> None:
+    #: how much file text to keep. Several whole repositories' worth of tracked text — large enough
+    #: that a reviewer never evicts what they are reading, small enough to be a bound.
+    BUDGET = 16 * 1024 * 1024
+
+    def __init__(self, manager, provider=None, publish=None, budget: int | None = None) -> None:
         self._manager = manager
         self._provider = provider
         self._publish = publish
-        self._content: dict[tuple[str, str], str] = {}     # (sha, path) -> text
-        self._failed: dict[tuple[str, str], str] = {}
+        self._content: OrderedDict[tuple[str, str], str] = OrderedDict()   # (sha, path) -> text
+        self._held = 0                                     # bytes in `_content`, kept as we go
+        self._budget = self.BUDGET if budget is None else budget
+        self._failed: OrderedDict[tuple[str, str], str] = OrderedDict()
         self._tasks: dict[tuple[str, str], asyncio.Task] = {}
+
+    def _remember(self, key: tuple[str, str], text: str) -> None:
+        """Hold a file's text, dropping the least recently read until the budget is met."""
+        self._forget(key)
+        self._content[key] = text
+        self._held += len(text)
+        while self._held > self._budget and len(self._content) > 1:
+            self._forget(next(iter(self._content)))
+
+    def _forget(self, key: tuple[str, str]) -> None:
+        text = self._content.pop(key, None)
+        if text is not None:
+            self._held -= len(text)
+
+    def _recall(self, key: tuple[str, str]) -> str | None:
+        """What is held for a key, if anything — and reading it is what keeps it."""
+        text = self._content.get(key)
+        if text is not None:
+            self._content.move_to_end(key)
+        return text
 
     async def build(self, argument: str) -> dict:
         address = parse_address(argument)
@@ -420,7 +466,7 @@ class BlobScopes:
         if key in self._failed:
             view.state, view.error = "error", self._failed[key]
             return view.model_dump(mode="json")
-        text = self._content.get(key)
+        text = self._recall(key)
         if text is None:
             if self._provider is None or not hasattr(self._provider, "get_file"):
                 view.state = "unavailable"          # no host configured to read a blob from
@@ -460,11 +506,13 @@ class BlobScopes:
     async def _fetch(self, key: tuple[str, str], project: str, scope: str) -> None:
         sha, path = key
         try:
-            self._content[key] = await self._provider.get_file(project, path, sha)
+            self._remember(key, await self._provider.get_file(project, path, sha))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self._failed[key] = f"{type(exc).__name__}: {exc}"
+            while len(self._failed) > _FAILED_KEPT:      # small, but not a place to grow for ever
+                self._failed.popitem(last=False)
         if self._publish is not None:
             await self._publish(scope)
 
