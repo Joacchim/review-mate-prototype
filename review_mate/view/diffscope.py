@@ -37,7 +37,7 @@ from contextlib import suppress
 
 from pydantic import BaseModel, Field
 
-from review_mate.seams import MRRef, RepoRef, serves
+from review_mate.seams import MRRef, RepoRef, ref_of, serves
 from review_mate.session.state import ChangeType, FileEntry, SessionStatus
 from review_mate.view.diffdoc import build as build_hunks
 from review_mate.view.diffdoc import split_files
@@ -261,7 +261,7 @@ class DiffScopes:
         session_id = key[0]
         try:
             if mode.startswith(COMMIT_PREFIX):
-                files = await self._provider.commit_diff(snapshot.mr.project,
+                files = await self._provider.commit_diff(ref_of(snapshot),
                                                          mode[len(COMMIT_PREFIX):])
                 self._resolved[key] = list(files)
             else:

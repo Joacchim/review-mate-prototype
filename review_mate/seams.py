@@ -42,6 +42,22 @@ class LocalRef(BaseModel):
 SessionRef = Union[MRRef, LocalRef]
 
 
+def ref_of(snapshot) -> "SessionRef | None":
+    """The reference a session was opened with, rebuilt from what it applied.
+
+    Scopes reach for the provider with an address, and there is now more than one kind. The session
+    does not store its reference, but the metadata carries everything either kind needs — which is
+    why this can be rebuilt rather than kept: a second copy of the address would be one more thing
+    to keep in step with a re-sync.
+    """
+    mr = getattr(snapshot, "mr", None)
+    if mr is None:
+        return None
+    if mr.host == "local":
+        return LocalRef(path=mr.clone_url, branch=mr.source_branch, base=mr.target_branch)
+    return MRRef(host=mr.host, project=mr.project, iid=mr.iid)
+
+
 def serves(provider, snapshot) -> bool:
     """Whether `provider` is the source this session was loaded from.
 

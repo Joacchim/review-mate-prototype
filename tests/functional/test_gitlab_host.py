@@ -186,7 +186,7 @@ async def test_commits_mapped_oldest_first(provider):
 
 
 async def test_commit_diff_maps_files(provider):
-    files = await provider.commit_diff("group/proj", "sha2")
+    files = await provider.commit_diff(MRRef(host="gitlab", project="group/proj", iid=42), "sha2")
     assert [f.path for f in files] == ["a.py"]
     assert "+y" in files[0].hunks[0]["diff"]
 

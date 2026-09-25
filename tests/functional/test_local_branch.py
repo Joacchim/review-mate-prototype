@@ -4,6 +4,7 @@ Against a real repository, because the whole provider is git: a stub would only 
 methods I wrote call the methods I wrote. What matters is that a branch produces the same diff a
 merge request would — from where it left its base, not from wherever the base has got to since.
 """
+import asyncio
 import os
 import subprocess
 
@@ -93,7 +94,7 @@ async def test_it_advertises_what_a_branch_can_and_cannot_do(provider, repo):
     payload = await provider.load(LocalRef(path=str(repo), branch="feat/retry", base="main"))
     caps = payload.mr.capabilities
     assert caps["threads"] is False and caps["approvals"] is False
-    assert caps["commits"] is False, "nothing routes a per-commit read to git yet"
+    assert caps["commits"] is True, "a branch has its own commits, and they step the same way"
     assert caps["diff_versions"] is False, "git keeps no record of what you last read"
     assert payload.threads == []
 
@@ -226,3 +227,124 @@ async def test_a_branch_that_will_not_load_fails_loudly(agent_on):
     with pytest.raises(Exception):
         await bridge.open_local_review(str(repo), "feat/nope", "main")
     assert manager.list() == [], "a session that could not load must not be left behind"
+
+
+# --- stepping through the branch one commit at a time --------------------------
+
+@pytest.fixture
+def stacked(tmp_path):
+    """A branch of three commits, one of which adds a file — and a base that moved after."""
+    path = tmp_path / "stack"
+    path.mkdir()
+    git(path, "init", "-b", "main")
+    (path / "a.py").write_text("one\n")
+    git(path, "add", ".")
+    git(path, "commit", "-m", "base")
+
+    git(path, "checkout", "-b", "feat/three")
+    for n, (name, body, message) in enumerate((
+            ("a.py", "one\ntwo\n", "add two"),
+            ("b.py", "new file\n", "add b"),
+            ("a.py", "one\ntwo\nthree\n", "add three"))):
+        (path / name).write_text(body)
+        git(path, "add", ".")
+        git(path, "commit", "-m", message)
+
+    git(path, "checkout", "main")
+    (path / "elsewhere.py").write_text("x\n")
+    git(path, "add", ".")
+    git(path, "commit", "-m", "someone else")
+    git(path, "checkout", "feat/three")
+    return path
+
+
+async def test_it_lists_the_commits_the_branch_added(provider, stacked):
+    """`base..branch`, so what the base did afterwards is not listed as the author's work."""
+    rows = await provider.commits(LocalRef(path=str(stacked), branch="feat/three", base="main"))
+    assert [r["title"] for r in rows] == ["add three", "add b", "add two"]
+    assert "someone else" not in [r["title"] for r in rows]
+
+
+async def test_a_commit_row_carries_what_a_forge_would_give(provider, stacked):
+    rows = await provider.commits(LocalRef(path=str(stacked), branch="feat/three", base="main"))
+    row = rows[-1]
+    assert row["sha"].startswith(row["short_id"])
+    assert row["title"] == "add two" and row["author"] == "the agent"
+    assert row["created_at"], "a forge gives a timestamp, and so does this"
+
+
+async def test_a_message_with_newlines_stays_one_commit(provider, stacked):
+    """Fields are separated by git's own unit marks, so prose in a subject cannot split a row."""
+    (stacked / "a.py").write_text("one\ntwo\nthree\nfour\n")
+    git(stacked, "add", ".")
+    git(stacked, "commit", "-m", "add four\n\nwhy: because the retry needed a bound\nand a note")
+    rows = await provider.commits(LocalRef(path=str(stacked), branch="feat/three", base="main"))
+    assert len(rows) == 4
+    assert rows[0]["title"] == "add four"
+    assert "because the retry needed a bound" in rows[0]["message"]
+
+
+async def test_one_commit_reads_as_its_own_change(provider, stacked):
+    rows = await provider.commits(LocalRef(path=str(stacked), branch="feat/three", base="main"))
+    adding_b = next(r for r in rows if r["title"] == "add b")
+    files = await provider.commit_diff(
+        LocalRef(path=str(stacked), branch="feat/three", base="main"), adding_b["sha"])
+    assert [f.path for f in files] == ["b.py"]
+    assert files[0].change_type.value == "added"
+    assert "+new file" in files[0].hunks[0]["diff"]
+
+
+async def test_the_first_commit_of_a_history_is_readable(provider, tmp_path):
+    """A root commit has no parent. It is also exactly the one a reviewer opens first."""
+    path = tmp_path / "fresh"
+    path.mkdir()
+    git(path, "init", "-b", "main")
+    (path / "only.py").write_text("hello\n")
+    git(path, "add", ".")
+    git(path, "commit", "-m", "the first thing")
+    sha = git(path, "rev-parse", "HEAD")
+    files = await provider.commit_diff(LocalRef(path=str(path), branch="main", base="main"), sha)
+    assert [f.path for f in files] == ["only.py"]
+    assert "+hello" in files[0].hunks[0]["diff"]
+
+
+async def test_the_commit_list_reaches_the_scope_that_publishes_it(tmp_path, stacked):
+    """Through `ref_of`, which is what lets a scope address a session it did not open."""
+    from review_mate.session.manager import SessionManager
+    from review_mate.view.browse import BrowseScopes
+
+    local = LocalBranchProvider()
+    manager = SessionManager(root=tmp_path / "sessions", local_source=local)
+    sid = await manager.create(ref=LocalRef(path=str(stacked), branch="feat/three", base="main"))
+    scopes = BrowseScopes(manager, provider=local)
+    assert (await scopes.build_commits(sid))["state"] == "idle"
+    await scopes.fetch_commits(sid)
+    view = await scopes.build_commits(sid)
+    assert view["state"] == "ready"
+    assert [c["title"] for c in view["commits"]] == ["add three", "add b", "add two"]
+    await manager.shutdown()
+
+
+async def test_a_commit_mode_resolves_for_a_local_branch(tmp_path, stacked):
+    """The whole path: the scope picks the mode, `ref_of` addresses the session, git answers."""
+    from review_mate.session.manager import SessionManager
+    from review_mate.view.diffscope import DiffScopes
+
+    local = LocalBranchProvider()
+    manager = SessionManager(root=tmp_path / "sessions", local_source=local)
+    sid = await manager.create(ref=LocalRef(path=str(stacked), branch="feat/three", base="main"))
+    rows = await local.commits(LocalRef(path=str(stacked), branch="feat/three", base="main"))
+    adding_b = next(r for r in rows if r["title"] == "add b")
+
+    scopes = DiffScopes(manager, provider=local)
+    scope = f"{sid}:commit@{adding_b['sha']}"
+    assert (await scopes.build(scope))["state"] == "loading"
+    for _ in range(100):
+        view = await scopes.build(scope)
+        if view["state"] != "loading":
+            break
+        await asyncio.sleep(0.02)
+    assert view["state"] == "ready", view
+    assert [f["path"] for f in view["files"]] == ["b.py"]
+    await scopes.aclose()
+    await manager.shutdown()

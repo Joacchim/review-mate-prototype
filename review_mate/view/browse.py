@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from review_mate.seams import MRRef, serves
+from review_mate.seams import ref_of, serves
 from review_mate.session.state import SessionStatus
 
 
@@ -118,9 +118,8 @@ class BrowseScopes:
             return
         self._commits_state[session_id] = "loading"
         await self._republish(f"commits:{session_id}")
-        ref = MRRef(host=snapshot.mr.host, project=snapshot.mr.project, iid=snapshot.mr.iid)
         try:
-            rows = await self._provider.commits(ref)
+            rows = await self._provider.commits(ref_of(snapshot))
             self._commits[session_id] = [self._row(r) for r in rows]
             self._commits_state[session_id] = "ready"
         except Exception as exc:

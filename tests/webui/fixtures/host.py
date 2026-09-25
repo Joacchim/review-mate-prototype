@@ -36,7 +36,7 @@ class StubHost:
     async def commits(self, ref):
         return list(self.commit_list)
 
-    async def commit_diff(self, project: str, sha: str):
+    async def commit_diff(self, ref, sha: str):
         return list(self.commit_files.get(sha, []))
 
     async def blame(self, project: str, path: str, ref: str, start: int, end: int):

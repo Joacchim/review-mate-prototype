@@ -347,8 +347,8 @@ class VersionHost(TwoFileHost):
         return [{"head_sha": self.newest_head, "base_sha": "base2"},
                 {"head_sha": "reviewed", "base_sha": "base1"}]
 
-    async def commit_diff(self, project, sha):
-        self.commit_calls.append((project, sha))
+    async def commit_diff(self, ref, sha):
+        self.commit_calls.append((ref.project, sha))
         return [FileEntry(path="pkg/b.py", change_type=ChangeType.MODIFIED, language="python",
                           hunks=[{"diff": DIFF_B}])]
 

@@ -29,10 +29,7 @@ from review_mate.session.state import ChangeType, FileEntry, MRMetadata
 # What a branch on disk can offer. Read as a subset of GITLAB_CAPABILITIES: what is missing is
 # missing because there is no forge to ask, not because it is unimplemented.
 LOCAL_CAPABILITIES: dict[str, bool] = {
-    # a branch has commits, but nothing routes a per-commit read to git yet: the scopes hold one
-    # provider and it is the forge's. False because nothing can answer it today, not because a
-    # branch has no commits — see `serves` in seams.py for why the two are different questions.
-    "commits": False,
+    "commits": True,          # a branch has its own commits, and they step the same way
     "diff_versions": False,   # "since you last looked" needs a forge's versions; git has no record
     "threads": False,         # nobody else is here to discuss it with
     "approvals": False,       # there is nothing to approve yet
@@ -41,6 +38,13 @@ LOCAL_CAPABILITIES: dict[str, bool] = {
     "suggestions": False,
     "draft_reviews": False,
 }
+
+
+# git's own field separators, so a commit message containing newlines or tabs stays one field
+_UNIT = "\x1f"
+_RECORD = "\x1e"
+# what git diffs a root commit against; `git hash-object -t tree /dev/null` on any repository
+_EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 
 class GitError(RuntimeError):
@@ -84,6 +88,44 @@ class LocalBranchProvider:
 
     async def fetch_threads(self, ref: LocalRef) -> list:
         return []      # nobody else is here yet; that is the point of reviewing it now
+
+    # --- stepping through the branch one commit at a time ---------------------
+
+    async def commits(self, ref: LocalRef) -> list[dict]:
+        """The commits the branch added, newest first — the shape a forge returns.
+
+        `base..branch` and not `base...branch`: what is wanted here is the commits *this branch*
+        added, and a symmetric range would sweep in whatever the base has done since. The diff uses
+        the three-dot form for the opposite reason — it wants the change as a whole, from the fork.
+        """
+        repo = Path(ref.path)
+        base = ref.base or await self._default_branch(repo)
+        raw = await self._git(repo, "log", f"{base}..{ref.branch}",
+                              f"--format=%H{_UNIT}%h{_UNIT}%s{_UNIT}%B{_UNIT}%an{_UNIT}%aI{_RECORD}")
+        rows = []
+        for record in raw.split(_RECORD):
+            fields = record.strip("\n").split(_UNIT)
+            if len(fields) < 6 or not fields[0]:
+                continue
+            rows.append({"sha": fields[0], "short_id": fields[1], "title": fields[2],
+                         "message": fields[3], "author": fields[4], "created_at": fields[5]})
+        return rows
+
+    async def commit_diff(self, ref: LocalRef, sha: str) -> list[FileEntry]:
+        """One commit against its parent, shaped like the whole change's files.
+
+        A root commit has no parent, so it is diffed against the empty tree rather than failing —
+        the first commit of a branch is exactly the one a reviewer wants to read first.
+        """
+        repo = Path(ref.path)
+        parent = await self._parent_of(repo, sha)
+        return await self._files(repo, parent, sha)
+
+    async def _parent_of(self, repo: Path, sha: str) -> str:
+        try:
+            return await self._git(repo, "rev-parse", f"{sha}^")
+        except GitError:
+            return _EMPTY_TREE
 
     # --- git ------------------------------------------------------------------
 

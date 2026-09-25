@@ -307,10 +307,11 @@ class GitLabProvider:
         by = [u for u in by if u]
         return {"approved_by": by, "you_approved": self.username in by}
 
-    async def commit_diff(self, project: str, sha: str) -> list[FileEntry]:
+    async def commit_diff(self, ref: MRRef, sha: str) -> list[FileEntry]:
         """The per-file diff of one commit (against its parent) — the file set + hunks for reviewing
         a single commit, shaped like the MR diff's files."""
-        rows = await self._get(f"/projects/{quote(project, safe='')}/repository/commits/{sha}/diff")
+        rows = await self._get(
+            f"/projects/{quote(ref.project, safe='')}/repository/commits/{sha}/diff")
         return [_to_file(c) for c in rows]
 
     async def fetch_threads(self, ref: MRRef) -> list[ReviewThread]:
