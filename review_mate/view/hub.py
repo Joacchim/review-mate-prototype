@@ -51,6 +51,7 @@ class HubMR(BaseModel):
     host: str
     project: str
     iid: int
+    label: str = ""                # how the reviewer refers to it; a branch has no `!iid` to show
     title: str = ""
     url: str = ""
     author: str = ""
@@ -141,14 +142,19 @@ class HubScope:
         head = host.get("head") or snap.mr.sha
         mr_state = host.get("mr_state", "")
         unresolved = host.get("unresolved", 0)
+        # a host that cannot version its diffs has nothing to be behind: there is no record of
+        # what was read last, and keying one on a branch would collide across repositories that
+        # happen to share a name
+        versioned = bool((snap.mr.capabilities or {}).get("diff_versions", True))
         wm = (self._kb.get_watermark(snap.mr.host, snap.mr.project, snap.mr.iid)
-              if self._kb is not None else None)
+              if self._kb is not None and versioned else None)
         behind = bool(wm and head and wm != head)
         at_watermark = bool(wm and head and wm == head)
         return HubSession(
             id=sid, status="active", created_at=snap.created_at,
             mr=HubMR(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid,
-                     title=snap.mr.title, url=snap.mr.url, author=snap.mr.author),
+                     label=snap.mr.label, title=snap.mr.title, url=snap.mr.url,
+                     author=snap.mr.author),
             state=derive_state(mr_state=mr_state, pending=pending, posted=posted,
                                unresolved=unresolved, behind=behind, at_watermark=at_watermark),
             mr_state=mr_state, behind=behind, unresolved=unresolved,

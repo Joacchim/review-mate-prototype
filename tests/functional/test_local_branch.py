@@ -348,3 +348,46 @@ async def test_a_commit_mode_resolves_for_a_local_branch(tmp_path, stacked):
     assert [f["path"] for f in view["files"]] == ["b.py"]
     await scopes.aclose()
     await manager.shutdown()
+
+
+# --- how a branch is named, and what it is not ---------------------------------
+
+async def test_a_branch_is_named_by_where_it_is_going(provider, repo):
+    """`LocalRef` keeps a fake merge-request number out of the model; the label keeps it off screen.
+    A client that built `project!iid` itself would put it straight back."""
+    payload = await provider.load(LocalRef(path=str(repo), branch="feat/retry", base="main"))
+    assert payload.mr.label == "feat/retry → main"
+    assert "!0" not in payload.mr.label
+
+
+async def test_a_merge_request_is_still_named_by_its_number(provider, repo):
+    from review_mate.session.state import MRMetadata
+    mr = MRMetadata(host="gitlab", project="g/p", iid=137, title="t", source_branch="x",
+                    target_branch="main", sha="a", author="d", url="u")
+    assert mr.label == "g/p !137"
+
+
+async def test_the_label_survives_the_log(provider, repo):
+    """It is on every published copy of the metadata, so it has to replay like the rest of it."""
+    from review_mate.session.state import MRMetadata
+    payload = await provider.load(LocalRef(path=str(repo), branch="feat/retry", base="main"))
+    replayed = MRMetadata.model_validate(payload.mr.model_dump(mode="json"))
+    assert replayed.label == "feat/retry → main"
+
+
+async def test_a_branch_is_never_behind_a_watermark_it_cannot_have(tmp_path, repo):
+    """`since` needs a forge's versions, so there is no record of what was read last — and keying
+    one on a branch would collide across repositories that happen to share a name."""
+    from review_mate.kb.store import ReviewKB
+    from review_mate.session.manager import SessionManager
+    from review_mate.view.hub import HubScope
+
+    kb = ReviewKB(root=tmp_path / "home")
+    kb.set_watermark("local", repo.name, 0, "some-other-sha")   # a collision waiting to happen
+    manager = SessionManager(root=tmp_path / "sessions", local_source=LocalBranchProvider())
+    sid = await manager.create(ref=LocalRef(path=str(repo), branch="feat/retry", base="main"))
+
+    row = next(s for s in (await HubScope(manager, kb=kb).build())["sessions"] if s["id"] == sid)
+    assert row["behind"] is False
+    assert row["mr"]["label"] == "feat/retry → main"
+    await manager.shutdown()

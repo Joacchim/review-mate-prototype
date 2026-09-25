@@ -54,7 +54,7 @@ def views():
         "hub": {"user": "u", "sessions": [], "queue": [], "queue_state": "ready",
                 "queue_error": "", "host_checked_at": ""},
         "diff:s1:full": {"session": "s1", "mode": "full", "state": "ready", "head_aligned": True,
-                         "mr": {"project": "g/p", "iid": 1, "title": "T"},
+                         "mr": {"project": "g/p", "iid": 1, "label": "g/p !1", "title": "T"},
                          "files": [{"path": "a.py", "additions": 1, "deletions": 1,
                                     "change_type": "modified", "old_path": None,
                                     "language": "python", "has_diff": True}]},

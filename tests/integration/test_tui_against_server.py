@@ -237,7 +237,7 @@ async def test_the_review_screen_renders_a_real_diff(tmp_path):
             await wait_for(lambda: client.views.get(listing) and client.views.get(body))
 
             rendered = "".join(text for _, text in shell.fragments())
-            assert "g/p!1" in rendered and "reserve capacity" in rendered
+            assert "g/p !1" in rendered and "reserve capacity" in rendered
             assert "a.py" in rendered and "pkg/b.py" in rendered          # the file pane
             assert "if pu.fleet == LEGACY:" in rendered                   # the body
 

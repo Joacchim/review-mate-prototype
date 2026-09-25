@@ -142,7 +142,7 @@ class HubScreen:
         checked = "" if data.get("host_checked") else "?"
         marker = "›" if index == self.cursor else " "
         head = f" {marker} {badge:>9}{checked:<1} "
-        title = f"{mr.get('project', '(no MR)')}!{mr.get('iid', '')}  {mr.get('title', '')}"
+        title = f"{mr.get('label') or '(no MR)'}  {mr.get('title', '')}"
         counts = []
         if data.get("pending"):
             counts.append(f"{data['pending']} draft")

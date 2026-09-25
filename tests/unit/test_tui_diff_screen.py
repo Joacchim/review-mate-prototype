@@ -24,7 +24,7 @@ class StubClient:
 
 def listing(files, **extra):
     return {"session": "s1", "mode": "full", "state": "ready",
-            "mr": {"project": "g/p", "iid": 7, "title": "T"},
+            "mr": {"project": "g/p", "iid": 7, "label": "g/p !7", "title": "T"},
             "head_aligned": True, "files": files, **extra}
 
 
@@ -88,7 +88,7 @@ def test_it_watches_everything_the_review_screen_shows():
 def test_the_diff_renders_with_gutters_and_markers():
     client = StubClient({"diff:s1:full": listing([row("a.py")]), "diff:s1:full:a.py": body()})
     rendered = text_of(DiffScreen(client, "s1"))
-    assert "g/p!7" in rendered
+    assert "g/p !7" in rendered
     assert "⋯ 3 unchanged lines ⋯" in rendered
     assert "def f():" in rendered and "return 1" in rendered
     assert "+" in rendered

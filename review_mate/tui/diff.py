@@ -376,7 +376,7 @@ class DiffScreen:
         if view is None:
             return [("class:muted", " loading the change\u2026\n")]
         mr = view.get("mr") or {}
-        title = f"{mr.get('project', '')}!{mr.get('iid', '')}  {mr.get('title', '')}"
+        title = f"{mr.get('label', '')}  {mr.get('title', '')}"
         out.append(("class:header", f" {title}\n"))
         out.append(("class:muted", f"  mode {self.mode}   [{self.client.status}]"))
         out.extend(self._agent_badge())

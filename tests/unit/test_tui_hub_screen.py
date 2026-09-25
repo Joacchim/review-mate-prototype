@@ -16,8 +16,8 @@ class StubClient:
 
 def session(sid="s1", project="g/p", iid=1, state="new", checked=False, **extra):
     return {"id": sid, "status": "active", "state": state, "host_checked": checked,
-            "mr": {"host": "gitlab", "project": project, "iid": iid, "title": "T",
-                   "url": "u", "author": "a"},
+            "mr": {"host": "gitlab", "project": project, "iid": iid, "label": f"{project} !{iid}",
+                   "title": "T", "url": "u", "author": "a"},
             "mr_state": "", "behind": False, "unresolved": 0, "pending": 0, "posted": 0, **extra}
 
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 class SessionStatus(str, Enum):
@@ -70,6 +70,22 @@ class MRMetadata(BaseModel):
     capabilities: dict[str, bool] = Field(default_factory=dict)
     # diff version anchors (base/head/start sha) for precise write-back positions
     diff_refs: dict[str, str] = Field(default_factory=dict)
+
+    @computed_field
+    @property
+    def label(self) -> str:
+        """How a reviewer refers to this change, in one line.
+
+        Derived here rather than in each client, and not because it is styling — it is what the
+        change is *called*, and four clients each deciding that is four chances to disagree. A
+        branch that never left this machine has no merge-request number, so naming it by one would
+        put back the fiction `LocalRef` exists to keep out of the model: it is named by where it is
+        going, which is the only thing that identifies it.
+        """
+        if self.host == "local":
+            return f"{self.source_branch} → {self.target_branch}" if self.target_branch \
+                else self.source_branch
+        return f"{self.project} !{self.iid}"
 
 
 class FileEntry(BaseModel):

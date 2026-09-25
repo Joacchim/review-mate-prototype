@@ -592,7 +592,7 @@ function renderOpenSessions(land, sessions) {
   // no sort here: rows arrive in the order the server decided, so every client shows the same one
   sessions.forEach((s) => {
     const mr = s.mr || {};
-    const loc = mr.project ? `${esc(mr.project)} !${mr.iid}` : "(no MR loaded)";
+    const loc = mr.label ? esc(mr.label) : "(no MR loaded)";
     const bits = [];
     if (s.highlights) bits.push(`${s.highlights} highlight${s.highlights > 1 ? "s" : ""}`);
     if (s.cards) bits.push(`${s.cards} card${s.cards > 1 ? "s" : ""}`);
