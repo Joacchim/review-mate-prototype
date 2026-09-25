@@ -111,3 +111,22 @@ def test_a_label_the_reviewer_set_says_so(diff, rail, detail, staged):
     detail.relabel(criticality="low")
     expect(detail.label_note).to_have_text("your label")
     expect(rail.insight_labels.first).to_contain_text("✓")
+
+
+def test_a_half_made_choice_survives_a_frame_arriving(diff, rail, detail, staged, as_agent, page):
+    """A label is two choices sent as one command, so the second reads the first off the page. A
+    frame landing in between used to rebuild these controls from the stored label and quietly put
+    the first choice back — leaving a reviewer who picked both with a card that has neither."""
+    from review_mate.session.commands import PostMessage
+
+    staged.put(_with_insights(("nobody classified this", None)))
+    diff.load("s1")
+    rail.pinned_insights.first.click()
+    expect(detail.panel).to_be_visible()
+
+    detail.relabel(theme="security")                 # half a label: nothing is sent yet
+    as_agent("s1", PostMessage(body="something else entirely"))
+    expect(detail.label_theme).to_have_value("security")   # the frame must not have undone it
+
+    detail.relabel(criticality="high")
+    expect(rail.insight_labels.first).to_contain_text("security · high")

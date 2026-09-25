@@ -2022,10 +2022,22 @@ const CRITICALITIES = ["low", "medium", "high"];
 // Disagreeing with how Claude classified a finding, without losing the finding. A label that reads
 // `bug · high` on something that is a naming preference costs the reviewer attention every time
 // they scan the list, and dismissing the card to be rid of the label throws away the content too.
+// What the reviewer has picked but the server has not confirmed yet, per card. A label is two
+// choices sent as one command, so changing the second reads the first off the page — and a frame
+// arriving in between rebuilds these controls from the stored label, quietly putting the first
+// choice back to what it was. Held here for the same reason draft prose is: a re-render must not
+// discard what someone has just said.
+const labelChoice = {};
+
 function labelControl(card) {
   const row = document.createElement("div");
   row.className = "labelrow";
   const l = card.label || {};
+  const pending = labelChoice[card.id] || {};
+  if (pending.theme === l.theme && pending.criticality === l.criticality) {
+    delete labelChoice[card.id];               // the server caught up; stop second-guessing it
+  }
+  const shown = { ...l, ...(labelChoice[card.id] || {}) };
   const pick = (name, values, current) => {
     const sel = document.createElement("select");
     sel.className = "labelpick"; sel.setAttribute("aria-label", name);
@@ -2033,9 +2045,10 @@ function labelControl(card) {
     values.forEach((v) => sel.appendChild(new Option(v, v, false, v === current)));
     return sel;
   };
-  const theme = pick("theme", THEMES, l.theme);
-  const crit = pick("criticality", CRITICALITIES, l.criticality);
+  const theme = pick("theme", THEMES, shown.theme);
+  const crit = pick("criticality", CRITICALITIES, shown.criticality);
   const send = () => {
+    labelChoice[card.id] = { theme: theme.value, criticality: crit.value };
     if (!theme.value || !crit.value) return;   // half a label is not one
     post({ type: "label_card", card_id: card.id,
            label: { theme: theme.value, criticality: crit.value, about: l.about || "" } });

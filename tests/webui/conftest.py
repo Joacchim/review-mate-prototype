@@ -261,9 +261,14 @@ class Recorder:
             self.frames.append({"unparsed": str(payload)[:400]})
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def recorder(page, request) -> Recorder:
-    """Attached to every page — the frame log is what tells a mis-render from a wrong view."""
+    """Attached to every page — the frame log is what tells a mis-render from a wrong view.
+
+    Autouse, because the one test that needed it was the one that did not ask for it. A browser
+    test that fails once in a hundred runs is worth exactly what was captured while it failed, and
+    a listener on every page costs a fraction of what a second unexplained failure does.
+    """
     rec = Recorder()
     rec.attach(page)
     request.node.stash_recorder = rec
