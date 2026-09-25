@@ -1,0 +1,41 @@
+# A user unit, not a system one. review-mate reads your git credentials, writes under your $HOME,
+# and exists to be talked to by clients running as you — all of which a system service would have to
+# be given back one awkward piece at a time.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp packaging/systemd/review-mate.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now review-mate
+#
+# Deliberately *not* here: your API token. See the README — a token set in this file is frozen for
+# the life of the process and shows up in `systemctl show` and the journal, whereas one left to
+# `glab` is re-read from disk when the old one is refused, so `glab auth login` takes effect on the
+# running server with no restart.
+
+[Unit]
+Description=review-mate — a local code-review companion
+Documentation=https://github.com/Joacchim/review-mate-prototype
+After=network-online.target
+
+[Service]
+Type=exec
+ExecStart=%h/.local/bin/review-mate
+Restart=on-failure
+RestartSec=2s
+
+# Reviews are event-sourced under ~/.review-mate and restored at startup, so a restart keeps them.
+# What a restart does drop is the in-flight notification stream, which is designed to be re-derived
+# from that durable state rather than replayed — see docs/architecture.md.
+
+# Cloning uses whatever git credentials you already have. Over ssh that means an agent, and a user
+# unit does not inherit one from your login session: uncomment whichever line matches your setup,
+# or leave both and accept reviews over the host API alone (no local checkout, so no grep, LSP or
+# code-graph for the agent).
+#Environment=SSH_AUTH_SOCK=%t/ssh-agent.socket
+#Environment=SSH_AUTH_SOCK=%t/keyring/ssh
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

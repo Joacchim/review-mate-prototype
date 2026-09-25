@@ -137,6 +137,51 @@ per-MR worktrees. **Your own working clones are never touched.** Cloning uses wh
 `glab` is configured for (`git_protocol`, ssh or https), so it inherits credentials you already
 have; override with `REVIEW_MATE_GIT_PROTOCOL`.
 
+### Keep it running
+
+review-mate is meant to sit there: a reviewer opens the UI when they have something to read, and an
+agent connects when there is something to answer. Neither wants to start a server first — an agent
+in particular registers the MCP endpoint when *it* starts, so the server has to be up before it is.
+
+A **user** unit, not a system one. It reads your git credentials, writes under your `$HOME`, and
+exists to be talked to by clients running as you; a system service would have to be handed each of
+those back one awkward piece at a time.
+
+```bash
+uv tool install .                                   # puts `review-mate` on ~/.local/bin
+mkdir -p ~/.config/systemd/user
+cp packaging/systemd/review-mate.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now review-mate
+```
+
+Adjust `ExecStart` if you installed it elsewhere. `loginctl enable-linger $USER` keeps it up when
+you are not logged in.
+
+Three things worth knowing before you do:
+
+**Leave your token out of the unit file.** A token in `Environment=` is read once at exec and
+frozen for the life of the process, so refreshing it means restarting the service — and it shows up
+in `systemctl show` and the journal. Left to `glab`, it is re-read from disk whenever the host
+refuses the one in hand, so `glab auth login` takes effect on the running server with no restart.
+That is the whole reason the credential resolution falls back to `glab` rather than requiring
+environment variables.
+
+**A user unit has no ssh agent.** Cloning uses whatever git credentials you already have, which over
+ssh means an agent your login session started and the unit does not inherit. Point `SSH_AUTH_SOCK`
+at it in the unit (there are commented lines for the two usual places), or use `https` with a
+credential helper. Without either, reviews still work over the host API — but nothing is cloned, so
+there is no local checkout, and an agent loses grep, LSP and the code graph with it.
+
+**Idling costs nothing.** Every background task — the presence ticker, a session's event tail, the
+consent watch — starts when a client first watches something and stops when the last one goes. An
+idle server is an event loop and nothing else. A restart keeps your reviews: they are event-sourced
+under `~/.review-mate` and restored at startup. What it drops is the in-flight notification stream,
+which is designed to be re-derived from that durable state rather than replayed.
+
+Keep it on loopback. Nothing on `/mcp` or `/api` is authenticated — the trust boundary is your user
+account, exactly as it is for the files it reads.
+
 ### The terminal client
 
 The browser is one client of the server, not the server's only face. A terminal client ships
@@ -220,6 +265,7 @@ Layout:
 | `review_mate/web/` | The browser UI (vanilla JS, no build step) |
 | `review_mate/tui/` | The terminal client — a renderer over the view protocol |
 | `docs/` | Architecture, glossary, known surprises, testing method |
+| `packaging/` | A systemd user unit, for keeping the server up |
 | `.claude/` | The Claude Code skills (watching a fleet, reviewing your own branch), worker agent, and startup hook |
 
 The UI is served uncached, so a reload picks up `app.js` / `index.html` edits immediately. Python is
