@@ -51,6 +51,19 @@ search. Putting it in the durable log would make every idle query a permanent re
 nobody wanted to keep, and the session log is for a review, which a lookup is not yet. The cost is
 that a lookup cannot be audited or replayed. `review_mate/lookup/broker.py` states the same rule.
 
+## Folding a fix makes an earlier "addressed at abc123" name a commit that is gone
+
+While reviewing a branch that has not left the machine, a fix for something that branch introduced
+belongs in the commit that introduced it, so the agent folds it in — which rewrites every sha from
+that commit onward. Records made earlier in the same review still carry the shas they were made
+with, and those commits no longer exist.
+
+Nothing resolves those shas, so nothing breaks: the mark that matters is that a record *exists*,
+which is what distinguishes a subject the agent answered from one whose lines merely drifted. The
+sha is there to say what the code became at the time, and after a fold the honest answer for the
+latest change is the new head, which is what gets recorded. The alternative was not folding, which
+would leave the reviewer a branch shaped like the conversation instead of like the work.
+
 ## Submitting advances the watermark even when it posts nothing
 
 The reviewed-up-to mark moves to the current head on **any** submit — no drafts prepared, no

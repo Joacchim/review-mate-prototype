@@ -218,7 +218,7 @@ Layout:
 | `review_mate/web/` | The browser UI (vanilla JS, no build step) |
 | `review_mate/tui/` | The terminal client — a renderer over the view protocol |
 | `docs/` | Architecture, glossary, known surprises, testing method |
-| `.claude/` | The Claude Code skill, worker agent, and startup hook |
+| `.claude/` | The Claude Code skills (watching a fleet, reviewing your own branch), worker agent, and startup hook |
 
 The UI is served uncached, so a reload picks up `app.js` / `index.html` edits immediately. Python is
 frozen at launch — **restart the server after backend changes**. Sessions are restored on startup, so
