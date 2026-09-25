@@ -139,6 +139,13 @@ def create_app(manager: SessionManager | None = None,
         return bool(_session_scopes(session_id))
 
     async def _tail(session_id: str) -> None:
+        """Republish a session's held scopes as its events arrive, while a client is watching.
+
+        The actor is captured once, which relies on the manager keeping one actor per session id
+        for as long as the session exists — it does, and a manager that handed out a second would
+        leave this listening to the first for ever while the page watched a session that never
+        pushed it anything again. Asserted in the protocol tests rather than left as folklore.
+        """
         actor = manager.get(session_id)
         if actor is None:
             return

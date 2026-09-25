@@ -37,6 +37,11 @@ class FakeActor:
     def snapshot(self) -> SessionState:
         return self._state
 
+    def restage(self, state: SessionState) -> None:
+        """Put this actor behind a different scenario, keeping whoever is listening to it."""
+        self._state = state
+        self.commands.clear()
+
     async def submit(self, command, origin: Origin = Origin.BROWSER) -> CommandResult:
         self.commands.append((command, origin))
         outcome = handle(self._state, command, origin)
@@ -78,9 +83,19 @@ class FakeManager:
     # --- staging ----------------------------------------------------------
 
     def put(self, state: SessionState) -> str:
-        """Stage a session. One actor per id, kept across `get` calls so a subscriber registered
-        by the session tail still hears the command the browser sends."""
-        self._actors[state.id] = FakeActor(state)
+        """Stage a session. One actor per id, for as long as the id exists.
+
+        Re-staging an id keeps the actor and swaps what it holds, rather than replacing it. The
+        server captures a session's actor when the first client watches it and listens to that
+        object until the session ends, which the real manager guarantees — so handing out a second
+        actor for the same id would leave the server listening to the first for ever, and the page
+        would sit watching a session that never pushes it anything again.
+        """
+        existing = self._actors.get(state.id)
+        if existing is not None:
+            existing.restage(state)
+        else:
+            self._actors[state.id] = FakeActor(state)
         return state.id
 
     def actor(self, session_id: str) -> FakeActor | None:

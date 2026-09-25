@@ -164,6 +164,13 @@ def as_agent(_fixture_server, fake_manager):
     return submit
 
 
+def _await_release(app, timeout: float = 5.0) -> None:
+    """Block until the bus holds no watches, so no tail outlives the test that started it."""
+    deadline = time.monotonic() + timeout
+    while app.state.bus.watched("") and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
 @pytest.fixture
 def as_claude_lookup(_fixture_server, staged_app):
     """Answer the reviewer's open lookup, the way an attached agent would.
@@ -198,7 +205,13 @@ def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app, stub_
     a sha cannot change and a verdict holds until the host is asked again. Tests reuse one sha with
     different content, so each cache is dropped here. Resetting the manager alone leaks one test's
     file into the next test's.
+
+    It also waits for the previous test's page to be let go of. Closing a browser page does not make
+    the server notice: the socket unwinds on its own schedule, and until it does the bus still holds
+    that page's watches — so a session tail started for the old test keeps running, bound to the
+    actor this reset is about to throw away, and the new test gets a server that pushes it nothing.
     """
+    _await_release(staged_app)
     fake_manager.reset()
     stub_host.queue = list(QUEUE)
     stub_host.search_hits = []

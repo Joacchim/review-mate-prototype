@@ -5,10 +5,11 @@ is the whole reason the diff is split into scopes at all.
 """
 import asyncio
 import json
+from pathlib import Path
 
 from starlette.testclient import TestClient
 
-from conftest import HostStub
+from conftest import HostStub, next_frame
 from review_mate.seams import MRPayload, MRRef
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
@@ -707,3 +708,34 @@ async def test_the_budget_can_be_set_without_touching_the_code(tmp_path, monkeyp
 
     monkeypatch.setenv("REVIEW_MATE_BLOB_BUDGET_MB", "not a number")
     assert BlobScopes(None)._budget == 16 * 1024 * 1024, "a typo must not stop a server starting"
+
+
+async def test_a_session_keeps_being_pushed_after_its_scenario_is_restaged(tmp_path):
+    """The server captures a session's actor when the first client watches it, and listens to that
+    object until the session ends. Anything handing out a second actor for the same id leaves it
+    listening to the first for ever, and the page watches a session that pushes it nothing again.
+
+    The real manager guarantees one actor per id. This is the guarantee, asserted — so a fake or a
+    future manager that breaks it fails here rather than as a browser test that sometimes hangs.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "webui"))
+    from webui.fixtures.manager import FakeManager
+    from webui.fixtures.scenarios import review_with_highlights
+
+    manager = FakeManager()
+    app = create_app(manager=manager, with_mcp=False)
+    scope = "chat:s1:highlight:h1"
+    with TestClient(app) as tc:
+        manager.put(review_with_highlights("s1"))
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "scopes": [scope]})
+            assert next_frame(ws) is not None, "the initial view"
+
+            manager.put(review_with_highlights("s1"))     # re-staged, as between two tests
+            tc.post("/api/sessions/s1/commands", json={
+                "type": "post_message", "body": "after restaging",
+                "anchor": {"kind": "highlight", "id": "h1"}})
+            pushed = next_frame(ws)
+            assert pushed is not None, "the session stopped pushing when it was re-staged"
+            assert pushed["view"]["messages"][-1]["body"] == "after restaging"
