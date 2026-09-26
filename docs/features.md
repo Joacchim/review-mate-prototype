@@ -23,6 +23,9 @@ open, it was merged or closed.
 
 ![A change, its files, and the rail](images/diff.png)
 
+> ① the context between hunks, unfolded a screen at a time or all at once · ② the rail: everything
+> you have marked and everything Claude has said
+
 The file tree on the left, the diff in the middle, the rail on the right. Syntax highlighting, a
 per-file view, and the hunks' surrounding context available inline — unfold between hunks, or open
 the rest of the file, read at the merge request's head.
@@ -45,6 +48,9 @@ hundred new files.
 
 ![A card on a highlight, and the conversation beneath it](images/claude-channel.png)
 
+> ① what Claude found, anchored to the lines you marked · ② doubt a claim and ask for it to be
+> verified · ③ the reminder that this channel is yours alone
+
 Drag over the diff to mark a range. That alone gets you the **cheap tier** immediately: who last
 touched those lines, which issues reference them — host facts, no agent involved and no agent turn
 spent.
@@ -60,6 +66,9 @@ a lost one.
 
 ![MR-level findings, ordered by what matters](images/insights.png)
 
+> ① ask for a pass over the whole change · ② what a finding is about, and how much it matters ·
+> ③ narrow the list to one kind
+
 **Review this change** asks for a pass over the whole thing, alongside your own rather than instead
 of it. What comes back is classified — what each finding is about, and how much it matters — so
 forty findings are a list you can read worst-first or narrow to one kind, rather than one you read
@@ -71,6 +80,8 @@ keeps the finding and fixes the label.
 
 ![Consent for another repository](images/consent.png)
 
+> ① why it wants the repository · ② your answer, and nothing is read until you give one
+
 Claude asks before reading anything outside the change, and nothing is read until you answer. A
 refusal stays visible — an agent asking again for what you refused reads differently from one asking
 the first time.
@@ -78,6 +89,9 @@ the first time.
 ## Writing the review
 
 ![The comment you are preparing](images/review-channel.png)
+
+> ① the comment, editable until you send it · ② who will see it, once you do · ③ what is waiting to
+> go, and the approval that can go with it
 
 Each highlight can carry a comment, and so can the merge request as a whole. Nothing reaches the
 host until you submit: you write the whole review, read it back, and send it in one go — with the
@@ -89,6 +103,9 @@ thread to the line it is anchored to, reply, resolve, and edit or delete your ow
 ## Reviewing your own work first
 
 ![A branch under review, with a fix already landed](images/self-review.png)
+
+> ① named by where it is going, since there is no merge request number to show · ② the agent
+> changed the code here, so its lines moving is progress rather than a warning
 
 The same review, of a branch that has not left your machine — no merge request, nothing to post to,
 and no one else reading it yet. It is for work an agent has just written, read by the person about

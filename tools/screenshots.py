@@ -39,17 +39,66 @@ VIEWPORT = {"width": 1500, "height": 900}
 SHOTS: list = []
 
 
-def shot(name: str, description: str, shows: str):
-    """Register a shot. `shows` is a selector that must be visible when the picture is taken.
+def shot(name: str, description: str, shows: str, marks: tuple = ()):
+    """Register a shot.
 
-    Without it a mis-aimed shot is silent: the page renders *something*, the file is written, and
-    the caption claims a screen the picture does not contain. That happened — a shot meant to show
-    a consent prompt scrolled the wrong element and produced a second copy of the diff.
+    `shows` is a selector that must be visible when the picture is taken. Without it a mis-aimed
+    shot is silent: the page renders *something*, the file is written, and the caption claims a
+    screen the picture does not contain. That happened — a shot meant to show a consent prompt
+    scrolled the wrong element and produced a second copy of the diff.
+
+    `marks` are `(selector, label)` pairs, drawn as a ring around whatever the selector matches so
+    the prose can point at a part of the screen rather than describing where to look. Anchored to
+    the element and not to coordinates, so a ring cannot drift onto the wrong thing when the layout
+    changes — it either lands on what it names or the run fails.
     """
     def register(fn):
-        SHOTS.append((name, description, shows, fn))
+        SHOTS.append((name, description, shows, tuple(marks), fn))
         return fn
     return register
+
+
+# Drawn into the page rather than painted onto the file afterwards, so every ring is positioned
+# from the element's own rectangle. Rings rather than arrows: an arrow needs a direction and some
+# free space to come from, and picking those automatically goes wrong more often than it helps.
+_MARK_JS = """
+(marks) => {
+  const layer = document.createElement('div');
+  layer.id = '__marks';
+  layer.style.cssText = 'position:fixed;inset:0;z-index:99999;pointer-events:none';
+  document.body.appendChild(layer);
+  const missing = [];
+  const W = window.innerWidth, H = window.innerHeight;
+  marks.forEach(([selector, label]) => {
+    const el = document.querySelector(selector);
+    if (!el) { missing.push(selector); return; }
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) { missing.push(selector); return; }
+    const pad = 5;
+    // clamped to the viewport: a ring that runs off the picture reads as a rendering fault, and a
+    // badge outside it is simply not in the file
+    const left = Math.max(2, r.left - pad), top = Math.max(2, r.top - pad);
+    const right = Math.min(W - 2, r.right + pad), bottom = Math.min(H - 2, r.bottom + pad);
+    const ring = document.createElement('div');
+    ring.style.cssText =
+      `position:fixed;left:${left}px;top:${top}px;` +
+      `width:${right - left}px;height:${bottom - top}px;` +
+      'border:3px solid #e5484d;border-radius:10px;' +
+      'box-shadow:0 0 0 3px rgba(229,72,77,.22)';
+    layer.appendChild(ring);
+    if (!label) return;
+    const badge = document.createElement('div');
+    badge.textContent = label;
+    badge.style.cssText =
+      `position:fixed;left:${Math.max(2, left - 13)}px;top:${Math.max(2, top - 13)}px;` +
+      'width:26px;height:26px;border-radius:50%;background:#e5484d;color:#fff;' +
+      'font:600 15px/26px system-ui,sans-serif;text-align:center;' +
+      'box-shadow:0 1px 4px rgba(0,0,0,.35)';
+    layer.appendChild(badge);
+  });
+  return missing;
+}
+"""
 
 
 # --- the change under review ---------------------------------------------------
@@ -201,7 +250,8 @@ def _hub(page, base, stage):
 
 
 @shot("diff", "reading a change: the file tree, the diff, and the rail beside it",
-      shows="table.hunk .add")
+      shows="table.hunk .add",
+      marks=(("table.hunk tr.expand", "1"), (".rail .hrow", "2")))
 def _diff(page, base, stage):
     stage(showcase())
     _open(page, base)
@@ -217,7 +267,9 @@ def _side_by_side(page, base, stage):
 
 
 @shot("claude-channel", "what Claude found on a line, and the conversation under it",
-      shows="#detail .card")
+      shows="#detail .card",
+      marks=(("#detail .card", "1"), ("#detail .noteacts .btn", "2"),
+             ("#detail .channelnote", "3")))
 def _claude(page, base, stage):
     stage(showcase())
     _open(page, base)
@@ -227,7 +279,9 @@ def _claude(page, base, stage):
 
 
 @shot("review-channel", "the comment you are preparing, which nobody else sees yet",
-      shows="#detail textarea.draftbox")
+      shows="#detail textarea.draftbox",
+      marks=(("#detail textarea.draftbox", "1"), ("#detail .channelnote", "2"),
+             (".reviewbar .btn, .rbar .btn", "3")))
 def _review(page, base, stage):
     stage(showcase())
     _open(page, base)
@@ -237,7 +291,9 @@ def _review(page, base, stage):
 
 
 @shot("insights", "Claude's own read of the change, worst first",
-      shows=".railpin .railinsights .chip.crit")
+      shows=".railpin .railinsights .chip.crit",
+      marks=((".passrow .btn", "1"), (".railpin .railinsights .chip.crit", "2"),
+             (".railpin .themes", "3")))
 def _insights(page, base, stage):
     stage(showcase())
     _open(page, base)
@@ -246,7 +302,8 @@ def _insights(page, base, stage):
 
 
 @shot("consent", "Claude asking to read another repository, and nothing read until you answer",
-      shows=".rail .req button")
+      shows=".rail .req button",
+      marks=((".rail .req .why", "1"), (".rail .req button", "2")))
 def _consent(page, base, stage):
     stage(showcase())
     _open(page, base)
@@ -255,7 +312,8 @@ def _consent(page, base, stage):
 
 
 @shot("self-review", "reviewing your own branch: no merge request, and fixes landing as you comment",
-      shows=".chip.fixed")
+      shows=".chip.fixed",
+      marks=(("#mr", "1"), (".chip.fixed", "2")))
 def _self_review(page, base, stage):
     stage(branch_review())
     _open(page, base)
@@ -323,7 +381,7 @@ def main() -> int:
     written = []
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
-        for name, description, shows, take in SHOTS:
+        for name, description, shows, marks, take in SHOTS:
             page = browser.new_page(viewport=VIEWPORT, device_scale_factor=2)
             try:
                 take(page, base, stage)
@@ -331,6 +389,12 @@ def main() -> int:
                     raise SystemExit(
                         f"{name}: nothing matching {shows!r} is on screen, so the picture would "
                         f"not show what it claims — fix the shot rather than the caption")
+                if marks:
+                    missing = page.evaluate(_MARK_JS, [list(m) for m in marks])
+                    if missing:
+                        raise SystemExit(
+                            f"{name}: nothing to mark for {missing} — the ring would point at "
+                            f"nothing, so fix the selector rather than dropping the callout")
                 target = IMAGES / f"{name}.png"
                 page.screenshot(path=str(target))
                 written.append((name, description, target.stat().st_size))
