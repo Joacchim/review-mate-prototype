@@ -139,6 +139,7 @@ right command, and that a pushed update repaints. Review logic is the protocol s
 | Rail zones | `test_rail_zones.py` | the pin outside the scroller, its cap, and the index still reachable past a run of insights |
 | Addressed | `test_addressed.py` | a subject the agent changed the code over reading as addressed rather than stale, and the drifted case still warning |
 | Insight labels | `test_insight_labels.py` | worst-first ordering, unclassified sorting last rather than lowest, the free line, narrowing to one theme, and the reviewer overriding a label without losing the finding |
+| Readability | `test_readable.py` | that an active toggle or filter is still legible — its text not the colour of its own background — in both themes |
 | Lookup | `test_lookup.py` | host search hitting, missing and failing, that Claude is offered in all three, and that the description sent to Claude is separate from the term sent to the host |
 | Protocol edges | `test_protocol_edges.py` | a scope republished under an open view repaints it and nothing else |
 
