@@ -358,11 +358,14 @@ def _per_commit(page, base, stage):
     page.wait_for_timeout(600)
 
 
-@shot("dark", "the same review in the dark theme", shows="table.hunk .add",
-      marks=(("#t-theme", "1"),))
+# the landing page rather than a diff: paired with the light one in the section below, it shows the
+# same screen twice, which is the claim — one interface, two themes
+@shot("dark", "the same landing page in the dark theme", shows=".land",
+      marks=(("#t-theme", "1"),), height=620)
 def _dark(page, base, stage):
     stage(showcase())
-    _open(page, base)
+    page.goto(base)
+    page.wait_for_selector(".land")
     page.locator("#t-theme").click()
     page.wait_for_timeout(400)
 
