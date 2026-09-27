@@ -6,7 +6,8 @@ algebra and holds no domain logic: it renders what a scope carries.
 
 `seq` is per-scope and monotonic. It orders replacements and exposes a gap; it is not a resume
 token, because there is nothing to resume — a reconnecting client re-subscribes and is sent the
-current view of every scope it names.
+current view of every scope it names. Not the event log's `seq`, which is an offset a client
+genuinely does resume from: the two share a name and answer that question oppositely.
 """
 from __future__ import annotations
 

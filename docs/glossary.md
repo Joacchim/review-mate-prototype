@@ -44,9 +44,6 @@ partial updates, which is why a client needs no merge logic.
 the rest is its argument, so `diff:<sid>:<mode>:<path>` needs no registration per file. A scope with
 no argument — `hub` — is a singleton.
 
-**seq** — a per-scope counter of changes. It orders replacements and exposes a gap. Not a resume
-token: a reconnecting client re-subscribes and is sent each scope's current view.
-
 **Mode** — which version of a change is being read: `full`, `since`, or `commit@<sha>`. Part of a
 scope's name rather than server state, because it is a property of the reader.
 

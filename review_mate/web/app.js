@@ -804,6 +804,7 @@ async function markReviewed() {
 let wsTimer = null;
 function connectWS() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
+  // state.seq is the event log's offset, not a scope's seq — this stream is the one you resume
   const ws = new WebSocket(`${proto}://${location.host}/api/sessions/${SID}/stream?since=${state.seq}`);
   ws.onmessage = () => { clearTimeout(wsTimer); wsTimer = setTimeout(load, 60); };
   ws.onclose = () => setTimeout(connectWS, 1000);
