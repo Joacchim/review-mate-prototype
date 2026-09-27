@@ -153,7 +153,7 @@ follows posting rather than racing it.
 | `diff:<sid>:<mode>` | the file list and the MR |
 | `diff:<sid>:<mode>:<path>` | one file's hunks, lines and token spans |
 | `blob:<sid>:<mode>:<path>` | a whole file at the resolved sha, for unfolding |
-| `rail:<sid>` | the session's highlights with their cards and cheap context, and MR-level insights |
+| `rail:<sid>` | the session's highlights with their cards and host context, and MR-level insights |
 | `chat:<sid>` | an index of the review's conversations, and the agent state it is in |
 | `chat:<sid>:review` | the conversation about the change as a whole |
 | `chat:<sid>:<kind>:<id>` | one subject's conversation — kind is highlight, insight or thread |
@@ -275,7 +275,7 @@ messages are about what is inside one.
 Alongside the view protocol, the session document is served directly: `GET /api/sessions/{id}`
 returns the folded state, `POST /api/sessions/{id}/commands` submits a session command, and a
 per-session websocket streams its events. A client reads what the scopes fold — highlights, their
-cards and the cheap tier all arrive on `rail:<sid>` — and reaches for the document only for what no
+cards and the host context all arrive on `rail:<sid>` — and reaches for the document only for what no
 scope carries: drafts under edit, threads, chat. The agent reaches the same sessions in-process
 through the MCP bridge rather than over HTTP.
 

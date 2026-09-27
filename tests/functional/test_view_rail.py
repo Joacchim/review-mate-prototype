@@ -27,7 +27,7 @@ from review_mate.view.rail import RailScope
 
 
 class BlameHost(HostStub):
-    """A host that can answer the cheap tier."""
+    """A host that can answer the host context."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -102,7 +102,7 @@ async def test_a_draft_moves_the_highlights_comment_state(session):
     assert (await rail.build(sid))["highlights"][0]["comment_state"] == "comment"
 
 
-async def test_the_cheap_tier_loads_then_lands(session):
+async def test_the_host_context_loads_then_lands(session):
     manager, sid, provider = session
     await manager.get(sid).submit(highlight("a.py", 10, 12), Origin.BROWSER)
     published = []
@@ -132,7 +132,7 @@ async def test_one_read_serves_a_range(session):
 
 
 async def test_a_failing_blame_does_not_cost_the_linked_issues(session):
-    """Each source of the cheap tier degrades on its own."""
+    """Each source of the host context degrades on its own."""
     manager, sid, provider = session
 
     async def broken_blame(*args):

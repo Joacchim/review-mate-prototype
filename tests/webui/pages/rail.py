@@ -100,8 +100,8 @@ class RailPage:
         return self.page.locator("#detail")
 
     @property
-    def cheap_context(self):
-        return self.page.locator("#detail .cheapctx")
+    def host_context(self):
+        return self.page.locator("#detail .hostctx")
 
     def escalate(self, question: str = "") -> None:
         """Ask Claude for context on the highlight the detail panel is showing."""

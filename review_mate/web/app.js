@@ -457,7 +457,7 @@ function scopeHunks(path) {
   return view && view.state === "ready" ? view.hunks : null;
 }
 
-// what this review has asked about, as the server folded it: numbering, state, cards, cheap tier
+// what this review has asked about, as the server folded it: numbering, state, cards, host context
 function railView() {
   return scopeViews[`rail:${SID}`] || null;
 }
@@ -1975,10 +1975,10 @@ function claudeChannel(subject) {
       q.className = "q"; q.textContent = hl.question;
       frag.appendChild(q);
     }
-    // the cheap, deterministic context tier — shown by default, no agent (D21). Both tiers drop
+    // the deterministic host context — shown by default, no agent (D21). Both it and the card drop
     // once the comment is posted: they were context for writing it, and it is written.
     if (!posted) {
-      frag.appendChild(cheapContextBlock(hl));
+      frag.appendChild(hostContextBlock(hl));
       if (hl.card) {
         frag.appendChild(cardBlock(hl.card));
       } else if (hl.context_requested) {
@@ -2522,7 +2522,7 @@ async function submitReview() {
   approveToggle = false;
 }
 
-// escalate a highlight to the agent tier (D21) — separate from the review-comment box (D14):
+// escalate a highlight to the agent (D21) — separate from the review-comment box (D14):
 // an optional "what do you want to know?" plus the explicit request button.
 function askContextControl(hl) {
   const wrap = document.createElement("div");
@@ -2545,10 +2545,10 @@ function requestContext(hl) {
   delete askBuf[hl.id];
 }
 
-function cheapContextBlock(hl) {
+function hostContextBlock(hl) {
   const c = hl.context || {};
   const box = document.createElement("div");
-  box.className = "cheapctx";
+  box.className = "hostctx";
   if (c.state === "loading" || c.state === "idle") { box.appendChild(empty("looking up context…")); return box; }
   if (c.state === "unavailable") { box.appendChild(empty("this host has no last-touch")); return box; }
   if (c.state === "error") { box.appendChild(empty("context unavailable: " + (c.error || ""))); return box; }

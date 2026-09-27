@@ -221,8 +221,8 @@ async def test_linked_issues_maps_closes_issues(provider):
                        "url": "https://gitlab/group/proj/-/issues/7"}]
 
 
-async def test_cheap_context_degrades_on_host_error():
-    # a host that errors on every read → the cheap tier yields [] rather than raising
+async def test_host_context_degrades_on_host_error():
+    # a host that errors on every read → the host context yields [] rather than raising
     client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(500, json={})),
                                base_url="https://gitlab/api/v4")
     p = GitLabProvider(base_url="https://gitlab/api/v4", token="t", username="me", client=client)

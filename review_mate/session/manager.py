@@ -92,7 +92,7 @@ class SessionManager:
             async for event in actor.subscribe(since=since):
                 if event.origin is Origin.AGENT:
                     continue  # the agent's own writes must not wake it back up
-                # a bare highlight gets the cheap tier and spends no agent turn (D21); every
+                # a bare highlight gets the host context and spends no agent turn (D21); every
                 # *explicit* ask wakes the agent, because each one is the reviewer waiting.
                 if isinstance(event, ev.ContextRequested):
                     broker.publish("context_requested", session_id=sid)

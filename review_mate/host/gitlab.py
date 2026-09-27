@@ -323,8 +323,8 @@ class GitLabProvider:
         return [t for d in discussions if (t := _to_thread(d)).comments]
 
     async def blame(self, project: str, path: str, ref: str, start: int, end: int) -> list[dict]:
-        """Last-touch info for a line range (the cheap context tier, D21) — GitLab file blame at
-        `ref`. Best-effort: returns [] on any error so the tier degrades rather than failing."""
+        """Last-touch info for a line range (the host context, D21) — GitLab file blame at
+        `ref`. Best-effort: returns [] on any error so the host context degrades rather than failing."""
         try:
             rows = await self._get(
                 f"/projects/{quote(project, safe='')}/repository/files/{quote(path, safe='')}/blame",
@@ -343,7 +343,7 @@ class GitLabProvider:
         return out
 
     async def linked_issues(self, project: str, iid: int) -> list[dict]:
-        """Issues this MR closes (the cheap context tier, D21). Best-effort: [] on any error."""
+        """Issues this MR closes (the host context, D21). Best-effort: [] on any error."""
         try:
             rows = await self._get(
                 f"/projects/{quote(project, safe='')}/merge_requests/{iid}/closes_issues")

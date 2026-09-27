@@ -226,7 +226,7 @@ def test_an_answered_highlight_shows_its_card():
     assert "because the pool moved" in text_of(screen)
 
 
-def test_the_cheap_tier_shows_before_any_card():
+def test_the_host_context_shows_before_any_card():
     screen = screen_with([hl(context={"state": "ready", "blame": [{"author": "luigi"}],
                                       "linked_issues": [], "error": ""})])
     assert "last touched by luigi" in text_of(screen)

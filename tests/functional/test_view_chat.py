@@ -158,7 +158,7 @@ async def test_an_escalation_and_a_request_for_insights_are_asks_too(session):
 
 
 async def test_a_bare_highlight_owes_nothing(session):
-    """D21: the cheap tier serves it, so only an explicit escalation is an ask."""
+    """D21: the host context serves it, so only an explicit escalation is an ask."""
     manager, sid = session
     await mark(manager.get(sid))
     assert (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"] == []

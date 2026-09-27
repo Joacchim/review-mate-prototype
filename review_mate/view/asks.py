@@ -47,7 +47,7 @@ def outstanding(snapshot) -> list[Ask]:
     """Every ask this review is waiting on, oldest first.
 
     Four shapes, and they are not interchangeable: a conversation where the reviewer spoke last, a
-    highlight escalated past the cheap tier with no card yet, a request for insights on the change
+    highlight escalated past the host context with no card yet, a request for insights on the change
     as a whole that nothing has answered, and something the reviewer asked to have verified.
 
     An agent's own question back to the reviewer is not here. Nothing distinguishes a question from

@@ -1,7 +1,7 @@
 """The rail in a browser: what the reviewer asked about, as the server folded it.
 
 Every fact here reaches the page on `rail:<sid>` — the numbering, the comment state, the card, the
-cheap context tier. The page derives none of it, so a test that passes against a stale client-side
+host context. The page derives none of it, so a test that passes against a stale client-side
 derivation would be the failure this suite exists to catch.
 """
 import pytest
@@ -82,23 +82,23 @@ def test_an_mr_level_insight_stands_on_its_own(diff, rail, staged):
     expect(rail.insights).to_contain_text("single queue")
 
 
-def test_the_cheap_context_tier_lands_on_the_scope(diff, rail, staged, stub_host):
+def test_the_host_context_tier_lands_on_the_scope(diff, rail, staged, stub_host):
     """The host read is not the page's to make: the scope reports loading, fetches, republishes."""
     stub_host.blame_lines = list(BLAME)
     stub_host.issues = list(ISSUES)
     staged.put(review_with_highlights("s1"))
     diff.load("s1")
     rail.row(1).click()
-    expect(rail.cheap_context).to_contain_text("mathieu")
-    expect(rail.cheap_context).to_contain_text("split the legacy queue out")
-    expect(rail.cheap_context).to_contain_text("retire the legacy queue")
+    expect(rail.host_context).to_contain_text("mathieu")
+    expect(rail.host_context).to_contain_text("split the legacy queue out")
+    expect(rail.host_context).to_contain_text("retire the legacy queue")
 
 
 def test_a_host_with_no_last_touch_says_so(diff, rail, staged, stub_host):
     staged.put(review_with_highlights("s1"))
     diff.load("s1")
     rail.row(1).click()
-    expect(rail.cheap_context).to_contain_text("no last-touch")
+    expect(rail.host_context).to_contain_text("no last-touch")
 
 
 # --- interactions: a click leaves as a command and comes back as a new view ----

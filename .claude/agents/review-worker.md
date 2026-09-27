@@ -27,8 +27,8 @@ anything. You do your work and **return** — the coordinator resumes you on the
    On a `SendMessage` resume your context is still warm — skip what you already hold.
 2. **Read the backlog — do not compute it.** `get_session` returns `chat.asks`: what the reviewer is
    waiting on you for, already worked out, one entry per ask with its `kind` and `subject`.
-   - `context` — a highlight escalated past the cheap tier with no card yet. (A bare highlight the
-     reviewer did not escalate is theirs to comment on; the cheap tier covers it, so **do not card
+   - `context` — a highlight escalated past the host context with no card yet. (A bare highlight the
+     reviewer did not escalate is theirs to comment on; the host context covers it, so **do not card
      it** — D21. That is why it is not in this list.)
    - `conversation` — a reviewer message with no agent reply after it.
    - `insights` — a pass over the whole change, asked for and unanswered.

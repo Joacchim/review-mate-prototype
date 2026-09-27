@@ -7,7 +7,7 @@ They live together rather than inside each file's scope because the numbering is
 reviewer references a card as "#2", which no per-file view can assign — and because a card arriving
 would otherwise republish a whole tokenized file to deliver a few hundred bytes.
 
-The cheap context tier rides here too. It is a host read per line range, so it follows the shape the
+The host context rides here too. It is a host read per line range, so it follows the shape the
 hub's queue established: the view reports it as loading, a one-shot fetch lands, and the scope
 republishes. A range at a fixed sha cannot change, so what it caches never needs invalidating.
 """
@@ -70,7 +70,7 @@ class RailHighlight(BaseModel):
     question: str | None = None
     status: str = "open"
     author: str = "browser"          # a highlight the agent made reads differently in the rail
-    context_requested: bool = False  # escalated past the cheap tier, so an answer is expected
+    context_requested: bool = False  # escalated past the host context, so an answer is expected
     context_requested_at: str = ""   # when they escalated — a client ages the "working" cue from it
     stale: bool = False          # made against an earlier head, so its lines may have moved
     addressed: "RailAddressed | None" = None   # the agent changed the code in answer to this
@@ -117,10 +117,10 @@ def _addressed(snapshot, kind, ident) -> RailAddressed | None:
 
 
 class RailScope:
-    """Builds the rail, and owns the cheap tier's cache.
+    """Builds the rail, and owns the host context's cache.
 
-    `build` never calls the host: the tier is fetched by a one-shot task per line range, keyed on
-    the sha it was read at.
+    `build` never calls the host: the host context is fetched by a one-shot task per line
+    range, keyed on the sha it was read at.
     """
 
     def __init__(self, manager, provider=None, publish=None) -> None:
@@ -187,7 +187,7 @@ class RailScope:
                 theme=label.theme.value, criticality=label.criticality.value,
                 about=label.about, by=getattr(label.by, "value", str(label.by))))
 
-    # --- the cheap tier ------------------------------------------------------
+    # --- the host context -----------------------------------------------------
 
     def _context_for(self, snapshot, highlight, session_id: str) -> RailContext:
         if snapshot.mr is None:

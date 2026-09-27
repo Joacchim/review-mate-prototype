@@ -801,7 +801,7 @@ class DiffScreen:
         self.anchor = None
 
     def ask_command(self) -> dict | None:
-        """Escalate the highlight in focus from the cheap tier to the agent."""
+        """Escalate the highlight in focus from the host context to the agent."""
         row = self.rail_row() if self.focus == "rail" else None
         if row is not None:
             # an insight is already an answer, so there is nothing to escalate about one

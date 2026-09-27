@@ -154,7 +154,7 @@ def test_request_context_sets_the_escalation_flag():
     s = fold(s, handle(s, cmd.AddHighlight(file="a.py", side=Side.NEW,
                                            line_range=LineRange(start=1, end=1)), Origin.BROWSER))
     hid = s.highlights[0].id
-    assert s.highlights[0].context_requested is False           # bare highlight: cheap tier only
+    assert s.highlights[0].context_requested is False           # bare highlight: host context only
     s = fold(s, handle(s, cmd.RequestContext(highlight_id=hid, question="why?"), Origin.BROWSER))
     assert s.highlights[0].context_requested is True and s.highlights[0].question == "why?"
     # stamped with the escalation time, so the UI can say how long Claude has been on it

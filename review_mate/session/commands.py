@@ -38,7 +38,7 @@ class RemoveHighlight(BaseModel):
 
 
 class RequestContext(BaseModel):
-    """The reviewer escalates a highlight from the cheap tier to a full agent card (D21)."""
+    """The reviewer escalates a highlight from the host context to a full agent card (D21)."""
     type: Literal["request_context"] = "request_context"
     highlight_id: str
     question: str | None = None
@@ -213,7 +213,7 @@ AUTHORITY: dict[str, set[Origin]] = {
     # Highlight.author records which, and the single-writer property still holds (appends don't conflict).
     "add_highlight": {Origin.BROWSER, Origin.AGENT},
     "remove_highlight": {Origin.BROWSER},
-    "request_context": {Origin.BROWSER},   # the reviewer escalates a highlight to the agent tier (D21)
+    "request_context": {Origin.BROWSER},   # the reviewer escalates a highlight to the agent (D21)
     "request_insights": {Origin.BROWSER},  # ... and the same ask about the change as a whole
     "request_check": {Origin.BROWSER},     # verifying something said is the reviewer's to ask for
     "remove_card": {Origin.BROWSER},
