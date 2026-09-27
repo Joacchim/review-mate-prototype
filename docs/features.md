@@ -22,8 +22,9 @@ starts a session on a queued merge request without leaving the page, and a revie
 open says what changed while you were away: the branch moved, discussions were opened, it was
 merged or closed.
 
-Typing in the box at the top **replaces this page with search results** as you type — the landing
-page is not still behind it, and clearing the box brings it back.
+Typing in the box at the top **replaces this page with search results** as you type. They are not a
+dropdown over the page, so there is nothing to dismiss: emptying the box builds the landing page
+again, from the same state it was showing before.
 
 ![Searching for a merge request](images/lookup.png)
 
