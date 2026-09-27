@@ -34,12 +34,24 @@ from webui.fixtures.host import StubHost  # noqa: E402
 from webui.fixtures.manager import FakeManager  # noqa: E402
 
 IMAGES = ROOT / "docs" / "images"
+HOST = StubHost()          # shots that need host-computed context set it here
+
+# what is waiting on the reviewer, so the landing page shows a queue rather than an empty heading
+QUEUE = [
+    {"host": "gitlab", "project": "platform/virtu/control-plane", "iid": 141,
+     "title": "drop the per-fleet lock from the fast path",
+     "url": "https://gitlab.example/mr/141"},
+    {"host": "gitlab", "project": "platform/orchestration/dr-house", "iid": 86,
+     "title": "allow a transfer with no user attached", "url": "https://gitlab.example/mr/86"},
+    {"host": "gitlab", "project": "platform/virtu/fleet-api", "iid": 12,
+     "title": "expose capacity per fleet", "url": "https://gitlab.example/mr/12"},
+]
 VIEWPORT = {"width": 1500, "height": 900}
 
 SHOTS: list = []
 
 
-def shot(name: str, description: str, shows: str, marks: tuple = ()):
+def shot(name: str, description: str, shows: str, marks: tuple = (), height: int | None = None):
     """Register a shot.
 
     `shows` is a selector that must be visible when the picture is taken. Without it a mis-aimed
@@ -53,7 +65,7 @@ def shot(name: str, description: str, shows: str, marks: tuple = ()):
     changes — it either lands on what it names or the run fails.
     """
     def register(fn):
-        SHOTS.append((name, description, shows, tuple(marks), fn))
+        SHOTS.append((name, description, shows, tuple(marks), height, fn))
         return fn
     return register
 
@@ -241,7 +253,8 @@ def showcase(session_id: str = "s1") -> SessionState:
 
 # --- the shots -----------------------------------------------------------------
 
-@shot("hub", "the landing page: what is open, and what is waiting on you", shows=".land")
+@shot("hub", "the landing page: what is open, and what is waiting on you", shows=".land",
+      marks=(("#ref", "1"), (".land .hubhdr", "2"), (".land .queuehdr", "3")), height=620)
 def _hub(page, base, stage):
     stage(showcase())
     page.goto(base)
@@ -249,9 +262,10 @@ def _hub(page, base, stage):
     page.wait_for_timeout(400)
 
 
-@shot("diff", "reading a change: the file tree, the diff, and the rail beside it",
+@shot("diff", "the three panels a change is read in",
       shows="table.hunk .add",
-      marks=(("table.hunk tr.expand", "1"), (".rail .hrow", "2")))
+      marks=(("#files", "1"), ("#diff", "2"), ("#rail", "3"),
+             ("#t-left", "4"), ("#t-right", "5"), ("#mr", "6")))
 def _diff(page, base, stage):
     stage(showcase())
     _open(page, base)
@@ -268,8 +282,8 @@ def _side_by_side(page, base, stage):
 
 @shot("claude-channel", "what Claude found on a line, and the conversation under it",
       shows="#detail .card",
-      marks=(("#detail .card", "1"), ("#detail .noteacts .btn", "2"),
-             ("#detail .channelnote", "3")))
+      marks=(("#detail .tabs, #detail .chathdr", "1"), ("#detail .card", "2"),
+             ("#detail .noteacts .btn", "3"), ("#detail .channelnote", "4")))
 def _claude(page, base, stage):
     stage(showcase())
     _open(page, base)
@@ -280,14 +294,77 @@ def _claude(page, base, stage):
 
 @shot("review-channel", "the comment you are preparing, which nobody else sees yet",
       shows="#detail textarea.draftbox",
-      marks=(("#detail textarea.draftbox", "1"), ("#detail .channelnote", "2"),
-             (".reviewbar .btn, .rbar .btn", "3")))
+      marks=(("#detail textarea.draftbox", "1"), ("#detail .channelnote", "2")))
 def _review(page, base, stage):
     stage(showcase())
     _open(page, base)
     page.locator("#hlist .hrow").first.click()
+    page.wait_for_selector("#detail .tab")
     page.locator("#detail .tab", has_text="Review").click()
+    page.wait_for_selector("#detail textarea.draftbox")
     page.wait_for_timeout(300)
+
+
+@shot("review-state", "what is written, what is sent, and what the merge request will see",
+      shows="#railseg .btn",
+      marks=(("#railseg", "1"), (".railpin .hrow.mr", "2"), (".rbar, .reviewbar", "3")))
+def _review_state(page, base, stage):
+    stage(showcase())
+    _open(page, base)
+    page.wait_for_selector("#railseg .btn")
+    page.wait_for_timeout(300)
+
+
+@shot("lookup", "finding a merge request by name, or by description when the name will not do",
+      shows=".land .searchresults",
+      marks=((".land .searchresults", "1"), (".land .askrow", "2")), height=620)
+def _lookup(page, base, stage):
+    stage(showcase())
+    HOST.search_hits = [
+        {"project": "platform/virtu/control-plane", "iid": 137,
+         "title": "reserve scheduler capacity per fleet", "url": "https://gitlab.example/mr/137"},
+        {"project": "platform/virtu/control-plane", "iid": 92,
+         "title": "retire the single queue", "url": "https://gitlab.example/mr/92"},
+    ]
+    page.goto(base)
+    page.wait_for_selector(".land")
+    box = page.locator("#ref")
+    box.fill("capacity")
+    box.dispatch_event("input")
+    page.wait_for_selector(".land .searchresults .qitem")
+    page.wait_for_timeout(400)
+
+
+@shot("per-commit", "reading the change one commit at a time",
+      shows="table.hunk .add",      # the commit's own diff, not just the picker above it
+      marks=(("#t-commits", "1"), ("#commitbar, .commitbar, .commits", "2")))
+def _per_commit(page, base, stage):
+    stage(showcase())
+    HOST.commit_list = [
+        {"sha": "9f3c1ab", "short_id": "9f3c1ab", "title": "reserve per fleet, falling back to legacy",
+         "message": "", "author": "luigi", "created_at": "2026-02-01T08:00:00+00:00"},
+        {"sha": "2b77e40", "short_id": "2b77e40", "title": "count what drain gave back",
+         "message": "", "author": "luigi", "created_at": "2026-02-01T08:30:00+00:00"},
+    ]
+    # a commit with no diff illustrates nothing — the mode shows one commit's own change
+    HOST.commit_files = {
+        "9f3c1ab": [FileEntry(path="scheduler/capacity.py", change_type=ChangeType.MODIFIED,
+                              language="python", hunks=[{"diff": CAPACITY}])],
+        "2b77e40": [FileEntry(path="scheduler/config.py", change_type=ChangeType.MODIFIED,
+                              language="python", hunks=[{"diff": CONFIG}])],
+    }
+    _open(page, base)
+    page.locator("#t-commits").click()
+    page.wait_for_timeout(600)
+
+
+@shot("dark", "the same review in the dark theme", shows="table.hunk .add",
+      marks=(("#t-theme", "1"),))
+def _dark(page, base, stage):
+    stage(showcase())
+    _open(page, base)
+    page.locator("#t-theme").click()
+    page.wait_for_timeout(400)
 
 
 @shot("insights", "Claude's own read of the change, worst first",
@@ -361,7 +438,7 @@ def _open(page, base):
 def main() -> int:
     IMAGES.mkdir(parents=True, exist_ok=True)
     manager = FakeManager()
-    app = create_app(manager=manager, provider=StubHost(), with_mcp=False,
+    app = create_app(manager=manager, provider=HOST, with_mcp=False,
                      resolve_ref=lambda raw: MRRef(host="gitlab", project="p", iid=1))
     config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error")
     server = uvicorn.Server(config)
@@ -376,13 +453,21 @@ def main() -> int:
 
     def stage(state):
         manager.reset()
+        HOST.queue = list(QUEUE)
+        HOST.blame_lines = [{"author": "ana", "date": "2026-01-14", "sha": "4c1f0b2",
+                             "summary": "split the queue per fleet"}]
+        HOST.issues = [{"iid": 402, "title": "scheduler starves the legacy fleet",
+                        "url": "https://gitlab.example/issues/402"}]
+        app.state.rail_scope.reset()
         manager.put(state)
 
     written = []
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
-        for name, description, shows, marks, take in SHOTS:
-            page = browser.new_page(viewport=VIEWPORT, device_scale_factor=2)
+        for name, description, shows, marks, height, take in SHOTS:
+            # a short page in a tall frame is mostly empty, and empty is not worth 400 kB
+            size = dict(VIEWPORT, height=height) if height else VIEWPORT
+            page = browser.new_page(viewport=size, device_scale_factor=2)
             try:
                 take(page, base, stage)
                 if not page.locator(shows).first.is_visible():

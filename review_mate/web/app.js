@@ -711,6 +711,7 @@ async function showLanding() {
   renderOpenSessions(land, active);
 
   const head = document.createElement("div");
+  head.className = "queuehdr";      // its own name: two headings on this page, and only one queue
   head.innerHTML = `<h2>Pick a merge request</h2>`;
   land.appendChild(head);
   const queueBox = document.createElement("div");
