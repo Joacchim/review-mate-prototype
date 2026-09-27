@@ -8,7 +8,9 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
     "httpx>=0.27",
-    "mcp>=1.28.1",
+    # capped on purpose: mcp 2.x renamed FastMCP to MCPServer and dropped the constructor
+    # arguments this mounts the agent seam with. Raising it is a migration, not a bump.
+    "mcp>=1.28.1,<2",
     # server-side lexing: clients receive semantic token kinds and map them to their own palette
     "pygments>=2.17",
 ]

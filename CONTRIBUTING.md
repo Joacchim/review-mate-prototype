@@ -39,6 +39,16 @@ uv run --extra webtest python tools/screenshots.py
 That drives the real application too. Regenerate them when a screen changes rather than describing
 the difference in prose.
 
+## Dependencies
+
+`uv.lock` pins what a checkout gets. It does **not** pin what an install gets: `uv tool install`
+resolves afresh, so a dependency with no upper bound picks up whatever major is current that day.
+A green checkout is therefore not evidence that `uv tool install` works.
+
+So direct dependencies whose API we reach into are capped at the major they were built against, and
+raising a cap is a migration with its own commit rather than a bump. A boundary test holds the line
+for `mcp`, where this has already cost an afternoon.
+
 ## Layout
 
 | Path | What lives there |

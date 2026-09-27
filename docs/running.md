@@ -170,6 +170,10 @@ is the main reason to run it as a unit rather than starting it by hand.
 
 ## Troubleshooting
 
+- **The service exits immediately with `No module named 'mcp.server.fastmcp'`** — an installed
+  build resolved a newer major of the `mcp` package than it was written against. Reinstall with
+  `--force` from a version that caps it; `systemctl --user status review-mate` and
+  `journalctl --user -u review-mate` show the traceback that says which import failed.
 - **"Failed to connect" from the MCP client** — the endpoint is `http://127.0.0.1:8765/mcp/`, with
   the trailing slash. Without it, a POST returns 405.
 - **The MCP tools are missing in Claude Code** — the server was not up when the session started.

@@ -71,3 +71,21 @@ def test_the_browser_suites_map_lists_every_file_in_it():
     files = {py.name for py in (CORE.parent / "tests" / "webui").glob("test_*.py")}
     missing = sorted(name for name in files if name not in doc)
     assert not missing, f"not described in docs/testing/web-ui.md: {missing}"
+
+
+def test_the_agent_seam_pins_a_major_it_has_been_built_against():
+    """`uv.lock` protects development and not installation.
+
+    `uv tool install` resolves afresh, so a dependency with no upper bound gets whatever major is
+    current on the day someone installs. That is how a working checkout shipped a build that would
+    not start: mcp 2.x renamed `FastMCP` to `MCPServer` and dropped the constructor arguments the
+    agent seam mounts with, and nothing here noticed because the lock kept 1.x.
+
+    Raising this cap is a migration. Removing it is how the same afternoon happens again.
+    """
+    import re
+
+    pyproject = (CORE.parent / "pyproject.toml").read_text()
+    declared = re.findall(r'"(mcp[^"]*)"', pyproject)
+    assert declared, "the mcp dependency is no longer declared under this name"
+    assert any("<" in spec for spec in declared), f"mcp is unbounded above: {declared}"
