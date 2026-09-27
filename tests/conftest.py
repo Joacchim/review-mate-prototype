@@ -20,7 +20,7 @@ def _home_is_never_the_reviewers(tmp_path_factory, monkeypatch):
     """
     monkeypatch.setenv("REVIEW_MATE_HOME", str(tmp_path_factory.mktemp("home")))
 
-from review_mate.seams import MRPayload, MRRef
+from review_mate.contracts import MRPayload, MRRef
 from review_mate.session.state import ChangeType, FileEntry, MRMetadata, ReviewThread
 
 

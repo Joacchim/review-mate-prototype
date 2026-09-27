@@ -5,7 +5,7 @@ the edit, and the patch-id short-circuit must reach the first answer without pay
 """
 import subprocess
 
-from review_mate.seams import RepoRef
+from review_mate.contracts import RepoRef
 from review_mate.workspace.manager import WorkspaceManager
 
 

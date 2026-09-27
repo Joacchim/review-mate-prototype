@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from conftest import HostStub
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.server.app import create_app
 from review_mate.session.commands import DecideAccess, RequestAccess
 from review_mate.session.manager import SessionManager

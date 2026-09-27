@@ -5,12 +5,12 @@ re-pull the discussions so what the reviewer sees is what the merge request says
 this process guessed it would say. The host is the single source of truth for threads, so the
 re-pull reconciles wholesale — a discussion it stops reporting is gone here too.
 
-`Writeback` stays the thin seam onto the host. This is the sequence over it, so a second client
+`Writeback` stays the thin contract with the host. This is the sequence over it, so a second client
 answering a discussion cannot get the sequence subtly different.
 """
 from __future__ import annotations
 
-from review_mate.seams import MRRef, ref_of
+from review_mate.contracts import MRRef, ref_of
 from review_mate.session.commands import ApplyFiles, ApplyMRMetadata, ReplaceThreads
 from review_mate.session.state import Origin
 

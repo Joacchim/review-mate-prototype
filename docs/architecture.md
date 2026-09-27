@@ -25,7 +25,7 @@ flowchart TB
         NAMED["Named commands<br/>open · close · re-sync<br/>submit · mark read"]
         FIND["Discovery<br/>search, or ask<br/>by description"]
         ASKS["Outstanding work<br/>what the reviewer<br/>is waiting on"]
-        SEAM["Agent seam<br/>tools, served over the<br/>surfaces above"]
+        AGENT["Agent contract<br/>tools, served over the<br/>surfaces above"]
     end
 
     subgraph out["What it reads and writes"]
@@ -43,7 +43,7 @@ flowchart TB
     T --> NAMED
     W --> FIND
     A --> ASKS
-    A --> SEAM
+    A --> AGENT
 
     server --> G
     server --> R
@@ -71,7 +71,7 @@ flowchart TB
     VW["View<br/>folding state into scopes"]
     ED["Edges<br/>the change's source · git · review memory"]
     CO["Core<br/>the event-sourced review"]
-    AG["Agent seam<br/>in the same process"]
+    AG["Agent contract<br/>in the same process"]
 
     CL --> TR
     TR --> VW
@@ -89,15 +89,15 @@ The diagram names roles. This is where each one lives, and what it is allowed to
 | layer | holds | knows about |
 |---|---|---|
 | `session/` | the event-sourced review model | nothing below it |
-| `seams.py` | the Protocols the core is written against | nothing below it |
+| `contracts.py` | the Protocols the core is written against | nothing below it |
 | `host/`, `workspace/`, `kb/` | where a change comes from, the clone area, what you have already read | the core |
 | `view/` | folding state into scopes | the core and the edges |
 | `server/` | HTTP and websocket transport | everything above |
 | `web/`, `tui/` | the rendering clients | the transport only |
-| `mcp/` | the agent seam | the core directly — it runs in the same process, not over the transport |
+| `mcp/` | the agent contract | the core directly — it runs in the same process, not over the transport |
 
 The core carries no host, transport or UI knowledge. `tests/boundary/test_boundaries.py` enforces
-that by parsing imports: `session/*.py` and `seams.py` may not import `review_mate.view` or
+that by parsing imports: `session/*.py` and `contracts.py` may not import `review_mate.view` or
 `review_mate.server`, nor anything host- or MCP-shaped.
 
 ## The core

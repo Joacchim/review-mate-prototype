@@ -1,4 +1,4 @@
-"""GitLab implementation of HostProvider (GitLab REST v4). Implements the MRSource seam.
+"""GitLab implementation of HostProvider (GitLab REST v4). Implements the MRSource contract.
 
 Talks to GitLab over an injected httpx.AsyncClient (tests drive it with MockTransport), maps the
 JSON to review-mate's host-neutral models. Host specifics are confined here (host-confinement guard).
@@ -11,7 +11,7 @@ from urllib.parse import quote
 import httpx
 
 from review_mate.host.base import CapabilityError, GITLAB_CAPABILITIES, parse_reference
-from review_mate.seams import MRPayload, MRRef
+from review_mate.contracts import MRPayload, MRRef
 from review_mate.session.state import (
     ChangeType, FileEntry, MRMetadata, ReviewThread, ThreadComment,
 )

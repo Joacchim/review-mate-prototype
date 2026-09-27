@@ -6,7 +6,7 @@ import pytest
 
 from review_mate.host.base import HostWriter, CapabilityError, GITLAB_CAPABILITIES
 from review_mate.host.gitlab import GitLabWriter
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.writeback.service import Writeback
 from review_mate.session.manager import SessionManager
 from review_mate.session.commands import ApplyMRMetadata, AddHighlight

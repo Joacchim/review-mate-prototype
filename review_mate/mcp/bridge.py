@@ -7,7 +7,7 @@ primitive the MCP layer exposes so the agent can react to new highlights without
 from __future__ import annotations
 
 import asyncio
-from review_mate.seams import LocalRef
+from review_mate.contracts import LocalRef
 
 from review_mate.session.actor import CommandResult
 from review_mate.session.commands import (

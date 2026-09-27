@@ -7,7 +7,7 @@ view says `loading` while the answer is on its way rather than blocking on it.
 import pytest
 
 from conftest import HostStub
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.session.commands import ApplyMRMetadata
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import Origin

@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.view.protocol import HUB, ScopeError, Subscribe, parse_client_message
 
 

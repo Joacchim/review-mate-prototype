@@ -7,7 +7,7 @@ from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
 from review_mate.session.commands import AddHighlight, ApplyMRMetadata, SaveDraft
 from review_mate.session.state import LineRange, MRMetadata, Origin, ReviewThread, Side, ThreadComment
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.writeback.service import Writeback
 
 MR = MRMetadata(host="gitlab", project="g/p", iid=42, title="T", source_branch="x",
@@ -254,7 +254,7 @@ async def test_refresh_resyncs_advanced_head(tmp_path):
     """Refresh re-pulls MR metadata, so a head that advanced since session creation is noticed:
     the review scope flips to 'behind' the watermark from the earlier review (diff-versions). Without
     this, the session's head stayed frozen and 'Since last review' never engaged."""
-    from review_mate.seams import MRPayload
+    from review_mate.contracts import MRPayload
 
     class LoadProvider(StubProvider):
         """Its full load() returns the advanced head — the host having moved on since we opened."""

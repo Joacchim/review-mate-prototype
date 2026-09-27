@@ -1,6 +1,6 @@
 """The second client against a real server over a real socket.
 
-This is the seam's proof: the TUI renders reviews it never modelled, and acts on them through
+This is the contract's proof: the TUI renders reviews it never modelled, and acts on them through
 the same command path the browser uses. If the view protocol were browser-shaped, it would show
 up here first.
 """
@@ -11,7 +11,7 @@ import pytest
 import uvicorn
 
 from conftest import HostStub
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
 from review_mate.tui.app import HubScreen
@@ -207,7 +207,7 @@ DIFF_B = "@@ -10,1 +10,1 @@\n-old = 1\n+new = 2\n"
 class DiffHost(HostStub):
     async def load(self, ref):
         from review_mate.session.state import ChangeType, FileEntry, MRMetadata
-        from review_mate.seams import MRPayload
+        from review_mate.contracts import MRPayload
         return MRPayload(
             mr=MRMetadata(host="gitlab", project=ref.project, iid=ref.iid, title="reserve capacity",
                           source_branch="x", target_branch="main", sha="abc", author="dev",

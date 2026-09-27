@@ -347,7 +347,7 @@ class Shell:
     def compose_submission(self) -> tuple[str, dict] | None:
         """How to send what is being written: which call to make, and what to give it.
 
-        The kinds do not share a path, and the seam names the call rather than assuming one. A
+        The kinds do not share a path, and the contract names the call rather than assuming one. A
         message and a comment change this session, so they are session commands. A reply changes
         the merge request, so it is a view command about a discussion.
         """

@@ -9,7 +9,7 @@ import re
 from typing import Protocol, runtime_checkable
 from urllib.parse import urlparse
 
-from review_mate.seams import MRPayload, MRRef
+from review_mate.contracts import MRPayload, MRRef
 
 # The superset of review features review-mate models (D6). A provider advertises its subset.
 GITLAB_CAPABILITIES: dict[str, bool] = {

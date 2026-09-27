@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from review_mate.seams import ref_of, serves
+from review_mate.contracts import ref_of, serves
 from review_mate.session.state import SessionStatus
 
 

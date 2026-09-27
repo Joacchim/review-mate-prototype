@@ -8,7 +8,7 @@ then contradicts. It is the server's answer now, and most of what is pinned here
 import pytest
 
 from conftest import HostStub
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.session.commands import ReplaceThreads
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import Origin, ReviewThread, ThreadComment

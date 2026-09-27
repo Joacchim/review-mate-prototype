@@ -5,7 +5,7 @@ import pytest
 from review_mate.host.config import resolve_gitlab_config, build_gitlab_provider
 from review_mate.host.base import GITLAB_CAPABILITIES
 from review_mate.host.gitlab import GitLabWriter
-from review_mate.seams import MRRef, MRPayload
+from review_mate.contracts import MRRef, MRPayload
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
 from review_mate.session.commands import AddHighlight, ApplyMRMetadata

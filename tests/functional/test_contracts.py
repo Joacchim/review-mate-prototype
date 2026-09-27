@@ -1,10 +1,10 @@
-"""The host seam: a fake MRSource loaded through the manager populates session state.
+"""The host contract: a fake MRSource loaded through the manager populates session state.
 
-Exercises the seam Protocol and the SYSTEM-origin apply path (ApplyMRMetadata/ApplyFiles).
+Exercises the contract Protocol and the SYSTEM-origin apply path (ApplyMRMetadata/ApplyFiles).
 """
 import pytest
 
-from review_mate.seams import MRSource, MRPayload, MRRef
+from review_mate.contracts import MRSource, MRPayload, MRRef
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import MRMetadata, FileEntry, ChangeType
 

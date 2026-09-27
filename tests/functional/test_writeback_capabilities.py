@@ -4,7 +4,7 @@ import pytest
 
 from review_mate.host.base import GITLAB_CAPABILITIES, CapabilityError
 from review_mate.host.gitlab import GitLabWriter
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 
 REF = MRRef(host="gitlab", project="g/p", iid=1)
 POS = {"new_path": "a.py", "new_line": 1}

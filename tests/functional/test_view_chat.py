@@ -15,7 +15,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from conftest import HostStub, next_frame
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.server.app import create_app
 from review_mate.session.commands import (
     AddHighlight, EmitCard, PostMessage, RequestCheck, RequestContext, RequestInsights,

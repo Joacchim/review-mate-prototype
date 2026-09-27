@@ -6,7 +6,7 @@ import pytest
 
 from review_mate.host.gitlab import GitLabProvider
 from review_mate.host.base import GITLAB_CAPABILITIES
-from review_mate.seams import MRRef, MRSource
+from review_mate.contracts import MRRef, MRSource
 
 
 PROJECT = {"path_with_namespace": "group/proj", "http_url_to_repo": "https://gitlab/group/proj.git",

@@ -18,7 +18,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 from review_mate.config import sessions_dir
-from review_mate.seams import LocalRef, MRRef, RepoRef
+from review_mate.contracts import LocalRef, MRRef, RepoRef
 from review_mate.session import events as ev
 from review_mate.session.actor import SessionActor
 from review_mate.session.commands import (
@@ -41,9 +41,9 @@ class SessionManager:
         self.root = Path(root) if root is not None else sessions_dir()
         self.root.mkdir(parents=True, exist_ok=True)
         self._actors: dict[str, SessionActor] = {}
-        self._mr_source = mr_source   # MRSource seam (optional, injected) — host-adapter impl
-        self._local_source = local_source  # the same seam for a branch that has not left this machine
-        self._workspace = workspace   # Workspace seam (optional, injected) — workspace-manager impl
+        self._mr_source = mr_source   # MRSource contract (optional, injected) — host-adapter impl
+        self._local_source = local_source  # the same contract for a branch that has not left this machine
+        self._workspace = workspace   # Workspace contract (optional, injected) — workspace-manager impl
         self._activity_broker = activity_broker  # ActivityBroker (optional) — review-fleet notify spine
         self._republishers: list[asyncio.Task] = []  # per-actor taps feeding the activity channel
         self._checkouts: dict[str, object] = {}   # session_id → CheckoutHandle, released on session end
@@ -132,7 +132,7 @@ class SessionManager:
         shutil.rmtree(self.root / session_id, ignore_errors=True)
 
     async def load(self, session_id: str, ref: MRRef) -> None:
-        """Populate a session from the host seam (SYSTEM origin). No-op if no MRSource injected."""
+        """Populate a session from the host contract (SYSTEM origin). No-op if no MRSource injected."""
         actor = self._actors.get(session_id)
         if actor is None:
             raise KeyError(session_id)

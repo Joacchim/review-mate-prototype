@@ -1,6 +1,6 @@
 """Boundary guards for the spine.
 
-AC-12: the core carries no host/MCP/workspace/UI logic — those attach only through seams.
+AC-12: the core carries no host/MCP/workspace/UI logic — those attach only through contracts.
 AC-13: SessionState exposes exactly the design's contract document set.
 """
 import ast
@@ -27,7 +27,7 @@ def _import_names(py: Path) -> set[str]:
     return names
 
 
-@pytest.mark.parametrize("py", sorted((CORE / "session").glob("*.py")) + [CORE / "seams.py"])
+@pytest.mark.parametrize("py", sorted((CORE / "session").glob("*.py")) + [CORE / "contracts.py"])
 def test_core_imports_no_host_mcp_workspace_or_ui(py):  # AC-12
     for imp in _import_names(py):
         low = imp.lower()
@@ -39,7 +39,7 @@ def test_core_imports_no_host_mcp_workspace_or_ui(py):  # AC-12
 LAYERS_ABOVE_CORE = ("review_mate.view", "review_mate.server")
 
 
-@pytest.mark.parametrize("py", sorted((CORE / "session").glob("*.py")) + [CORE / "seams.py"])
+@pytest.mark.parametrize("py", sorted((CORE / "session").glob("*.py")) + [CORE / "contracts.py"])
 def test_core_does_not_import_the_layers_above_it(py):
     for imp in _import_names(py):
         offender = next((top for top in LAYERS_ABOVE_CORE
@@ -79,7 +79,7 @@ def test_the_agent_seam_pins_a_major_it_has_been_built_against():
     `uv tool install` resolves afresh, so a dependency with no upper bound gets whatever major is
     current on the day someone installs. That is how a working checkout shipped a build that would
     not start: mcp 2.x renamed `FastMCP` to `MCPServer` and dropped the constructor arguments the
-    agent seam mounts with, and nothing here noticed because the lock kept 1.x.
+    agent contract mounts with, and nothing here noticed because the lock kept 1.x.
 
     Raising this cap is a migration. Removing it is how the same afternoon happens again.
     """

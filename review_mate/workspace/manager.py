@@ -12,7 +12,7 @@ import shutil
 from pathlib import Path
 
 from review_mate.config import review_mate_home
-from review_mate.seams import CheckoutHandle, RepoRef
+from review_mate.contracts import CheckoutHandle, RepoRef
 
 
 class WorkspaceManager:
@@ -34,7 +34,7 @@ class WorkspaceManager:
             lock = self._repo_locks[key] = asyncio.Lock()
         return lock
 
-    # --- Workspace seam -----------------------------------------------------
+    # --- Workspace contract -----------------------------------------------------
 
     async def materialize(self, repo: RepoRef, commit: str) -> CheckoutHandle:
         mirror = await self._ensure_mirror(repo)

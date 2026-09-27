@@ -24,7 +24,7 @@ class Origin(str, Enum):
     """Who is acting — the axis the write-authority partitioning turns on."""
     BROWSER = "browser"
     AGENT = "agent"
-    SYSTEM = "system"  # the host/workspace seams (loader)
+    SYSTEM = "system"  # the host/workspace contracts (loader)
 
 
 class ChangeType(str, Enum):

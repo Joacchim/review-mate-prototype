@@ -40,7 +40,7 @@ from contextlib import suppress
 from pydantic import BaseModel, Field
 
 from review_mate.config import blob_budget_bytes
-from review_mate.seams import MRRef, RepoRef, ref_of, serves
+from review_mate.contracts import MRRef, RepoRef, ref_of, serves
 from review_mate.session.state import ChangeType, FileEntry, SessionStatus
 from review_mate.view.diffdoc import build as build_hunks
 from review_mate.view.diffdoc import split_files

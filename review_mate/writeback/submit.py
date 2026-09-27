@@ -6,12 +6,12 @@ re-mirrored before the reviewer goes looking for the comment they just posted, o
 "your comment" block has no thread to find. And approving comes after posting, so a review that
 half-failed is still approved on purpose rather than by an ordering accident.
 
-`Writeback` stays the thin seam onto the host. This is the sequence over it, so a second client
+`Writeback` stays the thin contract with the host. This is the sequence over it, so a second client
 sending a review cannot get the sequence subtly different.
 """
 from __future__ import annotations
 
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.session.commands import MarkDraftPosted, ReplaceThreads
 from review_mate.session.state import DraftStatus, Origin
 

@@ -11,7 +11,7 @@ import subprocess
 import pytest
 
 from review_mate.host.local import GitError, LocalBranchProvider
-from review_mate.seams import LocalRef
+from review_mate.contracts import LocalRef
 
 _ENV = {"GIT_AUTHOR_NAME": "the agent", "GIT_AUTHOR_EMAIL": "a@a",
         "GIT_COMMITTER_NAME": "the agent", "GIT_COMMITTER_EMAIL": "a@a",

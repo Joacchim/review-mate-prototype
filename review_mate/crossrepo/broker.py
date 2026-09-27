@@ -16,7 +16,7 @@ import logging
 from typing import Awaitable, Callable
 
 from review_mate.kb.store import ReviewKB
-from review_mate.seams import CheckoutHandle, RepoRef, Workspace
+from review_mate.contracts import CheckoutHandle, RepoRef, Workspace
 from review_mate.session.commands import RecordGrant
 from review_mate.session.events import AccessDecided
 from review_mate.session.manager import SessionManager

@@ -67,7 +67,7 @@ for `mcp`, where this has already cost an afternoon.
 | `review_mate/host/` | Host providers — GitLab read/write, a local branch, credential resolution |
 | `review_mate/workspace/` | The isolated clone workspace (mirrors, worktrees, diffs) |
 | `review_mate/writeback/` | Posting a review, and the thread verbs |
-| `review_mate/mcp/` | The agent seam, mounted at `/mcp` |
+| `review_mate/mcp/` | The agent contract, mounted at `/mcp` |
 | `review_mate/web/` | The browser UI (vanilla JS, no build step) |
 | `review_mate/tui/` | The terminal client — a renderer over the view protocol |
 | `docs/` | Architecture, features, running it, glossary, surprising behaviours, testing method |

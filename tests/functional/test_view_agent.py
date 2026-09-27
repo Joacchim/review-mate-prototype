@@ -7,7 +7,7 @@ had ever decided to show it.
 import pytest
 
 from conftest import HostStub
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.session.commands import (
     AddHighlight, ApplyFiles, DecideAccess, PostMessage, RequestAccess, RequestContext, SaveDraft,
 )

@@ -187,7 +187,7 @@ the forge.
 
 **GitHub** — intended, and not built. Nothing in the review model is GitLab-shaped: what a forge can
 do is advertised as capabilities, and the parts of the UI a host cannot serve turn themselves off
-rather than being special-cased. So a second forge is a provider behind the existing seam. That is
+rather than being special-cased. So a second forge is a provider behind the existing contract. That is
 what the design buys, not a promise about when.
 
 **A branch on this machine** — needs git and nothing else. No forge, no token, and the review works

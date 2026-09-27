@@ -28,7 +28,7 @@ class _NoCacheUI(BaseHTTPMiddleware):
 from review_mate.host.config import build_provider_from_env, build_writer_from_env
 from review_mate.server.routes import build_routes
 from review_mate.session.manager import SessionManager
-from review_mate.seams import RepoRef
+from review_mate.contracts import RepoRef
 from review_mate.host.local import LocalBranchProvider
 from review_mate.workspace.manager import WorkspaceManager
 from review_mate.writeback.service import Writeback
@@ -344,7 +344,7 @@ def create_app(manager: SessionManager | None = None,
                                threads=threads_scope, access=access_scope, diffs=diff_scopes)
         bridge = AgentBridge(manager, broker=broker, provider=provider, view=agent_view)
         mcp_app = build_mcp_server(bridge, mountable=True).streamable_http_app()
-        routes.append(Mount("/mcp", app=mcp_app))  # the agent seam (shares this manager)
+        routes.append(Mount("/mcp", app=mcp_app))  # the agent contract (shares this manager)
 
     # static UI mounted last so it never shadows /api or /mcp
     routes.append(Mount("/", app=StaticFiles(directory=str(web), html=True), name="ui"))

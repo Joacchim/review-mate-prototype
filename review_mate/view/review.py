@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.session.state import DraftStatus, SessionStatus
 
 

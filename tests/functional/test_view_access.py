@@ -8,7 +8,7 @@ the first time.
 import pytest
 
 from conftest import HostStub
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.session.commands import DecideAccess, RecordGrant, RequestAccess
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import Grant, Origin

@@ -7,7 +7,7 @@ comment lands exactly where the reviewer was looking.
 from __future__ import annotations
 
 from review_mate.host.base import HostWriter
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.session.manager import SessionManager
 
 

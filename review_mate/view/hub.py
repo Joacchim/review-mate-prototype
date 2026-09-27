@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.session.state import DraftStatus, SessionStatus
 from review_mate.view.asks import outstanding
 

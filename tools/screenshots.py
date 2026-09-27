@@ -24,7 +24,7 @@ import uvicorn  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 from review_mate.server.app import create_app  # noqa: E402
-from review_mate.seams import MRRef  # noqa: E402
+from review_mate.contracts import MRRef  # noqa: E402
 from review_mate.session.state import (  # noqa: E402
     AccessRequest, Addressed, Card, ChangeType, ChatMessage, Criticality, DraftComment,
     DraftStatus, FileEntry, Highlight, Label, LineRange, MRMetadata, ReviewThread, ThreadComment,

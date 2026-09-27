@@ -2,7 +2,7 @@
 
 The browser is the only HTTP caller, so HTTP commands run with `Origin.BROWSER`; the authority
 matrix in the core rejects anything it may not do. The agent reaches the session in-process
-(the `mcp-bridge` seam), not through these routes.
+(the `mcp-bridge` contract), not through these routes.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from review_mate.seams import MRRef, RepoRef
+from review_mate.contracts import MRRef, RepoRef
 from review_mate.view.asks import outstanding as outstanding_asks
 from review_mate.session.commands import parse_command
 from review_mate.session.manager import SessionManager

@@ -10,7 +10,7 @@ from pathlib import Path
 from starlette.testclient import TestClient
 
 from conftest import HostStub, next_frame
-from review_mate.seams import MRPayload, MRRef
+from review_mate.contracts import MRPayload, MRRef
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import ChangeType, FileEntry, MRMetadata

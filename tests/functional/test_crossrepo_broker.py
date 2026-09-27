@@ -8,7 +8,7 @@ import pytest
 from review_mate.crossrepo.broker import CrossRepoBroker
 from review_mate.kb.store import ReviewKB
 from review_mate.workspace.manager import WorkspaceManager
-from review_mate.seams import RepoRef
+from review_mate.contracts import RepoRef
 from review_mate.session.manager import SessionManager
 from review_mate.session.commands import ApplyMRMetadata, RequestAccess, DecideAccess
 from review_mate.session.state import MRMetadata, Origin

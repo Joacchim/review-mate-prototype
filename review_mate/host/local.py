@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from review_mate.seams import LocalRef, MRPayload
+from review_mate.contracts import LocalRef, MRPayload
 from review_mate.session.state import ChangeType, FileEntry, MRMetadata
 
 # What a branch on disk can offer. Read as a subset of GITLAB_CAPABILITIES: what is missing is

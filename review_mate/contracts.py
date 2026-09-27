@@ -1,9 +1,9 @@
-"""Seam contracts — the boundaries other review-mate units fill.
+"""Contracts — the boundaries other review-mate units fill.
 
 bridge-server defines these Protocols and data shapes; it never implements them. The host adapter
 (`gitlab-host-adapter`) implements `MRSource`; the workspace unit (`workspace-manager`) implements
 `Workspace`. They are injected into `SessionManager`, so the spine has no compile-time dependency
-on them (AC-12). The agent seam (`mcp-bridge`) is simply the in-process `SessionManager` +
+on them (AC-12). The agent contract (`mcp-bridge`) is simply the in-process `SessionManager` +
 `SessionActor.submit/subscribe` surface, so it needs no Protocol here.
 """
 from __future__ import annotations
@@ -99,12 +99,12 @@ class CheckoutHandle(BaseModel):
 
 @runtime_checkable
 class MRSource(Protocol):
-    """Host seam → gitlab-host-adapter."""
+    """Host contract → gitlab-host-adapter."""
     async def load(self, ref: MRRef) -> MRPayload: ...
     async def fetch_threads(self, ref: MRRef) -> list[ReviewThread]: ...
 
 
 @runtime_checkable
 class Workspace(Protocol):
-    """Workspace seam → workspace-manager."""
+    """Workspace contract → workspace-manager."""
     async def materialize(self, repo: RepoRef, commit: str) -> CheckoutHandle: ...

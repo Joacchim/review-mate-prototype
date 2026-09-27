@@ -21,7 +21,7 @@ async def test_load_materializes_checkout_and_end_releases(tmp_path):
     """Eager checkout: create(ref) materializes an on-disk worktree of the MR and exposes its path
     as checkout_path; ending the session releases it. Best-effort — a workspace failure won't sink
     the load (covered by the guard in _materialize_checkout)."""
-    from review_mate.seams import MRRef, MRPayload, CheckoutHandle
+    from review_mate.contracts import MRRef, MRPayload, CheckoutHandle
     from review_mate.session.state import MRMetadata
 
     calls = {}

@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 import uvicorn
 
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.session.state import Origin
 from review_mate.server.app import create_app
 from webui.fixtures.host import StubHost

@@ -10,7 +10,7 @@ import json
 import pytest
 from starlette.testclient import TestClient
 
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
 from review_mate.view.hub import HubScope

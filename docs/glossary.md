@@ -105,13 +105,13 @@ view computed against a newer head is not, and cannot anchor a comment.
 
 **Host** — the forge. GitLab is the only implementation.
 
-**Provider** — the host-facing implementation behind the seam.
+**Provider** — the host-facing implementation behind the contract.
 
-**Seam** — a Protocol the core is written against, so the core carries no host, transport or UI
+**Contract** — a Protocol the core is written against, so the core carries no host, transport or UI
 knowledge.
 
 **Workspace** — the isolated clone area under `~/.review-mate/`: a bare **mirror** per repository,
 and **checkouts** (worktrees) materialised from it. A reviewer's own clones are never touched.
 
 **Client** — anything that renders scopes and sends commands. The browser and the terminal client
-are two of them; the agent seam is a third, with a narrower command set.
+are two of them; the agent contract is a third, with a narrower command set.

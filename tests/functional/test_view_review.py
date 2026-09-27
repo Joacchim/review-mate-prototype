@@ -11,7 +11,7 @@ and it arrives through `refresh`, so a scope rebuilt on every draft keystroke co
 import pytest
 
 from conftest import HostStub
-from review_mate.seams import MRRef
+from review_mate.contracts import MRRef
 from review_mate.session.commands import (
     AddHighlight, MarkDraftPosted, RemoveDraft, SaveDraft,
 )

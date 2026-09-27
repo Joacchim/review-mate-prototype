@@ -18,7 +18,7 @@ from contextlib import suppress
 
 from pydantic import BaseModel, Field
 
-from review_mate.seams import serves
+from review_mate.contracts import serves
 from review_mate.session.state import DraftStatus, SessionStatus, SubjectKind
 
 

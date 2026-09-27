@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from review_mate.seams import RepoRef, CheckoutHandle, Workspace
+from review_mate.contracts import RepoRef, CheckoutHandle, Workspace
 from review_mate.workspace.manager import WorkspaceManager
 
 

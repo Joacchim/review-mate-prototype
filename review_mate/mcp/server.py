@@ -1,7 +1,7 @@
 """The MCP server — a thin FastMCP wrapper exposing AgentBridge methods as MCP tools.
 
 Each tool delegates to the bridge; the bridge (not this module) holds the logic, so the tools stay
-declarative. This is what a Claude Code session connects to as the agent seam.
+declarative. This is what a Claude Code session connects to as the agent contract.
 """
 from __future__ import annotations
 
