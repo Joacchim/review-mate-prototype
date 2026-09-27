@@ -1,4 +1,4 @@
-# Surprises
+# Surprising behaviours
 
 Behaviour that is correct by design and still catches people out. Each entry says what happens, why
 it is that way, and where the reasoning actually lives — this is an index, not a second description,

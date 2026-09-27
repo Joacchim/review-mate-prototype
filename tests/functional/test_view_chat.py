@@ -233,7 +233,7 @@ async def test_doubting_what_the_agent_already_said_is_not_born_answered(session
 
 
 async def test_a_word_on_the_subject_closes_the_doubt_whatever_it_answered(session):
-    """The surprise in docs/surprises.md, pinned so a future closing verb is a deliberate change."""
+    """The surprise in docs/surprising-behaviors.md, pinned so a future closing verb is a deliberate change."""
     manager, sid = session
     actor = manager.get(sid)
     highlight = await mark(actor)

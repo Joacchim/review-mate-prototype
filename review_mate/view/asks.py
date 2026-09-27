@@ -87,7 +87,7 @@ def _answered(snapshot, check) -> bool:
     Deliberately that loose. Adding a verb for the agent to close a check with would be a second
     way of saying what a message already says, and an agent that answered without remembering to
     call it would leave the reviewer waiting on work that was done. The cost is that *any* later
-    word on that subject closes it — see docs/surprises.md.
+    word on that subject closes it — see docs/surprising-behaviors.md.
     """
     for message in snapshot.messages:
         if message.role == "user" or message.anchor != check.subject:

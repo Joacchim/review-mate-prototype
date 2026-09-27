@@ -88,7 +88,7 @@ troubleshooting: **[running it →](docs/running.md)**.
 - **[Running it](docs/running.md)** — credentials, the systemd unit, the terminal client, attaching
   Claude, troubleshooting
 - **[Architecture](docs/architecture.md)** — the view protocol and the two planes
-- **[Known surprises](docs/surprises.md)** — behaviour that is correct by design and still catches
+- **[Surprising behaviours](docs/surprising-behaviors.md)** — behaviour that is correct by design and still catches
   people out
 - **[Contributing](CONTRIBUTING.md)** — the development setup, the layout, and the test suites
 

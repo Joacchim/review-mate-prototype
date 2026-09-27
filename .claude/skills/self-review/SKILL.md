@@ -92,7 +92,7 @@ Stubbing the sequence editor is what keeps it from blocking on one.
 
 **Folding rewrites every sha from that commit onward.** Read the new head *after* the rebase for
 the record below, and know that shas you recorded earlier in this review may now name commits that
-no longer exist — see `docs/surprises.md`.
+no longer exist — see `docs/surprising-behaviors.md`.
 
 **It is its own commit, ordered ahead, when the story is not that commit's** — a pre-existing bug
 the review merely revealed, or a prerequisite you discovered while fixing something else. The test

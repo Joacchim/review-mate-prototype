@@ -52,7 +52,7 @@ the difference in prose.
 | `review_mate/mcp/` | The agent seam, mounted at `/mcp` |
 | `review_mate/web/` | The browser UI (vanilla JS, no build step) |
 | `review_mate/tui/` | The terminal client — a renderer over the view protocol |
-| `docs/` | Architecture, features, running it, glossary, known surprises, testing method |
+| `docs/` | Architecture, features, running it, glossary, surprising behaviours, testing method |
 | `tools/` | Documentation machinery — the screenshot generator |
 | `packaging/` | A systemd user unit |
 | `.claude/` | Claude Code skills (watching a fleet, reviewing your own branch), the worker agent, the startup hook |
@@ -62,7 +62,7 @@ the difference in prose.
 - [Architecture](docs/architecture.md) — the view protocol, the two planes, what each scope carries.
   Read this before adding a scope or a command; both have one place they belong.
 - [Glossary](docs/glossary.md) — the words, used precisely and consistently.
-- [Known surprises](docs/surprises.md) — behaviour that is correct by design and still catches
+- [Surprising behaviours](docs/surprising-behaviors.md) — behaviour that is correct by design and still catches
   people out. If you find yourself explaining something twice, it belongs there.
 - [How the web UI is tested](docs/testing/web-ui.md) — and the map of what that suite covers.
 
