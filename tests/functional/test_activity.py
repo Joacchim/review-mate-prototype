@@ -325,3 +325,50 @@ async def test_a_grant_that_failed_wakes_the_agent_too(tmp_path):
     event = await broker.wait(since=0, timeout=1)
     assert event is not None and event.kind == "access_settled"
     await mgr.shutdown()
+
+
+async def test_dismissing_a_highlight_takes_its_check_with_it(tmp_path):
+    """An ask whose subject is gone can never clear, and the coordinator wakes on it for ever.
+
+    Not merely orphaned. A check is answered by finding an agent message anchored to its subject,
+    and removing the highlight deletes exactly those messages — so the obvious repair, letting the
+    agent answer again, cannot work: there is nowhere left for the answer to live. Observed in the
+    field as a session reporting the same `check` outstanding on every sweep, with a coordinator
+    carrying a hard-coded exception to stop itself spinning.
+    """
+    from review_mate.session.commands import RemoveHighlight
+    from review_mate.view.asks import outstanding
+
+    mgr = SessionManager(root=tmp_path / "s")
+    sid = await mgr.create()
+    writer = mgr.get(sid)
+    await writer.submit(AddHighlight(**HL), Origin.BROWSER)
+    hid = writer.snapshot().highlights[0].id
+    await writer.submit(RequestCheck(subject=Subject(kind=SubjectKind.HIGHLIGHT, id=hid)),
+                        Origin.BROWSER)
+    assert [a.kind for a in outstanding(writer.snapshot())] == ["check"]
+
+    await writer.submit(RemoveHighlight(highlight_id=hid), Origin.BROWSER)
+    assert writer.snapshot().checks == []
+    assert outstanding(writer.snapshot()) == []
+    await mgr.shutdown()
+
+
+async def test_dismissing_an_insight_takes_its_check_with_it(tmp_path):
+    """Same hole, reached through the other subject a reviewer can dismiss."""
+    from review_mate.session.commands import RemoveCard
+    from review_mate.view.asks import outstanding
+
+    mgr = SessionManager(root=tmp_path / "s")
+    sid = await mgr.create()
+    writer = mgr.get(sid)
+    await writer.submit(EmitCard(highlight_id=None, body="an MR-level insight"), Origin.AGENT)
+    cid = writer.snapshot().cards[0].id
+    await writer.submit(RequestCheck(subject=Subject(kind=SubjectKind.INSIGHT, id=cid)),
+                        Origin.BROWSER)
+    assert [a.kind for a in outstanding(writer.snapshot())] == ["check"]
+
+    await writer.submit(RemoveCard(card_id=cid), Origin.BROWSER)
+    assert writer.snapshot().checks == []
+    assert outstanding(writer.snapshot()) == []
+    await mgr.shutdown()

@@ -34,6 +34,13 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
         s.messages = [m for m in s.messages
                       if not (m.anchor is not None and m.anchor.kind is SubjectKind.HIGHLIGHT
                               and m.anchor.id == event.highlight_id)]
+        # and any doubt raised about it. A check is answered by finding an agent message anchored
+        # to its subject — the messages deleted on the line above — so leaving it would not merely
+        # orphan it: it would be permanently unanswerable, and the agent cannot fix that by
+        # answering again, because there is no longer anywhere for the answer to live.
+        s.checks = [c for c in s.checks
+                    if not (c.subject.kind is SubjectKind.HIGHLIGHT
+                            and c.subject.id == event.highlight_id)]
     elif isinstance(event, ev.ContextRequested):
         for h in s.highlights:
             if h.id == event.highlight_id:
@@ -59,6 +66,9 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
         s.messages = [m for m in s.messages
                       if not (m.anchor is not None and m.anchor.kind is SubjectKind.INSIGHT
                               and m.anchor.id == event.card_id)]
+        s.checks = [c for c in s.checks                      # unanswerable once its subject is gone
+                    if not (c.subject.kind is SubjectKind.INSIGHT
+                            and c.subject.id == event.card_id)]
     elif isinstance(event, ev.SubjectAddressed):
         s.addressed.append(event.record)
     elif isinstance(event, ev.CardLabelled):
