@@ -126,3 +126,86 @@ async def test_concurrent_writes_serialized_none_lost(manager):  # AC-9 (seriali
     seqs = sorted(r.seq for r in results)
     assert seqs == list(range(seqs[0], seqs[0] + n))  # contiguous, unique — nothing lost
     assert len(writer.snapshot().highlights) == n
+
+
+class ReleaseRecordingWorkspace:
+    """Records what it was asked to release, and hands out a worktree per sha."""
+
+    def __init__(self):
+        self.released = []
+
+    async def materialize(self, repo, commit):
+        from review_mate.contracts import CheckoutHandle
+        return CheckoutHandle(repo=repo.project, commit=commit, path=f"/wt/{commit}")
+
+    async def release(self, handle):
+        self.released.append(handle.path)
+
+
+async def test_a_checkout_made_before_a_restart_is_still_released(tmp_path):
+    """The handle that can remove a worktree lives in memory, so a session that outlives the server
+    process used to lose it — and ending that session afterwards freed nothing. That is how the
+    checkouts area grows without bound while eviction looks implemented.
+    """
+    from review_mate.contracts import MRPayload
+    from review_mate.session.state import MRMetadata
+
+    mr = MRMetadata(host="gitlab", project="g/p", iid=42, title="T", source_branch="x",
+                    target_branch="main", sha="abc123", author="a", url="u",
+                    clone_url="https://gl/g/p.git")
+
+    class Provider:
+        async def load(self, ref):
+            return MRPayload(mr=mr, files=[], threads=[], clone_url="https://gl/g/p.git")
+        async def fetch_threads(self, ref):
+            return []
+
+    root = tmp_path / "s"
+    from review_mate.contracts import MRRef
+    first = SessionManager(root=root, workspace=ReleaseRecordingWorkspace(), mr_source=Provider())
+    sid = await first.create()
+    await first.load(sid, MRRef(host="gitlab", project="g/p", iid=42))
+    assert first.get(sid).snapshot().checkout_path == "/wt/abc123"
+    await first.shutdown()                       # the process goes away; the worktree does not
+
+    workspace = ReleaseRecordingWorkspace()
+    second = SessionManager(root=root, workspace=workspace, mr_source=Provider())
+    await second.restore_all()
+    await second.end(sid)
+    assert workspace.released == ["/wt/abc123"]
+    await second.shutdown()
+
+
+async def test_a_borrowed_working_repository_is_never_released(tmp_path):
+    """A local branch's checkout_path is the reviewer's own clone, not a worktree we made. Adopting
+    it on restore would delete their repository when the session ends."""
+    from review_mate.contracts import LocalRef, MRPayload
+    from review_mate.session.state import MRMetadata
+
+    repo = tmp_path / "theirs"
+    repo.mkdir()
+    mr = MRMetadata(host="local", project="theirs", iid=0, title="T", source_branch="x",
+                    target_branch="main", sha="abc123", author="a", url=str(repo),
+                    clone_url=str(repo))
+
+    class Local:
+        host = "local"
+        async def load(self, ref):
+            return MRPayload(mr=mr, files=[], threads=[], clone_url=str(repo),
+                             checkout_path=str(repo))
+        async def fetch_threads(self, ref):
+            return []
+
+    root = tmp_path / "s"
+    first = SessionManager(root=root, workspace=ReleaseRecordingWorkspace(), local_source=Local())
+    sid = await first.create()
+    await first.load(sid, LocalRef(path=str(repo), branch="x", base="main"))
+    await first.shutdown()
+
+    workspace = ReleaseRecordingWorkspace()
+    second = SessionManager(root=root, workspace=workspace, local_source=Local())
+    await second.restore_all()
+    await second.end(sid)
+    assert workspace.released == []              # their clone is still theirs
+    assert repo.exists()
+    await second.shutdown()

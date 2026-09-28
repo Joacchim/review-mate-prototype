@@ -18,7 +18,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 from review_mate.config import sessions_dir
-from review_mate.contracts import LocalRef, MRRef, RepoRef
+from review_mate.contracts import CheckoutHandle, LocalRef, MRRef, RepoRef
 from review_mate.session import events as ev
 from review_mate.session.writer import SessionWriter
 from review_mate.session.commands import (
@@ -189,6 +189,23 @@ class SessionManager:
         except Exception:
             logger.warning("could not materialize a checkout for %s", session_id, exc_info=True)
 
+    def _readopt_checkout(self, session_id: str, state) -> None:
+        """Take back ownership of a worktree this session made before a restart.
+
+        `_checkouts` is memory, so a session that outlives the process loses the only handle that
+        could release its worktree — and ending it afterwards frees nothing. The checkouts area
+        then grows for ever, which is what happens today. The handle is rebuildable: the path is on
+        the session and the commit is its head.
+
+        A local branch is excluded and must stay excluded. Its `checkout_path` is the reviewer's own
+        working repository, borrowed rather than made, and releasing it would delete their clone.
+        """
+        mr = getattr(state, "mr", None)
+        if not state.checkout_path or mr is None or mr.host == "local":
+            return
+        self._checkouts[session_id] = CheckoutHandle(
+            repo=mr.project, commit=mr.sha or "", path=state.checkout_path)
+
     async def _release_checkout(self, session_id: str) -> None:
         handle = self._checkouts.pop(session_id, None)
         if handle is None or self._workspace is None:
@@ -214,6 +231,7 @@ class SessionManager:
                 writer.start()
                 self._writers[sdir.name] = writer
                 self._attach_republisher(writer, sdir.name)
+                self._readopt_checkout(sdir.name, state)
             except Exception:
                 # one unreadable/corrupt session must not stop the server from booting
                 logger.warning("skipping unrestorable session %s", sdir.name, exc_info=True)

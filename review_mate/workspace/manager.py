@@ -48,12 +48,34 @@ class WorkspaceManager:
         return CheckoutHandle(repo=repo.project, commit=commit, path=str(path))
 
     async def release(self, handle: CheckoutHandle) -> None:
+        """Drop a worktree through git, so the mirror stops listing one that is gone.
+
+        The mirror is derived from where the checkout sits rather than remembered, because a handle
+        outlives the process that made it: a session restored after a restart holds one whose entry
+        in `_mirror_of` was never written. Removing such a checkout with `rmtree` leaves the mirror
+        advertising a worktree that is not there, in every mirror, for ever.
+        """
         path = Path(handle.path)
-        mirror = self._mirror_of.pop(handle.path, None)
-        if mirror is not None:
+        mirror = self._mirror_of.pop(handle.path, None) or self._mirror_for(path)
+        if mirror is None or not mirror.exists():
+            if path.exists():
+                shutil.rmtree(path, ignore_errors=True)
+            return
+        if path.exists():
             await self._git("-C", str(mirror), "worktree", "remove", "--force", str(path))
-        elif path.exists():  # fallback: drop the dir and prune dangling worktrees
-            shutil.rmtree(path, ignore_errors=True)
+        # also clears an entry left behind by an earlier `rmtree`, which is how they accumulate
+        await self._git("-C", str(mirror), "worktree", "prune")
+
+    def _mirror_for(self, path: Path) -> Path | None:
+        """The mirror a checkout was cut from, read off its own path.
+
+        `checkouts/<key>/<sha>` against `mirrors/<key>.git` — one layout, so the link survives a
+        restart. None for any path that is not one of ours; that one gets removed, not git'd.
+        """
+        checkouts = self.root / "checkouts"
+        if path.parent.parent != checkouts:
+            return None
+        return self.root / "mirrors" / f"{path.parent.name}.git"
 
     async def _patch_ids(self, mirror: Path, a: str, b: str) -> list[str] | None:
         """The ordered patch-id list for `a..b`, or None when the range holds a merge.
