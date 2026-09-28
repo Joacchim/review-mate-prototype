@@ -99,13 +99,45 @@ async def test_sessions_are_isolated(manager):  # AC-4
     assert len(b.snapshot().highlights) == 0
 
 
-async def test_end_session_inactive_and_rejects_writes(manager):  # AC-5
+async def test_a_session_rejects_writes_once_ended(manager):  # AC-5
+    """The event alone closes the session to writes, before anything is cleared away."""
     sid = await manager.create()
     writer = manager.get(sid)
-    await manager.end(sid)
+    await writer.submit(EndSession(), Origin.BROWSER)
     assert writer.snapshot().status is SessionStatus.ENDED
     res = await writer.submit(_add(), Origin.BROWSER)
     assert not res.ok  # no mutation after end
+
+
+async def test_ending_a_session_clears_what_it_held(manager):  # AC-5
+    """Ending is not a status change — the stored session is deleted.
+
+    What was posted is on the host, which is the durable record of a review. What was not was
+    working material, and keeping it grows the store by one review for every session ever opened,
+    each of them restored again at every boot.
+    """
+    sid = await manager.create()
+    assert (manager.root / sid).exists()
+    await manager.end(sid)
+    assert manager.get(sid) is None
+    assert not (manager.root / sid).exists()
+    assert [s.id for s in manager.list()] == []
+
+
+async def test_a_session_ended_by_an_older_version_is_not_restored(tmp_path):
+    """Sessions ended before this behaviour existed are still on disk, and an interrupted purge
+    leaves one too. Neither is live, so neither is loaded — otherwise the store keeps answering
+    for reviews that are over."""
+    root = tmp_path / "s"
+    first = SessionManager(root=root)
+    sid = await first.create()
+    first._write_meta(root / sid, sid, first.get(sid).snapshot().created_at, SessionStatus.ENDED)
+    await first.shutdown()
+
+    second = SessionManager(root=root)
+    await second.restore_all()
+    assert second.get(sid) is None
+    await second.shutdown()
 
 
 async def test_authority_rejection_surfaces(manager):  # AC-9 (authority at the writer)

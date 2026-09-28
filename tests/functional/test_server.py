@@ -72,7 +72,7 @@ async def test_malformed_command_400(client):
 async def test_end_session_via_http(client):  # AC-5
     sid = (await client.post("/api/sessions")).json()["id"]
     assert (await client.delete(f"/api/sessions/{sid}")).status_code == 200
-    assert (await client.get(f"/api/sessions/{sid}")).json()["status"] == "ended"
+    assert (await client.get(f"/api/sessions/{sid}")).status_code == 404   # ended means cleared
 
 
 async def test_search_no_provider_returns_empty(client):

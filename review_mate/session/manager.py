@@ -224,6 +224,10 @@ class SessionManager:
                 continue
             try:
                 meta = self._read_meta(sdir)
+                if meta.get("status") == SessionStatus.ENDED.value:
+                    # left by a version that kept ended sessions, or by a purge that did not
+                    # finish. Either way there is nothing live here to restore.
+                    continue
                 log = EventLog(log_path)
                 state = fold(SessionState(id=sdir.name, created_at=meta.get("created_at", "")),
                              list(log.replay()))
@@ -237,13 +241,25 @@ class SessionManager:
                 logger.warning("skipping unrestorable session %s", sdir.name, exc_info=True)
 
     async def end(self, session_id: str) -> None:
+        """End a review, and clear what it held.
+
+        The stored session goes with it — the log, the highlights, the unposted drafts, the chat
+        and the cards. What was *posted* is on the host, and that is the durable record of a
+        review; what was not was working material for producing it. Keeping it means the store
+        grows by one review for every session ever opened, and every one of them is restored at
+        boot.
+
+        `EndSession` is submitted first, so anything watching unwinds on the event rather than on
+        a read that suddenly answers nothing.
+
+        Note this is not recoverable and is not meant to be: a reviewer who has not submitted
+        their comments loses them here.
+        """
         writer = self._writers.get(session_id)
         if writer is None:
             raise KeyError(session_id)
         await writer.submit(EndSession(), Origin.BROWSER)
-        await self._release_checkout(session_id)
-        self._write_meta(self.root / session_id, session_id,
-                         writer.snapshot().created_at, SessionStatus.ENDED)
+        await self._discard(session_id)
 
     async def shutdown(self) -> None:
         for task in self._republishers:
