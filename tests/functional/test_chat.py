@@ -24,20 +24,20 @@ async def setup(tmp_path):
 
 async def test_browser_message_is_user_agent_message_is_agent(setup):
     m, bridge, sid = setup
-    actor = m.get(sid)
-    await actor.submit(PostMessage(body="why this guard?"), Origin.BROWSER)
+    writer = m.get(sid)
+    await writer.submit(PostMessage(body="why this guard?"), Origin.BROWSER)
     await bridge.post_message(sid, "because of a race")
-    msgs = actor.snapshot().messages
+    msgs = writer.snapshot().messages
     assert [(x.role, x.body) for x in msgs] == [("user", "why this guard?"), ("agent", "because of a race")]
 
 
 async def test_wait_for_message_returns_only_user_messages(setup):
     m, bridge, sid = setup
-    actor = m.get(sid)
-    waiter = asyncio.create_task(bridge.wait_for_message(sid, since=actor.snapshot().seq))
+    writer = m.get(sid)
+    waiter = asyncio.create_task(bridge.wait_for_message(sid, since=writer.snapshot().seq))
     await asyncio.sleep(0)
     await bridge.post_message(sid, "agent chatter")          # agent message must NOT wake the waiter
-    await actor.submit(PostMessage(body="expand on #2"), Origin.BROWSER)
+    await writer.submit(PostMessage(body="expand on #2"), Origin.BROWSER)
     got = await asyncio.wait_for(waiter, 1)
     assert got["message"]["role"] == "user" and got["message"]["body"] == "expand on #2"
 
@@ -90,21 +90,21 @@ def _mark(file="a.py", line=1):
 
 async def test_a_message_can_be_about_a_highlight_an_insight_or_a_thread(setup):
     m, bridge, sid = setup
-    actor = m.get(sid)
-    await actor.submit(_mark(), Origin.BROWSER)
-    hl = actor.snapshot().highlights[0]
-    await actor.submit(EmitCard(highlight_id=None, body="an insight"), Origin.AGENT)
-    insight = actor.snapshot().cards[0]
+    writer = m.get(sid)
+    await writer.submit(_mark(), Origin.BROWSER)
+    hl = writer.snapshot().highlights[0]
+    await writer.submit(EmitCard(highlight_id=None, body="an insight"), Origin.AGENT)
+    insight = writer.snapshot().cards[0]
 
-    await actor.submit(PostMessage(body="about the review"), Origin.BROWSER)
-    await actor.submit(PostMessage(body="about this range",
+    await writer.submit(PostMessage(body="about the review"), Origin.BROWSER)
+    await writer.submit(PostMessage(body="about this range",
                                    anchor=Subject(kind=SubjectKind.HIGHLIGHT, id=hl.id)),
                        Origin.BROWSER)
-    await actor.submit(PostMessage(body="about that finding",
+    await writer.submit(PostMessage(body="about that finding",
                                    anchor=Subject(kind=SubjectKind.INSIGHT, id=insight.id)),
                        Origin.AGENT)
     assert [(x.anchor.kind.value if x.anchor else None, x.body)
-            for x in actor.snapshot().messages] == [
+            for x in writer.snapshot().messages] == [
         (None, "about the review"), ("highlight", "about this range"),
         ("insight", "about that finding")]
 
@@ -134,49 +134,49 @@ def test_each_subject_that_exists_is_accepted():
 
 async def test_clearing_one_conversation_leaves_the_others(setup):
     m, bridge, sid = setup
-    actor = m.get(sid)
-    await actor.submit(_mark(), Origin.BROWSER)
-    hl = Subject(kind=SubjectKind.HIGHLIGHT, id=actor.snapshot().highlights[0].id)
-    await actor.submit(PostMessage(body="general"), Origin.BROWSER)
-    await actor.submit(PostMessage(body="anchored", anchor=hl), Origin.BROWSER)
+    writer = m.get(sid)
+    await writer.submit(_mark(), Origin.BROWSER)
+    hl = Subject(kind=SubjectKind.HIGHLIGHT, id=writer.snapshot().highlights[0].id)
+    await writer.submit(PostMessage(body="general"), Origin.BROWSER)
+    await writer.submit(PostMessage(body="anchored", anchor=hl), Origin.BROWSER)
 
-    await actor.submit(ClearChat(), Origin.BROWSER)
-    assert [x.body for x in actor.snapshot().messages] == ["anchored"]
-    await actor.submit(ClearChat(anchor=hl), Origin.BROWSER)
-    assert actor.snapshot().messages == []
+    await writer.submit(ClearChat(), Origin.BROWSER)
+    assert [x.body for x in writer.snapshot().messages] == ["anchored"]
+    await writer.submit(ClearChat(anchor=hl), Origin.BROWSER)
+    assert writer.snapshot().messages == []
 
 
 async def test_dismissing_an_insight_discards_what_was_said_about_it(setup):
     m, bridge, sid = setup
-    actor = m.get(sid)
-    await actor.submit(EmitCard(highlight_id=None, body="an insight"), Origin.AGENT)
-    card = actor.snapshot().cards[0]
-    await actor.submit(PostMessage(body="general"), Origin.BROWSER)
-    await actor.submit(PostMessage(body="about the finding",
+    writer = m.get(sid)
+    await writer.submit(EmitCard(highlight_id=None, body="an insight"), Origin.AGENT)
+    card = writer.snapshot().cards[0]
+    await writer.submit(PostMessage(body="general"), Origin.BROWSER)
+    await writer.submit(PostMessage(body="about the finding",
                                    anchor=Subject(kind=SubjectKind.INSIGHT, id=card.id)),
                        Origin.BROWSER)
-    await actor.submit(RemoveCard(card_id=card.id), Origin.BROWSER)
-    assert [x.body for x in actor.snapshot().messages] == ["general"]
+    await writer.submit(RemoveCard(card_id=card.id), Origin.BROWSER)
+    assert [x.body for x in writer.snapshot().messages] == ["general"]
 
 
 async def test_removing_a_highlight_discards_its_conversation(setup):
     m, bridge, sid = setup
-    actor = m.get(sid)
-    await actor.submit(_mark(), Origin.BROWSER)
-    hid = actor.snapshot().highlights[0].id
-    await actor.submit(PostMessage(body="about this range",
+    writer = m.get(sid)
+    await writer.submit(_mark(), Origin.BROWSER)
+    hid = writer.snapshot().highlights[0].id
+    await writer.submit(PostMessage(body="about this range",
                                    anchor=Subject(kind=SubjectKind.HIGHLIGHT, id=hid)),
                        Origin.BROWSER)
-    await actor.submit(RemoveHighlight(highlight_id=hid), Origin.BROWSER)
-    assert actor.snapshot().messages == []
+    await writer.submit(RemoveHighlight(highlight_id=hid), Origin.BROWSER)
+    assert writer.snapshot().messages == []
 
 
 async def test_asking_for_insights_records_when(setup):
     m, bridge, sid = setup
-    actor = m.get(sid)
-    assert actor.snapshot().insights_requested is False
-    await actor.submit(RequestInsights(), Origin.BROWSER)
-    snap = actor.snapshot()
+    writer = m.get(sid)
+    assert writer.snapshot().insights_requested is False
+    await writer.submit(RequestInsights(), Origin.BROWSER)
+    snap = writer.snapshot()
     assert snap.insights_requested is True and snap.insights_requested_at != ""
 
 
@@ -185,10 +185,10 @@ async def test_a_conversation_survives_a_replay(tmp_path):
     root = tmp_path / "sessions"
     m = SessionManager(root=root)
     sid = await m.create()
-    actor = m.get(sid)
-    await actor.submit(EmitCard(highlight_id=None, body="an insight"), Origin.AGENT)
-    card = actor.snapshot().cards[0]
-    await actor.submit(PostMessage(body="about the finding",
+    writer = m.get(sid)
+    await writer.submit(EmitCard(highlight_id=None, body="an insight"), Origin.AGENT)
+    card = writer.snapshot().cards[0]
+    await writer.submit(PostMessage(body="about the finding",
                                    anchor=Subject(kind=SubjectKind.INSIGHT, id=card.id)),
                        Origin.BROWSER)
     await m.shutdown()
@@ -205,15 +205,15 @@ async def test_a_conversation_survives_a_replay(tmp_path):
 async def test_the_agent_answers_in_the_conversation_it_was_asked_in(setup):
     """The agent's own door: the anchor it received on a message is the anchor it replies with."""
     m, bridge, sid = setup
-    actor = m.get(sid)
-    await actor.submit(_mark(), Origin.BROWSER)
-    hl = Subject(kind=SubjectKind.HIGHLIGHT, id=actor.snapshot().highlights[0].id)
-    waiter = asyncio.create_task(bridge.wait_for_message(sid, since=actor.snapshot().seq))
+    writer = m.get(sid)
+    await writer.submit(_mark(), Origin.BROWSER)
+    hl = Subject(kind=SubjectKind.HIGHLIGHT, id=writer.snapshot().highlights[0].id)
+    waiter = asyncio.create_task(bridge.wait_for_message(sid, since=writer.snapshot().seq))
     await asyncio.sleep(0)
-    await actor.submit(PostMessage(body="does anything read this?", anchor=hl), Origin.BROWSER)
+    await writer.submit(PostMessage(body="does anything read this?", anchor=hl), Origin.BROWSER)
     asked = await asyncio.wait_for(waiter, 1)
     assert asked["message"]["anchor"] == {"kind": "highlight", "id": hl.id}
 
     await bridge.post_message(sid, "two call sites in tests/", Subject(**asked["message"]["anchor"]))
-    answer = actor.snapshot().messages[-1]
+    answer = writer.snapshot().messages[-1]
     assert answer.role == "agent" and answer.anchor == hl

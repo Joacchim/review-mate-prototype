@@ -368,10 +368,10 @@ class DiffScopes:
     # --- internals ---------------------------------------------------------
 
     def _snapshot(self, session_id: str):
-        actor = self._manager.get(session_id)
-        if actor is None:
+        writer = self._manager.get(session_id)
+        if writer is None:
             return None
-        snapshot = actor.snapshot()
+        snapshot = writer.snapshot()
         return snapshot if snapshot.status is SessionStatus.ACTIVE else None
 
 
@@ -472,8 +472,8 @@ class BlobScopes:
         if address is None or address.path is None:
             return BlobView(session="", state="malformed-name").model_dump(mode="json")
         session_id, mode, path = address.session, address.mode, address.path
-        actor = self._manager.get(session_id)
-        snapshot = actor.snapshot() if actor is not None else None
+        writer = self._manager.get(session_id)
+        snapshot = writer.snapshot() if writer is not None else None
         if snapshot is None or snapshot.status is not SessionStatus.ACTIVE or snapshot.mr is None:
             return BlobView(session=session_id, mode=mode, path=path,
                             state="unknown-session").model_dump(mode="json")

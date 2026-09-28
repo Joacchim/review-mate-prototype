@@ -62,42 +62,42 @@ class ThreadVerbs:
         the session opened compares equal to the reviewed watermark for ever, so a merge request
         that moved on never read as moved on and reviewing only the new part never engaged.
         """
-        actor, ref, failure = self._target(session_id)
-        if actor is None or ref is None:
+        writer, ref, failure = self._target(session_id)
+        if writer is None or ref is None:
             return failure or {"error": "unknown session"}
         source = self._source(ref)
         if source is not None and hasattr(source, "load"):
             payload = await source.load(ref)
-            await actor.submit(ApplyMRMetadata(mr=payload.mr), Origin.SYSTEM)
-            await actor.submit(ApplyFiles(files=payload.files), Origin.SYSTEM)
-            await actor.submit(ReplaceThreads(threads=payload.threads), Origin.SYSTEM)
+            await writer.submit(ApplyMRMetadata(mr=payload.mr), Origin.SYSTEM)
+            await writer.submit(ApplyFiles(files=payload.files), Origin.SYSTEM)
+            await writer.submit(ReplaceThreads(threads=payload.threads), Origin.SYSTEM)
             return {"ok": True, "head": payload.mr.sha, "threads": len(payload.threads)}
         # a host that cannot re-read the whole change can still re-read the discussions
-        mirrored = await self._remirror(actor, ref)
-        snapshot = actor.snapshot()
+        mirrored = await self._remirror(writer, ref)
+        snapshot = writer.snapshot()
         return {"ok": True, "head": snapshot.mr.sha if snapshot.mr else "", "threads": mirrored}
 
     # --- the shape every verb shares -----------------------------------------
 
     async def _verb(self, session_id: str, act) -> dict:
-        actor, ref, failure = self._target(session_id, needs_writer=True)
-        if actor is None or ref is None:
+        writer, ref, failure = self._target(session_id, needs_writer=True)
+        if writer is None or ref is None:
             return failure or {"error": "unknown session"}
         try:
             await act(ref)
         except Exception as exc:
             return {"error": str(exc)}
-        await self._remirror(actor, ref)
+        await self._remirror(writer, ref)
         return {"ok": True}
 
     def _target(self, session_id: str, needs_writer: bool = False):
         """The session and the change a verb acts on, or why it cannot."""
-        actor = self._manager.get(session_id)
-        if actor is None:
+        writer = self._manager.get(session_id)
+        if writer is None:
             return None, None, {"error": "unknown session"}
         if needs_writer and self._writeback is None:
             return None, None, {"error": "review posting unavailable"}
-        snapshot = actor.snapshot()
+        snapshot = writer.snapshot()
         if snapshot.mr is None:
             return None, None, {"error": "no MR loaded"}
         ref = ref_of(snapshot)
@@ -106,13 +106,13 @@ class ThreadVerbs:
             # this machine has none — refusing says that, where reaching for the writer anyway
             # would send a repository path to a forge and report whatever it made of it
             return None, None, {"error": "this review has no merge request to write to"}
-        return actor, ref, None
+        return writer, ref, None
 
-    async def _remirror(self, actor, ref) -> int:
+    async def _remirror(self, writer, ref) -> int:
         """Re-mirror the discussions and say how many came back."""
         source = self._source(ref)
         if source is None or not hasattr(source, "fetch_threads"):
             return 0
         threads = await source.fetch_threads(ref)
-        await actor.submit(ReplaceThreads(threads=threads), Origin.SYSTEM)
+        await writer.submit(ReplaceThreads(threads=threads), Origin.SYSTEM)
         return len(threads)

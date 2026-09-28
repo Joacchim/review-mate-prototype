@@ -59,10 +59,10 @@ class AgentView:
         return await self._diffs.build(f"{session_id}:full")
 
     async def build(self, session_id: str) -> dict:
-        actor = self._manager.get(session_id)
-        if actor is None:
+        writer = self._manager.get(session_id)
+        if writer is None:
             return {"session": session_id, "state": "unknown-session"}
-        snapshot = actor.snapshot()
+        snapshot = writer.snapshot()
         view = {
             "session": session_id,
             "state": "ready" if snapshot.status is SessionStatus.ACTIVE else "ended",

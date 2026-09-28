@@ -41,10 +41,10 @@ def chat_for(manager, watcher=None):
     return ChatScopes(manager, watcher=None if watcher is None else (lambda: watcher))
 
 
-async def mark(actor, file="a.py", line=1):
-    await actor.submit(AddHighlight(file=file, side=Side.NEW,
+async def mark(writer, file="a.py", line=1):
+    await writer.submit(AddHighlight(file=file, side=Side.NEW,
                                     line_range=LineRange(start=line, end=line)), Origin.BROWSER)
-    return actor.snapshot().highlights[-1]
+    return writer.snapshot().highlights[-1]
 
 
 def rows(view):
@@ -64,15 +64,15 @@ async def test_a_review_with_nothing_said_still_has_its_own_conversation(session
 
 async def test_each_conversation_is_listed_with_where_to_read_it(session):
     manager, sid = session
-    actor = manager.get(sid)
-    highlight = await mark(actor)
-    await actor.submit(EmitCard(highlight_id=None, body="an insight"), Origin.AGENT)
-    insight = actor.snapshot().cards[-1]
-    await actor.submit(PostMessage(body="about the change"), Origin.BROWSER)
-    await actor.submit(PostMessage(body="about this line",
+    writer = manager.get(sid)
+    highlight = await mark(writer)
+    await writer.submit(EmitCard(highlight_id=None, body="an insight"), Origin.AGENT)
+    insight = writer.snapshot().cards[-1]
+    await writer.submit(PostMessage(body="about the change"), Origin.BROWSER)
+    await writer.submit(PostMessage(body="about this line",
                                    anchor=Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)),
                        Origin.BROWSER)
-    await actor.submit(PostMessage(body="about that finding",
+    await writer.submit(PostMessage(body="about that finding",
                                    anchor=Subject(kind=SubjectKind.INSIGHT, id=insight.id)),
                        Origin.AGENT)
 
@@ -84,12 +84,12 @@ async def test_each_conversation_is_listed_with_where_to_read_it(session):
 
 async def test_the_index_says_which_chats_are_waiting_on_an_answer(session):
     manager, sid = session
-    actor = manager.get(sid)
-    highlight = await mark(actor)
+    writer = manager.get(sid)
+    highlight = await mark(writer)
     anchor = Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)
-    await actor.submit(PostMessage(body="does anything read this?", anchor=anchor), Origin.BROWSER)
-    await actor.submit(PostMessage(body="what is this for?"), Origin.BROWSER)
-    await actor.submit(PostMessage(body="the fleet selector", anchor=None), Origin.AGENT)
+    await writer.submit(PostMessage(body="does anything read this?", anchor=anchor), Origin.BROWSER)
+    await writer.submit(PostMessage(body="what is this for?"), Origin.BROWSER)
+    await writer.submit(PostMessage(body="the fleet selector", anchor=None), Origin.AGENT)
 
     listed = rows(await chat_for(manager).build(sid))
     assert listed[("highlight", highlight.id)]["owed"] is True     # the reviewer spoke last
@@ -107,12 +107,12 @@ async def test_an_unknown_session_is_reported(session):
 
 async def test_a_conversation_carries_only_its_own_messages(session):
     manager, sid = session
-    actor = manager.get(sid)
-    highlight = await mark(actor)
+    writer = manager.get(sid)
+    highlight = await mark(writer)
     anchor = Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)
-    await actor.submit(PostMessage(body="about the change"), Origin.BROWSER)
-    await actor.submit(PostMessage(body="about this line", anchor=anchor), Origin.BROWSER)
-    await actor.submit(PostMessage(body="two call sites", anchor=anchor), Origin.AGENT)
+    await writer.submit(PostMessage(body="about the change"), Origin.BROWSER)
+    await writer.submit(PostMessage(body="about this line", anchor=anchor), Origin.BROWSER)
+    await writer.submit(PostMessage(body="two call sites", anchor=anchor), Origin.AGENT)
 
     view = await chat_for(manager).build(f"{sid}:highlight:{highlight.id}")
     assert [(m["role"], m["body"]) for m in view["messages"]] == [
@@ -149,10 +149,10 @@ async def test_an_ask_with_nobody_listening_is_stalled_not_slow(session):
 
 async def test_an_escalation_and_a_request_for_insights_are_asks_too(session):
     manager, sid = session
-    actor = manager.get(sid)
-    highlight = await mark(actor)
-    await actor.submit(RequestContext(highlight_id=highlight.id), Origin.BROWSER)
-    await actor.submit(RequestInsights(), Origin.BROWSER)
+    writer = manager.get(sid)
+    highlight = await mark(writer)
+    await writer.submit(RequestContext(highlight_id=highlight.id), Origin.BROWSER)
+    await writer.submit(RequestInsights(), Origin.BROWSER)
     kinds = [a["kind"] for a in (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"]]
     assert sorted(kinds) == ["context", "insights"]
 
@@ -166,19 +166,19 @@ async def test_a_bare_highlight_owes_nothing(session):
 
 async def test_an_answer_closes_the_ask_it_answers(session):
     manager, sid = session
-    actor = manager.get(sid)
-    highlight = await mark(actor)
-    await actor.submit(RequestContext(highlight_id=highlight.id), Origin.BROWSER)
+    writer = manager.get(sid)
+    highlight = await mark(writer)
+    await writer.submit(RequestContext(highlight_id=highlight.id), Origin.BROWSER)
     assert (await chat_for(manager, ATTACHED).build(sid))["agent"]["state"] == "working"
-    await actor.submit(EmitCard(highlight_id=highlight.id, body="here"), Origin.AGENT)
+    await writer.submit(EmitCard(highlight_id=highlight.id, body="here"), Origin.AGENT)
     assert (await chat_for(manager, ATTACHED).build(sid))["agent"]["state"] == "watching"
 
 
 async def test_a_doubt_the_agent_has_not_spoken_to_is_an_ask(session):
     manager, sid = session
-    actor = manager.get(sid)
-    highlight = await mark(actor)
-    await actor.submit(RequestCheck(subject=Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id),
+    writer = manager.get(sid)
+    highlight = await mark(writer)
+    await writer.submit(RequestCheck(subject=Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id),
                                     note="claims the queue is single-threaded"), Origin.BROWSER)
     asks = (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"]
     assert [a["kind"] for a in asks] == ["check"]
@@ -187,33 +187,33 @@ async def test_a_doubt_the_agent_has_not_spoken_to_is_an_ask(session):
 
 async def test_the_agent_speaking_on_the_subject_closes_the_doubt(session):
     manager, sid = session
-    actor = manager.get(sid)
-    highlight = await mark(actor)
+    writer = manager.get(sid)
+    highlight = await mark(writer)
     subject = Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)
-    await actor.submit(RequestCheck(subject=subject), Origin.BROWSER)
-    await actor.submit(PostMessage(anchor=subject, body="checked: it is not"), Origin.AGENT)
+    await writer.submit(RequestCheck(subject=subject), Origin.BROWSER)
+    await writer.submit(PostMessage(anchor=subject, body="checked: it is not"), Origin.AGENT)
     assert (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"] == []
 
 
 async def test_the_reviewers_own_words_do_not_close_their_doubt(session):
     """Otherwise asking and then adding a detail would answer the ask with the ask."""
     manager, sid = session
-    actor = manager.get(sid)
-    highlight = await mark(actor)
+    writer = manager.get(sid)
+    highlight = await mark(writer)
     subject = Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)
-    await actor.submit(RequestCheck(subject=subject), Origin.BROWSER)
-    await actor.submit(PostMessage(anchor=subject, body="specifically the retry"), Origin.BROWSER)
+    await writer.submit(RequestCheck(subject=subject), Origin.BROWSER)
+    await writer.submit(PostMessage(anchor=subject, body="specifically the retry"), Origin.BROWSER)
     kinds = [a["kind"] for a in (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"]]
     assert "check" in kinds
 
 
 async def test_a_doubt_about_another_subject_stays_open(session):
     manager, sid = session
-    actor = manager.get(sid)
-    one, two = await mark(actor, line=1), await mark(actor, line=9)
-    await actor.submit(RequestCheck(subject=Subject(kind=SubjectKind.HIGHLIGHT, id=one.id)),
+    writer = manager.get(sid)
+    one, two = await mark(writer, line=1), await mark(writer, line=9)
+    await writer.submit(RequestCheck(subject=Subject(kind=SubjectKind.HIGHLIGHT, id=one.id)),
                        Origin.BROWSER)
-    await actor.submit(PostMessage(anchor=Subject(kind=SubjectKind.HIGHLIGHT, id=two.id),
+    await writer.submit(PostMessage(anchor=Subject(kind=SubjectKind.HIGHLIGHT, id=two.id),
                                    body="unrelated"), Origin.AGENT)
     assert [a["kind"] for a in
             (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"]] == ["check"]
@@ -222,11 +222,11 @@ async def test_a_doubt_about_another_subject_stays_open(session):
 async def test_doubting_what_the_agent_already_said_is_not_born_answered(session):
     """The central case: what raises the doubt is the agent having spoken. Only later words count."""
     manager, sid = session
-    actor = manager.get(sid)
-    highlight = await mark(actor)
+    writer = manager.get(sid)
+    highlight = await mark(writer)
     subject = Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)
-    await actor.submit(PostMessage(anchor=subject, body="the queue is single-threaded"), Origin.AGENT)
-    await actor.submit(RequestCheck(subject=subject, note="the queue is single-threaded"),
+    await writer.submit(PostMessage(anchor=subject, body="the queue is single-threaded"), Origin.AGENT)
+    await writer.submit(RequestCheck(subject=subject, note="the queue is single-threaded"),
                        Origin.BROWSER)
     assert [a["kind"] for a in
             (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"]] == ["check"]
@@ -235,21 +235,21 @@ async def test_doubting_what_the_agent_already_said_is_not_born_answered(session
 async def test_a_word_on_the_subject_closes_the_doubt_whatever_it_answered(session):
     """The surprise in docs/surprising-behaviors.md, pinned so a future closing verb is a deliberate change."""
     manager, sid = session
-    actor = manager.get(sid)
-    highlight = await mark(actor)
+    writer = manager.get(sid)
+    highlight = await mark(writer)
     subject = Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)
-    await actor.submit(RequestCheck(subject=subject, note="doubt this"), Origin.BROWSER)
-    await actor.submit(PostMessage(anchor=subject, body="it is defined in utils.py"), Origin.AGENT)
+    await writer.submit(RequestCheck(subject=subject, note="doubt this"), Origin.BROWSER)
+    await writer.submit(PostMessage(anchor=subject, body="it is defined in utils.py"), Origin.AGENT)
     assert (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"] == []
 
 
 async def test_a_doubt_shows_on_the_conversation_it_will_be_answered_in(session):
     """Waiting on a check is waiting on a message, so it reads where that message will appear."""
     manager, sid = session
-    actor = manager.get(sid)
-    highlight = await mark(actor)
+    writer = manager.get(sid)
+    highlight = await mark(writer)
     subject = Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id)
-    await actor.submit(RequestCheck(subject=subject), Origin.BROWSER)
+    await writer.submit(RequestCheck(subject=subject), Origin.BROWSER)
 
     chat = chat_for(manager, ATTACHED)
     row = rows(await chat.build(sid))[("highlight", highlight.id)]
@@ -257,7 +257,7 @@ async def test_a_doubt_shows_on_the_conversation_it_will_be_answered_in(session)
     assert (await chat.build(f"{sid}:highlight:{highlight.id}"))["checking"]
     assert not rows(await chat.build(sid))[("review", "")]["checking"]
 
-    await actor.submit(PostMessage(anchor=subject, body="checked"), Origin.AGENT)
+    await writer.submit(PostMessage(anchor=subject, body="checked"), Origin.AGENT)
     assert not rows(await chat.build(sid))[("highlight", highlight.id)]["checking"]
 
 

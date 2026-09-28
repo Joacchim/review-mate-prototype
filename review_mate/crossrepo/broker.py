@@ -49,14 +49,14 @@ class CrossRepoBroker:
         running" is distinguishable from "the reviewer said yes and nothing is listening" — a clone
         of a large repository takes long enough that the difference is all the reviewer has to go on.
         """
-        actor = self._m.get(session_id)
-        if actor is None:
+        writer = self._m.get(session_id)
+        if writer is None:
             return None
-        req = next((r for r in actor.snapshot().access_requests if r.id == request_id), None)
+        req = next((r for r in writer.snapshot().access_requests if r.id == request_id), None)
         if req is None or req.status is not AccessStatus.APPROVED:
             return None  # the command layer refuses this too; declining here saves the round trip
 
-        await self._record(actor, request_id, Grant(state="materializing", at=_now()))
+        await self._record(writer, request_id, Grant(state="materializing", at=_now()))
         try:
             located = await self._resolve(req.repo)
             if located is None:
@@ -65,14 +65,14 @@ class CrossRepoBroker:
             result = self._workspace.materialize(ref, commit)
             handle = await result if isinstance(result, Awaitable) else result
         except Exception as exc:
-            await self._record(actor, request_id,
+            await self._record(writer, request_id,
                                Grant(state="failed", error=f"{type(exc).__name__}: {exc}",
                                      at=_now()))
             raise
 
-        await self._record(actor, request_id,
+        await self._record(writer, request_id,
                            Grant(state="ready", path=handle.path, at=_now()))
-        mr = actor.snapshot().mr
+        mr = writer.snapshot().mr
         if mr is not None and mr.project:
             self.kb.record_relationship(mr.project, req.repo, note=req.reason)
         return handle
@@ -83,10 +83,10 @@ class CrossRepoBroker:
         Read off the session rather than remembered here, so a restored session answers the same as
         a live one and there is one place to be wrong.
         """
-        actor = self._m.get(session_id)
-        if actor is None:
+        writer = self._m.get(session_id)
+        if writer is None:
             return None
-        for req in actor.snapshot().access_requests or []:
+        for req in writer.snapshot().access_requests or []:
             if req.repo == repo and req.status is AccessStatus.APPROVED:
                 if req.grant is not None and req.grant.state == "ready":
                     return req.grant.path
@@ -100,20 +100,20 @@ class CrossRepoBroker:
         The decision is durable, so the work is re-derivable from it — the same argument that makes
         the ephemeral activity stream safe.
         """
-        actor = self._m.get(session_id)
-        if actor is None:
+        writer = self._m.get(session_id)
+        if writer is None:
             return
-        for req in actor.snapshot().access_requests or []:
+        for req in writer.snapshot().access_requests or []:
             if req.status is AccessStatus.APPROVED and (
                     req.grant is None or req.grant.state == "materializing"):
                 self._spawn(session_id, req.id)
 
     async def watch(self, session_id: str) -> None:
-        actor = self._m.get(session_id)
-        if actor is None:
+        writer = self._m.get(session_id)
+        if writer is None:
             return
         await self.catch_up(session_id)
-        async for event in actor.subscribe(since=actor.snapshot().seq):
+        async for event in writer.subscribe(since=writer.snapshot().seq):
             if isinstance(event, AccessDecided) and event.status is AccessStatus.APPROVED:
                 self._spawn(session_id, event.request_id)
 
@@ -124,8 +124,8 @@ class CrossRepoBroker:
         self._grants.add(task)
         task.add_done_callback(self._grants.discard)
 
-    async def _record(self, actor, request_id: str, grant: Grant) -> None:
-        await actor.submit(RecordGrant(request_id=request_id, grant=grant), Origin.SYSTEM)
+    async def _record(self, writer, request_id: str, grant: Grant) -> None:
+        await writer.submit(RecordGrant(request_id=request_id, grant=grant), Origin.SYSTEM)
 
     async def _safe_grant(self, session_id: str, request_id: str) -> None:
         try:

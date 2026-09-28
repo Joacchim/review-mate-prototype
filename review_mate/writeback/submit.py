@@ -29,23 +29,23 @@ class ReviewSubmitter:
         Never raises for a draft the host refused: the reviewer gets the rest of their review
         posted and a per-comment error, rather than an all-or-nothing failure they cannot act on.
         """
-        actor = self._manager.get(session_id)
-        if actor is None:
+        writer = self._manager.get(session_id)
+        if writer is None:
             return {"error": "unknown session"}
         if self._writeback is None:
             return {"error": "review posting unavailable"}
-        snapshot = actor.snapshot()
+        snapshot = writer.snapshot()
         if snapshot.mr is None:
             return {"error": "no MR loaded"}
 
         ref = MRRef(host=snapshot.mr.host, project=snapshot.mr.project, iid=snapshot.mr.iid)
         pending = [d for d in snapshot.drafts if d.status is DraftStatus.DRAFT]
         by_id = {h.id: h for h in snapshot.highlights}
-        results = [await self._post(actor, snapshot, ref, draft, by_id) for draft in pending]
+        results = [await self._post(writer, snapshot, ref, draft, by_id) for draft in pending]
         posted = sum(1 for r in results if r["ok"])
 
         if posted:
-            await self._remirror(actor, ref)
+            await self._remirror(writer, ref)
         approved, approve_error = await self._approve(ref) if approve else (False, None)
         if self._kb is not None and snapshot.mr.sha:   # submitting advances the reviewed watermark
             self._kb.set_watermark(snapshot.mr.host, snapshot.mr.project, snapshot.mr.iid,
@@ -55,7 +55,7 @@ class ReviewSubmitter:
 
     # --- the steps -----------------------------------------------------------
 
-    async def _post(self, actor, snapshot, ref: MRRef, draft, by_id) -> dict:
+    async def _post(self, writer, snapshot, ref: MRRef, draft, by_id) -> dict:
         try:
             body = self._compose(draft, by_id.get(draft.highlight_id) if draft.highlight_id else None)
             answer = await self._writeback.post_comment(snapshot.id, draft.highlight_id, body, ref)
@@ -66,7 +66,7 @@ class ReviewSubmitter:
                    if note.get("id") and snapshot.mr.url else None)
             thread_id = (str(answer["id"]) if isinstance(answer, dict) and draft.highlight_id
                          and answer.get("id") is not None else None)
-            await actor.submit(MarkDraftPosted(highlight_id=draft.highlight_id, url=url,
+            await writer.submit(MarkDraftPosted(highlight_id=draft.highlight_id, url=url,
                                                thread_id=thread_id), Origin.BROWSER)
             return {"highlight_id": draft.highlight_id, "ok": True, "url": url}
         except Exception as exc:   # one bad anchor must not sink the rest of the review
@@ -86,7 +86,7 @@ class ReviewSubmitter:
         block = f"```suggestion:-0+{span}\n{draft.suggestion}\n```"
         return f"{body}\n\n{block}" if body.strip() else block
 
-    async def _remirror(self, actor, ref: MRRef) -> None:
+    async def _remirror(self, writer, ref: MRRef) -> None:
         """Re-pull the discussions so a just-posted comment is a thread the reviewer can resolve.
 
         Best-effort: the review is already posted by this point, and failing here would report a
@@ -99,7 +99,7 @@ class ReviewSubmitter:
         except Exception:
             return
         # the host is the single source of truth for threads, so this reconciles wholesale
-        await actor.submit(ReplaceThreads(threads=threads), Origin.SYSTEM)
+        await writer.submit(ReplaceThreads(threads=threads), Origin.SYSTEM)
 
     async def _approve(self, ref: MRRef) -> tuple[bool, str | None]:
         try:

@@ -36,8 +36,8 @@ def _open_first(rail, detail):
 
 def _commands(staged, session_id="s1"):
     """Every command the page actually sent, by type name."""
-    actor = staged.actor(session_id)
-    return [(type(command).__name__, command) for command, _ in actor.commands]
+    writer = staged.writer(session_id)
+    return [(type(command).__name__, command) for command, _ in writer.commands]
 
 
 def test_a_subject_opens_both_channels(diff, rail, detail, staged):

@@ -4,7 +4,7 @@ bridge-server defines these Protocols and data shapes; it never implements them.
 (`gitlab-host-adapter`) implements `MRSource`; the workspace unit (`workspace-manager`) implements
 `Workspace`. They are injected into `SessionManager`, so the spine has no compile-time dependency
 on them (AC-12). The agent contract (`mcp-bridge`) is simply the in-process `SessionManager` +
-`SessionActor.submit/subscribe` surface, so it needs no Protocol here.
+`SessionWriter.submit/subscribe` surface, so it needs no Protocol here.
 """
 from __future__ import annotations
 

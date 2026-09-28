@@ -124,13 +124,13 @@ def test_editing_a_draft_does_not_make_a_second_one(diff, rail, detail, review, 
 
 # --- sending it -------------------------------------------------------------
 
-def test_submitting_posts_every_prepared_comment(diff, review, staged, stub_writer):
+def test_submitting_posts_every_prepared_comment(diff, review, staged, stub_host_writer):
     staged.put(_with_draft("reads well overall"))
     diff.load("s1")
     review.submit.click()
     expect(review.counts).to_contain_text("1 posted")
-    assert stub_writer.posted == ["reads well overall"]
-    assert stub_writer.approved is False
+    assert stub_host_writer.posted == ["reads well overall"]
+    assert stub_host_writer.approved is False
 
 
 def test_submitting_reports_what_landed(diff, review, shell, staged):
@@ -140,14 +140,14 @@ def test_submitting_reports_what_landed(diff, review, shell, staged):
     expect(shell.status).to_contain_text("posted 1 comment")
 
 
-def test_approving_travels_with_the_submission(diff, review, shell, staged, stub_writer):
+def test_approving_travels_with_the_submission(diff, review, shell, staged, stub_host_writer):
     staged.put(_with_draft("reads well overall"))
     diff.load("s1")
     review.approve.check()
     review.submit.click()
     expect(shell.status).to_contain_text("approved")
-    assert stub_writer.approved is True
-    assert stub_writer.posted == ["reads well overall"]
+    assert stub_host_writer.approved is True
+    assert stub_host_writer.posted == ["reads well overall"]
 
 
 def test_an_mr_the_host_cannot_approve_offers_no_approval(diff, review, staged):
@@ -212,16 +212,16 @@ def test_only_the_reviewers_own_comments_offer_edit_and_delete(diff, threads, st
     expect(threads.actions_on("not yours")).to_have_count(0)    # and none on someone else's
 
 
-def test_replying_reaches_the_host(diff, threads, staged, stub_writer):
+def test_replying_reaches_the_host(diff, threads, staged, stub_host_writer):
     staged.put(_discussed({"id": "d1", "anchor": AT_LINE, "said": [("eric", "prefer a guard")]}))
     diff.load("s1")
     threads.row("prefer a guard").click()
     threads.reply("fixed in the next push")
     expect(threads.reply_box).to_have_value("")        # the box clears once it has gone
-    assert stub_writer.replied == [("d1", "fixed in the next push")]
+    assert stub_host_writer.replied == [("d1", "fixed in the next push")]
 
 
-def test_resolving_a_discussion_settles_it(diff, threads, shell, staged, stub_writer):
+def test_resolving_a_discussion_settles_it(diff, threads, shell, staged, stub_host_writer):
     staged.put(_discussed({"id": "d1", "anchor": AT_LINE, "said": [("eric", "prefer a guard")]}))
     diff.load("s1")
     threads.row("prefer a guard").click()
@@ -229,7 +229,7 @@ def test_resolving_a_discussion_settles_it(diff, threads, shell, staged, stub_wr
     # the report is what says the round trip finished; what the list then shows is whatever the
     # host answers with, which this fixture decides rather than the resolve does
     expect(shell.status).to_have_text("resolved")
-    assert stub_writer.resolved == [("d1", True)]
+    assert stub_host_writer.resolved == [("d1", True)]
 
 
 # --- asking for a pass over the whole change ----------------------------------

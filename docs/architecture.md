@@ -102,9 +102,9 @@ that by parsing imports: `session/*.py` and `contracts.py` may not import `revie
 
 ## The core
 
-A session is an actor: commands in, events appended to a log, state folded from the log. The log is
-the source of truth and is fsynced before a command is acked, so an acked change survives a crash.
-State is restored by replay at startup.
+A session has one writer: commands in, events appended to a log, state folded from the log. The
+log is the source of truth and is fsynced before a command is acked, so an acked change survives a
+crash. State is restored by replay at startup.
 
 Every command carries an origin, and an authority matrix decides what each origin may do. That is
 how the agent plane stays additive: the agent can add a card, and cannot post a comment to the host.

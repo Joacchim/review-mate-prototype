@@ -30,8 +30,8 @@ async def setup(tmp_path):
 
 
 async def _add_highlight(manager, sid, file="a.py"):
-    actor = manager.get(sid)
-    res = await actor.submit(
+    writer = manager.get(sid)
+    res = await writer.submit(
         AddHighlight(file=file, side=Side.NEW, line_range=LineRange(start=1, end=1)),
         Origin.BROWSER,
     )
@@ -191,11 +191,11 @@ async def test_the_real_app_gives_the_agent_the_folded_view(tmp_path):
     app = create_app(manager=manager, with_mcp=True)
     async with app.router.lifespan_context(app):
         sid = await manager.create()
-        actor = manager.get(sid)
-        await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+        writer = manager.get(sid)
+        await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
                                         line_range=LineRange(start=1, end=1)), Origin.BROWSER)
-        hid = actor.snapshot().highlights[0].id
-        await actor.submit(SaveDraft(highlight_id=hid, body="a candid unsent note"), Origin.BROWSER)
+        hid = writer.snapshot().highlights[0].id
+        await writer.submit(SaveDraft(highlight_id=hid, body="a candid unsent note"), Origin.BROWSER)
 
         built = await app.state.bridge.view(sid)
         assert "rail" in built and "chat" in built and "access" in built
@@ -207,11 +207,11 @@ async def test_the_tool_the_agent_actually_calls_returns_the_folded_view(setup):
     """Through `call_tool`, not the bridge beneath it: the tool layer is the agent's real contract,
     and a bridge test passes whether or not the tool is wired to it."""
     manager, bridge, sid = setup
-    actor = manager.get(sid)
-    await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+    writer = manager.get(sid)
+    await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
                                     line_range=LineRange(start=1, end=1)), Origin.BROWSER)
-    hid = actor.snapshot().highlights[0].id
-    await actor.submit(SaveDraft(highlight_id=hid, body="a candid unsent note"), Origin.BROWSER)
+    hid = writer.snapshot().highlights[0].id
+    await writer.submit(SaveDraft(highlight_id=hid, body="a candid unsent note"), Origin.BROWSER)
 
     server = build_mcp_server(bridge)
     returned = await server.call_tool("get_session", {"session_id": sid})

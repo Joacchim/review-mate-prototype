@@ -1,6 +1,6 @@
 """SessionManager — session lifecycle and discovery.
 
-Owns the set of live `SessionActor`s keyed by id; creates them (seeding the first
+Owns the set of live `SessionWriter`s keyed by id; creates them (seeding the first
 `SessionCreated` event), restores them on startup by replaying their logs, lists and ends them.
 Persistence lives under the `~/.review-mate/sessions/<id>/` workspace boundary.
 """
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 from review_mate.config import sessions_dir
 from review_mate.contracts import LocalRef, MRRef, RepoRef
 from review_mate.session import events as ev
-from review_mate.session.actor import SessionActor
+from review_mate.session.writer import SessionWriter
 from review_mate.session.commands import (
     ApplyFiles, ApplyMRMetadata, ApplyThread, EndSession, SetCheckout,
 )
@@ -40,12 +40,12 @@ class SessionManager:
                  activity_broker=None, local_source=None):
         self.root = Path(root) if root is not None else sessions_dir()
         self.root.mkdir(parents=True, exist_ok=True)
-        self._actors: dict[str, SessionActor] = {}
+        self._writers: dict[str, SessionWriter] = {}
         self._mr_source = mr_source   # MRSource contract (optional, injected) — host-adapter impl
         self._local_source = local_source  # the same contract for a branch that has not left this machine
         self._workspace = workspace   # Workspace contract (optional, injected) — workspace-manager impl
         self._activity_broker = activity_broker  # ActivityBroker (optional) — review-fleet notify spine
-        self._republishers: list[asyncio.Task] = []  # per-actor taps feeding the activity channel
+        self._republishers: list[asyncio.Task] = []  # per-writer taps feeding the activity channel
         self._checkouts: dict[str, object] = {}   # session_id → CheckoutHandle, released on session end
 
     # --- lifecycle ----------------------------------------------------------
@@ -63,9 +63,9 @@ class SessionManager:
         log.append(created_event)              # seq 1
         state = fold(state, [created_event])
 
-        actor = SessionActor(sid, log, state)
-        actor.start()
-        self._actors[sid] = actor
+        writer = SessionWriter(sid, log, state)
+        writer.start()
+        self._writers[sid] = writer
 
         if ref is not None and self.source_for(ref) is not None:
             try:
@@ -73,23 +73,23 @@ class SessionManager:
             except Exception:
                 await self._discard(sid)  # don't leave an orphaned, MR-less ACTIVE session
                 raise
-        self._attach_republisher(actor, sid)
+        self._attach_republisher(writer, sid)
         return sid
 
-    def _attach_republisher(self, actor: SessionActor, sid: str) -> None:
-        """Tap the actor's event stream and republish highlight/message events to the activity
+    def _attach_republisher(self, writer: SessionWriter, sid: str) -> None:
+        """Tap the writer's event stream and republish highlight/message events to the activity
         channel, so one watcher covers every session (review-fleet). No-op without a broker.
         Only the reviewer's own actions (Origin.BROWSER) are republished: an agent write would
         otherwise re-invoke the coordinator and re-wake this session's worker for a backlog it just
         drained. Subscribes from the current seq, so a restored session's historical events are not
-        re-announced as fresh activity. Ends when the actor closes subscribers on SessionEnded."""
+        re-announced as fresh activity. Ends when the writer closes subscribers on SessionEnded."""
         broker = self._activity_broker
         if broker is None:
             return
-        since = actor.snapshot().seq
+        since = writer.snapshot().seq
 
         async def _pump() -> None:
-            async for event in actor.subscribe(since=since):
+            async for event in writer.subscribe(since=since):
                 if event.origin is Origin.AGENT:
                     continue  # the agent's own writes must not wake it back up
                 # a bare highlight gets the host context and spends no agent turn (D21); every
@@ -126,25 +126,25 @@ class SessionManager:
 
     async def _discard(self, session_id: str) -> None:
         await self._release_checkout(session_id)
-        actor = self._actors.pop(session_id, None)
-        if actor is not None:
-            await actor.stop()
+        writer = self._writers.pop(session_id, None)
+        if writer is not None:
+            await writer.stop()
         shutil.rmtree(self.root / session_id, ignore_errors=True)
 
     async def load(self, session_id: str, ref: MRRef) -> None:
         """Populate a session from the host contract (SYSTEM origin). No-op if no MRSource injected."""
-        actor = self._actors.get(session_id)
-        if actor is None:
+        writer = self._writers.get(session_id)
+        if writer is None:
             raise KeyError(session_id)
         source = self.source_for(ref)
         if source is None:
             raise RuntimeError("no source for this kind of reference")
         payload = await source.load(ref)
-        await actor.submit(ApplyMRMetadata(mr=payload.mr), Origin.SYSTEM)
-        await actor.submit(ApplyFiles(files=payload.files), Origin.SYSTEM)
+        await writer.submit(ApplyMRMetadata(mr=payload.mr), Origin.SYSTEM)
+        await writer.submit(ApplyFiles(files=payload.files), Origin.SYSTEM)
         for thread in payload.threads:
-            await actor.submit(ApplyThread(thread=thread), Origin.SYSTEM)
-        await self._materialize_checkout(session_id, actor, payload)
+            await writer.submit(ApplyThread(thread=thread), Origin.SYSTEM)
+        await self._materialize_checkout(session_id, writer, payload)
 
     def source_for(self, ref):
         """The source that understands this kind of reference.
@@ -155,7 +155,7 @@ class SessionManager:
         """
         return self._local_source if isinstance(ref, LocalRef) else self._mr_source
 
-    async def _materialize_checkout(self, session_id, actor, payload) -> None:
+    async def _materialize_checkout(self, session_id, writer, payload) -> None:
         """Eagerly check out the MR on disk (a worktree off the bare mirror) so the agent can run
         code-graph / LSP / grep against real files, not just the API. Best-effort: a clone/auth
         failure leaves checkout_path unset and the review still works over the host API.
@@ -168,7 +168,7 @@ class SessionManager:
             # nothing is stored in `_checkouts`, so closing the session releases nothing: the
             # repository was borrowed, and removing a worktree we did not create would take the
             # reviewer's own working copy with it
-            await actor.submit(SetCheckout(path=payload.checkout_path), Origin.SYSTEM)
+            await writer.submit(SetCheckout(path=payload.checkout_path), Origin.SYSTEM)
             return
         clone_url = payload.clone_url or payload.mr.clone_url
         if self._workspace is None or not clone_url or not payload.mr.sha:
@@ -178,7 +178,7 @@ class SessionManager:
             result = self._workspace.materialize(repo, payload.mr.sha)
             handle = await result if isinstance(result, Awaitable) else result
             self._checkouts[session_id] = handle
-            await actor.submit(SetCheckout(path=handle.path), Origin.SYSTEM)
+            await writer.submit(SetCheckout(path=handle.path), Origin.SYSTEM)
         except Exception:
             logger.warning("could not materialize a checkout for %s", session_id, exc_info=True)
 
@@ -196,47 +196,47 @@ class SessionManager:
     async def restore_all(self) -> None:
         for sdir in sorted(p for p in self.root.iterdir() if p.is_dir()):
             log_path = sdir / "events.jsonl"
-            if not log_path.exists() or sdir.name in self._actors:
+            if not log_path.exists() or sdir.name in self._writers:
                 continue
             try:
                 meta = self._read_meta(sdir)
                 log = EventLog(log_path)
                 state = fold(SessionState(id=sdir.name, created_at=meta.get("created_at", "")),
                              list(log.replay()))
-                actor = SessionActor(sdir.name, log, state)
-                actor.start()
-                self._actors[sdir.name] = actor
-                self._attach_republisher(actor, sdir.name)
+                writer = SessionWriter(sdir.name, log, state)
+                writer.start()
+                self._writers[sdir.name] = writer
+                self._attach_republisher(writer, sdir.name)
             except Exception:
                 # one unreadable/corrupt session must not stop the server from booting
                 logger.warning("skipping unrestorable session %s", sdir.name, exc_info=True)
 
     async def end(self, session_id: str) -> None:
-        actor = self._actors.get(session_id)
-        if actor is None:
+        writer = self._writers.get(session_id)
+        if writer is None:
             raise KeyError(session_id)
-        await actor.submit(EndSession(), Origin.BROWSER)
+        await writer.submit(EndSession(), Origin.BROWSER)
         await self._release_checkout(session_id)
         self._write_meta(self.root / session_id, session_id,
-                         actor.snapshot().created_at, SessionStatus.ENDED)
+                         writer.snapshot().created_at, SessionStatus.ENDED)
 
     async def shutdown(self) -> None:
         for task in self._republishers:
             task.cancel()
         self._republishers.clear()
-        for actor in list(self._actors.values()):
-            await actor.stop()
-        self._actors.clear()
+        for writer in list(self._writers.values()):
+            await writer.stop()
+        self._writers.clear()
 
     # --- reads --------------------------------------------------------------
 
-    def get(self, session_id: str) -> SessionActor | None:
-        return self._actors.get(session_id)
+    def get(self, session_id: str) -> SessionWriter | None:
+        return self._writers.get(session_id)
 
     def list(self) -> list[SessionSummary]:
         out: list[SessionSummary] = []
-        for actor in self._actors.values():
-            s = actor.snapshot()
+        for writer in self._writers.values():
+            s = writer.snapshot()
             out.append(SessionSummary(
                 id=s.id, status=s.status, created_at=s.created_at, seq=s.seq,
                 title=s.mr.title if s.mr else None,

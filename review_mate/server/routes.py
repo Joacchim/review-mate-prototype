@@ -1,4 +1,4 @@
-"""HTTP + WebSocket handlers — thin: translate requests into manager/actor calls.
+"""HTTP + WebSocket handlers — thin: translate requests into manager/writer calls.
 
 The browser is the only HTTP caller, so HTTP commands run with `Origin.BROWSER`; the authority
 matrix in the core rejects anything it may not do. The agent reaches the session in-process
@@ -88,10 +88,10 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         for summ in manager.list():
             if summ.status is not SessionStatus.ACTIVE:
                 continue
-            actor = manager.get(summ.id)
-            if actor is None:
+            writer = manager.get(summ.id)
+            if writer is None:
                 continue
-            snap = actor.snapshot()
+            snap = writer.snapshot()
             by_id = {h.id: h for h in snap.highlights}
             asks = []
             for ask in outstanding_asks(snap):
@@ -124,20 +124,20 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         return JSONResponse([s.model_dump(mode="json") for s in manager.list()])
 
     async def get_session(request: Request) -> JSONResponse:
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
+        writer = manager.get(request.path_params["id"])
+        if writer is None:
             return JSONResponse({"error": "unknown session"}, status_code=404)
-        return JSONResponse(actor.snapshot().model_dump(mode="json"))
+        return JSONResponse(writer.snapshot().model_dump(mode="json"))
 
     async def submit_command(request: Request) -> JSONResponse:
-        actor = manager.get(request.path_params["id"])
-        if actor is None:
+        writer = manager.get(request.path_params["id"])
+        if writer is None:
             return JSONResponse({"error": "unknown session"}, status_code=404)
         try:
             command = parse_command(await request.json())
         except (ValidationError, ValueError):
             return JSONResponse({"error": "malformed command"}, status_code=400)
-        result = await actor.submit(command, Origin.BROWSER)
+        result = await writer.submit(command, Origin.BROWSER)
         if not result.ok:
             return JSONResponse({"ok": False, "reason": result.reason}, status_code=400)
         return JSONResponse({"ok": True, "seq": result.seq})
@@ -151,8 +151,8 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
 
     async def stream(ws: WebSocket) -> None:
         await ws.accept()
-        actor = manager.get(ws.path_params["id"])
-        if actor is None:
+        writer = manager.get(ws.path_params["id"])
+        if writer is None:
             await ws.close(code=4404)
             return
         try:
@@ -160,7 +160,7 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         except ValueError:
             since = 0
         try:
-            async for event in actor.subscribe(since=since):
+            async for event in writer.subscribe(since=since):
                 await ws.send_text(event.model_dump_json())
         except WebSocketDisconnect:
             return

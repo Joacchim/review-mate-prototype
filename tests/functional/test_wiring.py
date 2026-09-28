@@ -86,8 +86,8 @@ async def test_writeback_uses_diff_refs(session_with_diffrefs, calls):
         return httpx.Response(201, json={"id": "d"})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://gl/api/v4")
-    writer = GitLabWriter("https://gl/api/v4", "t", dict(GITLAB_CAPABILITIES), client=client)
-    await Writeback(m, writer).post_comment(sid, hid, "comment", MRRef(host="gitlab", project="g/p", iid=42))
+    host_writer = GitLabWriter("https://gl/api/v4", "t", dict(GITLAB_CAPABILITIES), client=client)
+    await Writeback(m, host_writer).post_comment(sid, hid, "comment", MRRef(host="gitlab", project="g/p", iid=42))
     pos = calls[-1]["position"]
     assert pos["base_sha"] == "B" and pos["head_sha"] == "H" and pos["start_sha"] == "S"
     assert pos["new_line"] == 7

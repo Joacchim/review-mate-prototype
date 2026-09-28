@@ -1,4 +1,4 @@
-"""Functional tests for the activity-channel — the per-actor republisher and GET /api/activity."""
+"""Functional tests for the activity-channel — the per-writer republisher and GET /api/activity."""
 import asyncio
 
 import httpx
@@ -90,14 +90,14 @@ async def test_every_ask_the_reviewer_raises_is_announced(tmp_path):
     broker = ActivityBroker()
     mgr = SessionManager(root=tmp_path / "s", activity_broker=broker)
     sid = await mgr.create()
-    actor = mgr.get(sid)
-    await actor.submit(AddHighlight(**HL), Origin.BROWSER)
-    hid = actor.snapshot().highlights[0].id
+    writer = mgr.get(sid)
+    await writer.submit(AddHighlight(**HL), Origin.BROWSER)
+    hid = writer.snapshot().highlights[0].id
     subject = Subject(kind=SubjectKind.HIGHLIGHT, id=hid)
-    await actor.submit(RequestContext(highlight_id=hid), Origin.BROWSER)
-    await actor.submit(PostMessage(body="and this?", anchor=subject), Origin.BROWSER)
-    await actor.submit(RequestInsights(), Origin.BROWSER)
-    await actor.submit(RequestCheck(subject=subject), Origin.BROWSER)
+    await writer.submit(RequestContext(highlight_id=hid), Origin.BROWSER)
+    await writer.submit(PostMessage(body="and this?", anchor=subject), Origin.BROWSER)
+    await writer.submit(RequestInsights(), Origin.BROWSER)
+    await writer.submit(RequestCheck(subject=subject), Origin.BROWSER)
 
     seen, since = [], 0
     while len(seen) < 4:
@@ -224,17 +224,17 @@ async def test_outstanding_clears_once_the_agent_answers(tmp_path):
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
         sid = (await c.post("/api/sessions", json={})).json()["id"]
-        actor = mgr.get(sid)
-        await actor.submit(PostMessage(body="look?"), Origin.BROWSER)
-        await actor.submit(AddHighlight(**HL), Origin.BROWSER)
-        hid = actor.snapshot().highlights[0].id
-        await actor.submit(RequestContext(highlight_id=hid), Origin.BROWSER)
+        writer = mgr.get(sid)
+        await writer.submit(PostMessage(body="look?"), Origin.BROWSER)
+        await writer.submit(AddHighlight(**HL), Origin.BROWSER)
+        hid = writer.snapshot().highlights[0].id
+        await writer.submit(RequestContext(highlight_id=hid), Origin.BROWSER)
         assert (await c.get("/api/outstanding")).json()["total"] == 2
 
-        await actor.submit(EmitCard(highlight_id=hid, body="here"), Origin.AGENT)
+        await writer.submit(EmitCard(highlight_id=hid, body="here"), Origin.AGENT)
         assert [a["kind"] for a in (await c.get("/api/outstanding")).json()["sessions"][0]["asks"]] \
             == ["chat"]
-        await actor.submit(PostMessage(body="had a look"), Origin.AGENT)   # trailing role → agent
+        await writer.submit(PostMessage(body="had a look"), Origin.AGENT)   # trailing role → agent
         assert (await c.get("/api/outstanding")).json() == {"sessions": [], "total": 0}
     await mgr.shutdown()
 
@@ -242,11 +242,11 @@ async def test_outstanding_clears_once_the_agent_answers(tmp_path):
 # --- consent, once the agent can act on it ------------------------------------
 
 async def _asked_and_decided(mgr, sid, approve):
-    actor = mgr.get(sid)
-    await actor.submit(RequestAccess(repo="g/sibling", reason="the contract"), Origin.AGENT)
-    rid = actor.snapshot().access_requests[-1].id
-    await actor.submit(DecideAccess(request_id=rid, approve=approve), Origin.BROWSER)
-    return actor, rid
+    writer = mgr.get(sid)
+    await writer.submit(RequestAccess(repo="g/sibling", reason="the contract"), Origin.AGENT)
+    rid = writer.snapshot().access_requests[-1].id
+    await writer.submit(DecideAccess(request_id=rid, approve=approve), Origin.BROWSER)
+    return writer, rid
 
 
 async def test_asking_for_access_does_not_wake_the_agent(tmp_path):
@@ -302,12 +302,12 @@ async def test_the_repository_landing_wakes_the_agent(tmp_path):
     broker = ActivityBroker()
     mgr = SessionManager(root=tmp_path / "s", activity_broker=broker)
     sid = await mgr.create()
-    actor, rid = await _asked_and_decided(mgr, sid, approve=True)
-    await actor.submit(RecordGrant(request_id=rid, grant=Grant(state="materializing")),
+    writer, rid = await _asked_and_decided(mgr, sid, approve=True)
+    await writer.submit(RecordGrant(request_id=rid, grant=Grant(state="materializing")),
                        Origin.SYSTEM)
     assert await broker.wait(since=0, timeout=0.2) is None, "a clone starting is not yet news"
 
-    await actor.submit(RecordGrant(request_id=rid, grant=Grant(state="ready", path="/tmp/x")),
+    await writer.submit(RecordGrant(request_id=rid, grant=Grant(state="ready", path="/tmp/x")),
                        Origin.SYSTEM)
     event = await broker.wait(since=0, timeout=1)
     assert event is not None and event.kind == "access_settled"
@@ -319,8 +319,8 @@ async def test_a_grant_that_failed_wakes_the_agent_too(tmp_path):
     broker = ActivityBroker()
     mgr = SessionManager(root=tmp_path / "s", activity_broker=broker)
     sid = await mgr.create()
-    actor, rid = await _asked_and_decided(mgr, sid, approve=True)
-    await actor.submit(RecordGrant(request_id=rid, grant=Grant(state="failed", error="no repo")),
+    writer, rid = await _asked_and_decided(mgr, sid, approve=True)
+    await writer.submit(RecordGrant(request_id=rid, grant=Grant(state="failed", error="no repo")),
                        Origin.SYSTEM)
     event = await broker.wait(since=0, timeout=1)
     assert event is not None and event.kind == "access_settled"

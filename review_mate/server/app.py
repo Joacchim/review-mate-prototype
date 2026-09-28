@@ -1,6 +1,6 @@
 """The ASGI application: wire the routes and the static UI over a SessionManager.
 
-On startup it restores persisted sessions (AC-8); on shutdown it stops the actors cleanly. The
+On startup it restores persisted sessions (AC-8); on shutdown it stops the writers cleanly. The
 static UI is mounted last so it never shadows the `/api` routes.
 """
 from __future__ import annotations
@@ -74,7 +74,7 @@ def create_app(manager: SessionManager | None = None,
                kb=None) -> Starlette:
     # the activity channel — ephemeral notification spine; one watcher covers every session
     # (review-fleet). The composition root owns it, wired in before restore_all attaches the
-    # per-actor republishers.
+    # per-writer republishers.
     from review_mate.activity.broker import ActivityBroker
     activity_broker = ActivityBroker()
 
@@ -141,15 +141,15 @@ def create_app(manager: SessionManager | None = None,
     async def _tail(session_id: str) -> None:
         """Republish a session's held scopes as its events arrive, while a client is watching.
 
-        The actor is captured once, which relies on the manager keeping one actor per session id
+        The writer is captured once, which relies on the manager keeping one writer per session id
         for as long as the session exists — it does, and a manager that handed out a second would
         leave this listening to the first for ever while the page watched a session that never
         pushed it anything again. Asserted in the protocol tests rather than left as folklore.
         """
-        actor = manager.get(session_id)
-        if actor is None:
+        writer = manager.get(session_id)
+        if writer is None:
             return
-        async for _event in actor.subscribe(since=actor.snapshot().seq):
+        async for _event in writer.subscribe(since=writer.snapshot().seq):
             await republish_session(session_id)
 
     def _carries_presence(scope: str) -> bool:

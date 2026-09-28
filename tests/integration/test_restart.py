@@ -20,9 +20,9 @@ async def test_state_restored_after_restart(tmp_path):  # AC-7, AC-8
 
     m2 = SessionManager(root=root)  # fresh process
     await m2.restore_all()
-    actor = m2.get(sid)
-    assert actor is not None
-    snap = actor.snapshot()
+    writer = m2.get(sid)
+    assert writer is not None
+    snap = writer.snapshot()
     assert snap.status is SessionStatus.ACTIVE
     assert [h.file for h in snap.highlights] == ["kept.py"]
     assert snap.seq == last_seq
@@ -40,8 +40,8 @@ async def test_subscribe_resumes_from_offset_after_restart(tmp_path):  # AC-8
 
     m2 = SessionManager(root=root)
     await m2.restore_all()
-    actor = m2.get(sid)
-    stream = actor.subscribe(since=offset).__aiter__()
+    writer = m2.get(sid)
+    stream = writer.subscribe(since=offset).__aiter__()
     import asyncio
     evt = await asyncio.wait_for(stream.__anext__(), 1)
     assert evt.highlight.file == "two.py"  # only events after the offset

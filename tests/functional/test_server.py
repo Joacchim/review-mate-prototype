@@ -105,15 +105,15 @@ async def test_session_list_carries_mr_and_progress_counts(tmp_path):
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
         sid = (await c.post("/api/sessions")).json()["id"]
-        actor = manager.get(sid)
-        await actor.submit(ApplyMRMetadata(mr=MRMetadata(
+        writer = manager.get(sid)
+        await writer.submit(ApplyMRMetadata(mr=MRMetadata(
             host="gitlab", project="g/p", iid=7, title="T", source_branch="x", target_branch="m",
             sha="s", author="a", url="u")), Origin.SYSTEM)
-        await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+        await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
                                         line_range=LineRange(start=1, end=1)), Origin.BROWSER)
-        hid = actor.snapshot().highlights[0].id
-        await actor.submit(EmitCard(highlight_id=hid, body="ctx"), Origin.AGENT)
-        await actor.submit(SaveDraft(highlight_id=hid, body="nit"), Origin.BROWSER)
+        hid = writer.snapshot().highlights[0].id
+        await writer.submit(EmitCard(highlight_id=hid, body="ctx"), Origin.AGENT)
+        await writer.submit(SaveDraft(highlight_id=hid, body="nit"), Origin.BROWSER)
 
         listed = (await c.get("/api/sessions")).json()
         row = next(s for s in listed if s["id"] == sid)
@@ -151,21 +151,21 @@ async def test_submit_review_posts_drafts_and_reports_partial_failure(tmp_path):
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
         sid = (await c.post("/api/sessions")).json()["id"]
-        actor = manager.get(sid)
-        await actor.submit(ApplyMRMetadata(mr=MRMetadata(
+        writer = manager.get(sid)
+        await writer.submit(ApplyMRMetadata(mr=MRMetadata(
             host="gitlab", project="g/p", iid=7, title="t", source_branch="x", target_branch="m",
             sha="s", author="a", url="http://h/g/p/-/merge_requests/7")), Origin.SYSTEM)
         for f in ("a.py", "b.py"):
-            await actor.submit(AddHighlight(file=f, side=Side.NEW,
+            await writer.submit(AddHighlight(file=f, side=Side.NEW,
                                             line_range=LineRange(start=1, end=1)), Origin.BROWSER)
-        hids = [h.id for h in actor.snapshot().highlights]
-        await actor.submit(SaveDraft(highlight_id=hids[0], body="good comment"), Origin.BROWSER)
-        await actor.submit(SaveDraft(highlight_id=hids[1], body="boom comment"), Origin.BROWSER)
+        hids = [h.id for h in writer.snapshot().highlights]
+        await writer.submit(SaveDraft(highlight_id=hids[0], body="good comment"), Origin.BROWSER)
+        await writer.submit(SaveDraft(highlight_id=hids[1], body="boom comment"), Origin.BROWSER)
 
         data = (await c.post("/api/cmd", json={"cmd": "review.submit",
                                                "args": {"session": sid}})).json()
         assert data["posted"] == 1 and data["total"] == 2
-        snap = actor.snapshot()
+        snap = writer.snapshot()
         posted = [d for d in snap.drafts if d.status.value == "posted"]
         still_draft = [d for d in snap.drafts if d.status.value == "draft"]
         assert len(posted) == 1 and posted[0].url.endswith("#note_101")

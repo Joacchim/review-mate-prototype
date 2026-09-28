@@ -1,4 +1,4 @@
-"""SessionActor — the per-session single writer.
+"""SessionWriter — the per-session single writer.
 
 A single asyncio task drains the command queue; for each command it
 validates → authorizes → reduces → appends(fsync) → folds → broadcasts. Because exactly one task
@@ -37,7 +37,7 @@ class _Subscriber:
         self.alive = True
 
 
-class SessionActor:
+class SessionWriter:
     def __init__(self, session_id: str, log: EventLog, state: SessionState):
         self.id = session_id
         self._log = log

@@ -18,10 +18,10 @@ class Writeback:
 
     async def post_comment(self, session_id: str, highlight_id: str | None, body: str,
                            ref: MRRef) -> dict:
-        actor = self._m.get(session_id)
-        if actor is None:
+        writer = self._m.get(session_id)
+        if writer is None:
             raise KeyError(session_id)
-        snap = actor.snapshot()
+        snap = writer.snapshot()
         if highlight_id is None:  # an MR-level review comment — a general note, no diff position
             return await self._writer.post_mr_comment(ref, body)
         hl = next((h for h in snap.highlights if h.id == highlight_id), None)

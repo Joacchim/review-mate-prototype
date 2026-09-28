@@ -60,22 +60,22 @@ async def _approved_through_the_app(tmp_path, clone_url, ref, watch=True):
                      provider=manager._mr_source, kb=_kb(tmp_path))
     async with app.router.lifespan_context(app):
         sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
-        actor = manager.get(sid)
-        await actor.submit(RequestAccess(repo="g/sibling", reason="the contract"), Origin.AGENT)
-        rid = actor.snapshot().access_requests[-1].id
+        writer = manager.get(sid)
+        await writer.submit(RequestAccess(repo="g/sibling", reason="the contract"), Origin.AGENT)
+        rid = writer.snapshot().access_requests[-1].id
 
         bus = app.state.bus
         async with bus.connect() as sub:
             if watch:
                 await bus.subscribe(sub, [f"access:{sid}"])   # a reviewer opens the consent list
                 await asyncio.sleep(0)
-            await actor.submit(DecideAccess(request_id=rid, approve=True), Origin.BROWSER)
+            await writer.submit(DecideAccess(request_id=rid, approve=True), Origin.BROWSER)
             for _ in range(200):
-                grant = actor.snapshot().access_requests[-1].grant
+                grant = writer.snapshot().access_requests[-1].grant
                 if grant is not None and grant.state in ("ready", "failed"):
                     break
                 await asyncio.sleep(0.02)
-            return actor.snapshot().access_requests[-1]
+            return writer.snapshot().access_requests[-1]
 
 
 def _kb(tmp_path):

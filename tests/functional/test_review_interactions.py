@@ -14,7 +14,7 @@ MR = MRMetadata(host="gitlab", project="g/p", iid=42, title="T", source_branch="
                 target_branch="main", sha="s", author="a", url="https://gl/g/p/-/merge_requests/42")
 
 
-class StubWriter:
+class StubHostWriter:
     def __init__(self, caps=None, fail=None):
         self.calls = []
         self._caps = dict(caps if caps is not None else GITLAB_CAPABILITIES)
@@ -76,12 +76,12 @@ async def version_of(manager, sid):
     return (await scope.build(sid))["version"]
 
 
-async def _app_client(tmp_path, writer, provider):
+async def _app_client(tmp_path, host_writer, provider):
     from review_mate.kb.store import ReviewKB
     manager = SessionManager(root=tmp_path / "s")
     kb = ReviewKB(root=tmp_path / "kb")            # tmp-rooted — never touch the real ~/.review-mate
     app = create_app(manager=manager, with_mcp=False, provider=provider,
-                     writeback=Writeback(manager, writer), kb=kb)
+                     writeback=Writeback(manager, host_writer), kb=kb)
     sid = await manager.create()
     await manager.get(sid).submit(ApplyMRMetadata(mr=MR), Origin.SYSTEM)
     manager._test_kb = kb                          # expose to tests
@@ -91,37 +91,37 @@ async def _app_client(tmp_path, writer, provider):
 
 
 async def test_submit_without_approve_posts_drafts_only(tmp_path):
-    writer = StubWriter()
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    host_writer = StubHostWriter()
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider())
     async with client:
         await manager.get(sid).submit(SaveDraft(highlight_id=None, body="MR summary"), Origin.BROWSER)
         r = await submit(client, sid)
         data = r.json()
     assert data["approved"] is False and data["posted"] == 1
-    assert ("approve",) not in writer.calls
+    assert ("approve",) not in host_writer.calls
     await manager.shutdown()
 
 
 async def test_submit_with_approve_posts_then_approves(tmp_path):
-    writer = StubWriter()
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    host_writer = StubHostWriter()
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider())
     async with client:
         await manager.get(sid).submit(SaveDraft(highlight_id=None, body="looks good"), Origin.BROWSER)
         r = await submit(client, sid, approve=True)
         data = r.json()
     assert data["approved"] is True and data["posted"] == 1
-    assert writer.calls[-1] == ("approve",)
+    assert host_writer.calls[-1] == ("approve",)
     await manager.shutdown()
 
 
 async def test_approve_only_with_no_drafts(tmp_path):
-    writer = StubWriter()
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    host_writer = StubHostWriter()
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider())
     async with client:
         r = await submit(client, sid, approve=True)
         data = r.json()
     assert data["approved"] is True and data["posted"] == 0 and data["total"] == 0
-    assert writer.calls == [("approve",)]
+    assert host_writer.calls == [("approve",)]
     await manager.shutdown()
 
 
@@ -129,12 +129,12 @@ async def test_reply_posts_and_remirrors(tmp_path):
     # after the reply, host truth (StubProvider) carries the new note; the route must re-mirror it
     after = [ReviewThread(id="disc1", comments=[ThreadComment(id="1", author="rev", body="nit"),
                                                 ThreadComment(id="2", author="me", body="fixed")])]
-    writer = StubWriter()
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider(threads=after))
+    host_writer = StubHostWriter()
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider(threads=after))
     async with client:
         r = await _cmd(client, "thread.reply", session=sid, thread="disc1", body="fixed")
         assert r.json()["ok"] is True
-    assert writer.calls[-1] == ("reply", "disc1", "fixed")
+    assert host_writer.calls[-1] == ("reply", "disc1", "fixed")
     threads = manager.get(sid).snapshot().threads
     assert len(threads) == 1 and [c.body for c in threads[0].comments] == ["nit", "fixed"]
     await manager.shutdown()
@@ -143,19 +143,19 @@ async def test_reply_posts_and_remirrors(tmp_path):
 async def test_resolve_remirrors_resolved_state(tmp_path):
     after = [ReviewThread(id="disc1", comments=[ThreadComment(id="1", author="rev", body="nit")],
                           resolved=True)]
-    writer = StubWriter()
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider(threads=after))
+    host_writer = StubHostWriter()
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider(threads=after))
     async with client:
         r = await _cmd(client, "thread.resolve", session=sid, thread="disc1", resolved=True)
         assert r.json() == {"ok": True, "resolved": True}
-    assert writer.calls[-1] == ("resolve", "disc1", True)
+    assert host_writer.calls[-1] == ("resolve", "disc1", True)
     assert manager.get(sid).snapshot().threads[0].resolved is True
     await manager.shutdown()
 
 
 async def test_refresh_pulls_threads_into_state(tmp_path):
     fresh = [ReviewThread(id="d9", comments=[ThreadComment(id="9", author="author", body="new")])]
-    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider(threads=fresh))
+    manager, sid, client = await _app_client(tmp_path, StubHostWriter(), StubProvider(threads=fresh))
     async with client:
         r = await _cmd(client, "session.resync", session=sid)
         # a re-sync reports the head it read as well as what it mirrored: a head left frozen is
@@ -172,12 +172,12 @@ async def test_refresh_reconciles_and_drops_removed_threads(tmp_path):
     seeded = [ReviewThread(id="d1", comments=[ThreadComment(id="1", author="a", body="one")]),
               ReviewThread(id="d2", comments=[ThreadComment(id="2", author="a", body="two")])]
     # the host now reports only d1 (d2 was resolved-and-deleted / was a system note, etc.)
-    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider(threads=[seeded[0]]))
+    manager, sid, client = await _app_client(tmp_path, StubHostWriter(), StubProvider(threads=[seeded[0]]))
     async with client:
-        actor = manager.get(sid)
+        writer = manager.get(sid)
         for t in seeded:
-            await actor.submit(ApplyThread(thread=t), Origin.SYSTEM)
-        assert {t.id for t in actor.snapshot().threads} == {"d1", "d2"}
+            await writer.submit(ApplyThread(thread=t), Origin.SYSTEM)
+        assert {t.id for t in writer.snapshot().threads} == {"d1", "d2"}
         await _cmd(client, "session.resync", session=sid)
     assert [t.id for t in manager.get(sid).snapshot().threads] == ["d1"]   # d2 purged
     await manager.shutdown()
@@ -188,13 +188,13 @@ async def test_submit_surfaces_posted_thread_into_state(tmp_path):
     # (and its Resolve control) can find it — without waiting for a manual refresh
     posted = [ReviewThread(id="disc-new", anchor={"file": "a.py", "side": "new", "line": 5},
                            comments=[ThreadComment(id="1", author="me", body="prefer a guard")])]
-    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider(threads=posted))
+    manager, sid, client = await _app_client(tmp_path, StubHostWriter(), StubProvider(threads=posted))
     async with client:
-        actor = manager.get(sid)
-        await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+        writer = manager.get(sid)
+        await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
                                         line_range=LineRange(start=5, end=6)), Origin.BROWSER)
-        hid = actor.snapshot().highlights[0].id
-        await actor.submit(SaveDraft(highlight_id=hid, body="prefer a guard"), Origin.BROWSER)
+        hid = writer.snapshot().highlights[0].id
+        await writer.submit(SaveDraft(highlight_id=hid, body="prefer a guard"), Origin.BROWSER)
         await submit(client, sid)
     threads = manager.get(sid).snapshot().threads
     assert [t.id for t in threads] == ["disc-new"] and threads[0].anchor is not None   # resolvable inline
@@ -202,19 +202,19 @@ async def test_submit_surfaces_posted_thread_into_state(tmp_path):
 
 
 async def test_submit_composes_suggestion_and_captures_thread_id(tmp_path):
-    writer = StubWriter()
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    host_writer = StubHostWriter()
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider())
     async with client:
-        actor = manager.get(sid)
-        await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+        writer = manager.get(sid)
+        await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
                                         line_range=LineRange(start=5, end=6)), Origin.BROWSER)
-        hid = actor.snapshot().highlights[0].id
-        await actor.submit(SaveDraft(highlight_id=hid, body="prefer a guard",
+        hid = writer.snapshot().highlights[0].id
+        await writer.submit(SaveDraft(highlight_id=hid, body="prefer a guard",
                                      suggestion="if x is not None:"), Origin.BROWSER)
         r = await submit(client, sid)
         assert r.json()["posted"] == 1
     # the posted body carries prose + a fenced suggestion block spanning the highlight (span=1)
-    kind, body = writer.calls[-1]
+    kind, body = host_writer.calls[-1]
     assert kind == "post_comment"
     assert "prefer a guard" in body and "```suggestion:-0+1" in body and "if x is not None:" in body
     # the draft is linked to the discussion it became
@@ -223,18 +223,18 @@ async def test_submit_composes_suggestion_and_captures_thread_id(tmp_path):
 
 
 async def test_edit_and_delete_note_routes(tmp_path):
-    writer = StubWriter()
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    host_writer = StubHostWriter()
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider())
     async with client:
         await _cmd(client, "thread.edit_note", session=sid, thread="disc1", note="7", body="reworded")
-        assert writer.calls[-1] == ("edit_note", "disc1", "7", "reworded")
+        assert host_writer.calls[-1] == ("edit_note", "disc1", "7", "reworded")
         await _cmd(client, "thread.delete_note", session=sid, thread="disc1", note="7")
-        assert writer.calls[-1] == ("delete_note", "disc1", "7")
+        assert host_writer.calls[-1] == ("delete_note", "disc1", "7")
     await manager.shutdown()
 
 
 async def test_the_version_a_review_is_at_and_marking_it_read(tmp_path):
-    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
+    manager, sid, client = await _app_client(tmp_path, StubHostWriter(), StubProvider())
     kb = manager._test_kb
     async with client:
         assert (await version_of(manager, sid))["behind"] is False
@@ -261,7 +261,7 @@ async def test_refresh_resyncs_advanced_head(tmp_path):
         async def load(self, ref):
             return MRPayload(mr=MR.model_copy(update={"sha": "head-2"}), files=[], threads=[])
 
-    manager, sid, client = await _app_client(tmp_path, StubWriter(), LoadProvider())
+    manager, sid, client = await _app_client(tmp_path, StubHostWriter(), LoadProvider())
     kb = manager._test_kb
     async with client:
         kb.set_watermark(MR.host, MR.project, MR.iid, "s")           # reviewed up to the opening head
@@ -273,7 +273,7 @@ async def test_refresh_resyncs_advanced_head(tmp_path):
 
 
 async def test_submit_advances_watermark(tmp_path):
-    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
+    manager, sid, client = await _app_client(tmp_path, StubHostWriter(), StubProvider())
     kb = manager._test_kb
     async with client:
         kb.set_watermark(MR.host, MR.project, MR.iid, "old-sha")
@@ -283,12 +283,12 @@ async def test_submit_advances_watermark(tmp_path):
 
 
 async def test_highlight_records_created_sha(tmp_path):
-    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
+    manager, sid, client = await _app_client(tmp_path, StubHostWriter(), StubProvider())
     async with client:
-        actor = manager.get(sid)
-        await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+        writer = manager.get(sid)
+        await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
                                         line_range=LineRange(start=1, end=1)), Origin.BROWSER)
-        assert actor.snapshot().highlights[0].created_sha == "s"   # the MR head at creation
+        assert writer.snapshot().highlights[0].created_sha == "s"   # the MR head at creation
     await manager.shutdown()
 
 
@@ -317,7 +317,7 @@ async def test_commits_route_lists_the_mrs_commits(tmp_path):
 async def test_commits_unavailable_without_capability(tmp_path):
     # the module MR fixture advertises no "commits" capability → the scope says so
     from review_mate.view.browse import BrowseScopes
-    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
+    manager, sid, client = await _app_client(tmp_path, StubHostWriter(), StubProvider())
     async with client:
         scopes = BrowseScopes(manager, provider=StubProvider())
         assert (await scopes.build_commits(sid))["state"] == "unavailable"
@@ -325,8 +325,8 @@ async def test_commits_unavailable_without_capability(tmp_path):
 
 
 async def test_reply_capability_missing_returns_400(tmp_path):
-    writer = StubWriter(fail="threads")
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    host_writer = StubHostWriter(fail="threads")
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider())
     async with client:
         r = await _cmd(client, "thread.reply", session=sid, thread="disc1", body="x")
     assert r.status_code == 400
@@ -340,31 +340,31 @@ async def test_reply_capability_missing_returns_400(tmp_path):
 # tests above already cover.
 
 async def test_the_submit_command_posts_the_same_review(tmp_path):
-    writer = StubWriter()
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    host_writer = StubHostWriter()
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider())
     async with client:
         await manager.get(sid).submit(SaveDraft(highlight_id=None, body="MR summary"), Origin.BROWSER)
         r = await client.post("/api/cmd", json={"cmd": "review.submit", "args": {"session": sid}})
         data = r.json()
     assert data["ok"] is True and data["posted"] == 1
-    assert writer.calls == [("post_mr_comment", "MR summary")]
+    assert host_writer.calls == [("post_mr_comment", "MR summary")]
     await manager.shutdown()
 
 
 async def test_the_submit_command_can_approve(tmp_path):
-    writer = StubWriter()
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    host_writer = StubHostWriter()
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider())
     async with client:
         r = await client.post("/api/cmd",
                               json={"cmd": "review.submit", "args": {"session": sid, "approve": True}})
         data = r.json()
     assert data["ok"] is True and data["approved"] is True
-    assert writer.calls == [("approve",)]
+    assert host_writer.calls == [("approve",)]
     await manager.shutdown()
 
 
 async def test_submitting_an_unknown_session_says_so(tmp_path):
-    manager, _sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
+    manager, _sid, client = await _app_client(tmp_path, StubHostWriter(), StubProvider())
     async with client:
         r = await client.post("/api/cmd",
                               json={"cmd": "review.submit", "args": {"session": "nope"}})
@@ -374,14 +374,14 @@ async def test_submitting_an_unknown_session_says_so(tmp_path):
 
 async def test_marking_reviewed_advances_the_watermark_without_posting(tmp_path):
     """"I have read up to here" — the other thing a reviewer does with a change that moved."""
-    writer = StubWriter()
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    host_writer = StubHostWriter()
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider())
     async with client:
         r = await client.post("/api/cmd",
                               json={"cmd": "review.mark_reviewed", "args": {"session": sid}})
     assert r.json() == {"ok": True, "watermark": "s"}
     assert manager._test_kb.get_watermark("gitlab", "g/p", 42) == "s"
-    assert writer.calls == []               # nothing was sent to the host
+    assert host_writer.calls == []               # nothing was sent to the host
     await manager.shutdown()
 
 
@@ -392,49 +392,49 @@ async def test_marking_reviewed_advances_the_watermark_without_posting(tmp_path)
 async def test_the_reply_command_posts_and_remirrors(tmp_path):
     after = [ReviewThread(id="disc1", comments=[ThreadComment(id="1", author="rev", body="nit"),
                                                 ThreadComment(id="2", author="me", body="fixed")])]
-    writer = StubWriter()
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider(threads=after))
+    host_writer = StubHostWriter()
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider(threads=after))
     async with client:
         r = await _cmd(client, "thread.reply", session=sid, thread="disc1", body="fixed")
         assert r.json()["ok"] is True
-    assert writer.calls[-1] == ("reply", "disc1", "fixed")
+    assert host_writer.calls[-1] == ("reply", "disc1", "fixed")
     assert [c.body for c in manager.get(sid).snapshot().threads[0].comments] == ["nit", "fixed"]
     await manager.shutdown()
 
 
 async def test_an_empty_reply_is_refused_before_it_reaches_the_host(tmp_path):
-    writer = StubWriter()
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    host_writer = StubHostWriter()
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider())
     async with client:
         r = await _cmd(client, "thread.reply", session=sid, thread="disc1", body="   ")
-    assert r.status_code == 400 and writer.calls == []
+    assert r.status_code == 400 and host_writer.calls == []
     await manager.shutdown()
 
 
 async def test_the_resolve_command_says_which_way_it_went(tmp_path):
-    writer = StubWriter()
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    host_writer = StubHostWriter()
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider())
     async with client:
         assert (await _cmd(client, "thread.resolve", session=sid,
                            thread="disc1")).json()["resolved"] is True
         assert (await _cmd(client, "thread.resolve", session=sid, thread="disc1",
                            resolved=False)).json()["resolved"] is False
-    assert writer.calls == [("resolve", "disc1", True), ("resolve", "disc1", False)]
+    assert host_writer.calls == [("resolve", "disc1", True), ("resolve", "disc1", False)]
     await manager.shutdown()
 
 
 async def test_the_note_commands_carry_the_note_they_act_on(tmp_path):
-    writer = StubWriter()
-    manager, sid, client = await _app_client(tmp_path, writer, StubProvider())
+    host_writer = StubHostWriter()
+    manager, sid, client = await _app_client(tmp_path, host_writer, StubProvider())
     async with client:
         await _cmd(client, "thread.edit_note", session=sid, thread="d1", note="n1", body="better")
         await _cmd(client, "thread.delete_note", session=sid, thread="d1", note="n1")
-    assert writer.calls == [("edit_note", "d1", "n1", "better"), ("delete_note", "d1", "n1")]
+    assert host_writer.calls == [("edit_note", "d1", "n1", "better"), ("delete_note", "d1", "n1")]
     await manager.shutdown()
 
 
 async def test_a_verb_without_a_thread_is_refused(tmp_path):
-    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider())
+    manager, sid, client = await _app_client(tmp_path, StubHostWriter(), StubProvider())
     async with client:
         r = await _cmd(client, "thread.resolve", session=sid)
     assert r.status_code == 400 and r.json()["ok"] is False
@@ -443,7 +443,7 @@ async def test_a_verb_without_a_thread_is_refused(tmp_path):
 
 async def test_the_resync_command_reads_the_change_again(tmp_path):
     fresh = [ReviewThread(id="d9", comments=[ThreadComment(id="9", author="a", body="new")])]
-    manager, sid, client = await _app_client(tmp_path, StubWriter(), StubProvider(threads=fresh))
+    manager, sid, client = await _app_client(tmp_path, StubHostWriter(), StubProvider(threads=fresh))
     async with client:
         r = await _cmd(client, "session.resync", session=sid)
         assert r.json() == {"ok": True, "head": "s", "threads": 1}
@@ -467,10 +467,10 @@ async def test_resyncing_drops_the_commit_list_it_read(tmp_path):
                      "author": "a", "created_at": ""}]
 
     provider = Counting()
-    manager, sid, client = await _app_client(tmp_path, StubWriter(), provider)
+    manager, sid, client = await _app_client(tmp_path, StubHostWriter(), provider)
     async with client:
-        actor = manager.get(sid)
-        await actor.submit(ApplyMRMetadata(
+        writer = manager.get(sid)
+        await writer.submit(ApplyMRMetadata(
             mr=MR.model_copy(update={"capabilities": {"commits": True}})), Origin.SYSTEM)
         scopes = BrowseScopes(manager, provider=provider)
         await scopes.fetch_commits(sid)

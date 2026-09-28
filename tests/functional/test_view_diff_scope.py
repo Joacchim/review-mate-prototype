@@ -711,11 +711,11 @@ async def test_the_budget_can_be_set_without_touching_the_code(tmp_path, monkeyp
 
 
 async def test_a_session_keeps_being_pushed_after_its_scenario_is_restaged(tmp_path):
-    """The server captures a session's actor when the first client watches it, and listens to that
-    object until the session ends. Anything handing out a second actor for the same id leaves it
+    """The server captures a session's writer when the first client watches it, and listens to that
+    object until the session ends. Anything handing out a second writer for the same id leaves it
     listening to the first for ever, and the page watches a session that pushes it nothing again.
 
-    The real manager guarantees one actor per id. This is the guarantee, asserted — so a fake or a
+    The real manager guarantees one writer per id. This is the guarantee, asserted — so a fake or a
     future manager that breaks it fails here rather than as a browser test that sometimes hangs.
     """
     import sys

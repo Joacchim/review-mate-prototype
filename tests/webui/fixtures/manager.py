@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 
-from review_mate.session.actor import CommandResult
+from review_mate.session.writer import CommandResult
 from review_mate.session.commands import Rejection, handle
 from review_mate.session.reducer import reduce
 from review_mate.session.state import Origin, SessionState, SessionStatus, SessionSummary
@@ -26,7 +26,7 @@ MANAGER_SURFACE = ("get", "list", "create", "end", "restore_all", "shutdown",
                    "_activity_broker", "_workspace")
 
 
-class FakeActor:
+class FakeWriter:
     """One session, applying commands for real and broadcasting what they produced."""
 
     def __init__(self, state: SessionState) -> None:
@@ -38,7 +38,7 @@ class FakeActor:
         return self._state
 
     def restage(self, state: SessionState) -> None:
-        """Put this actor behind a different scenario, keeping whoever is listening to it."""
+        """Put this writer behind a different scenario, keeping whoever is listening to it."""
         self._state = state
         self.commands.clear()
 
@@ -70,10 +70,10 @@ class FakeActor:
 
 
 class FakeManager:
-    """Holds sessions as actors over state objects. `create` mints an empty one unless staged."""
+    """Holds sessions as writers over state objects. `create` mints an empty one unless staged."""
 
     def __init__(self) -> None:
-        self._actors: dict[str, FakeActor] = {}
+        self._writers: dict[str, FakeWriter] = {}
         self._activity_broker = None
         self._workspace = None
         self.created: list = []
@@ -83,39 +83,39 @@ class FakeManager:
     # --- staging ----------------------------------------------------------
 
     def put(self, state: SessionState) -> str:
-        """Stage a session. One actor per id, for as long as the id exists.
+        """Stage a session. One writer per id, for as long as the id exists.
 
-        Re-staging an id keeps the actor and swaps what it holds, rather than replacing it. The
-        server captures a session's actor when the first client watches it and listens to that
+        Re-staging an id keeps the writer and swaps what it holds, rather than replacing it. The
+        server captures a session's writer when the first client watches it and listens to that
         object until the session ends, which the real manager guarantees — so handing out a second
-        actor for the same id would leave the server listening to the first for ever, and the page
+        writer for the same id would leave the server listening to the first for ever, and the page
         would sit watching a session that never pushes it anything again.
         """
-        existing = self._actors.get(state.id)
+        existing = self._writers.get(state.id)
         if existing is not None:
             existing.restage(state)
         else:
-            self._actors[state.id] = FakeActor(state)
+            self._writers[state.id] = FakeWriter(state)
         return state.id
 
-    def actor(self, session_id: str) -> FakeActor | None:
-        """The staged actor itself — for a test that reads the commands a page sent."""
-        return self._actors.get(session_id)
+    def writer(self, session_id: str) -> FakeWriter | None:
+        """The staged writer itself — for a test that reads the commands a page sent."""
+        return self._writers.get(session_id)
 
     def reset(self) -> None:
-        self._actors.clear()
+        self._writers.clear()
         self.created.clear()
         self.ended.clear()
 
     # --- the surface the application uses ----------------------------------
 
     def get(self, session_id: str):
-        return self._actors.get(session_id)
+        return self._writers.get(session_id)
 
     def list(self) -> list[SessionSummary]:
         out = []
-        for actor in self._actors.values():
-            state = actor.snapshot()
+        for writer in self._writers.values():
+            state = writer.snapshot()
             out.append(SessionSummary(
                 id=state.id, status=state.status, created_at=state.created_at, seq=state.seq,
                 title=state.mr.title if state.mr else None,
@@ -132,14 +132,14 @@ class FakeManager:
         self.created.append(ref)
         state = SessionState(id=self.next_id, status=SessionStatus.ACTIVE,
                              created_at="2026-01-01T00:00:00+00:00", seq=0)
-        self._actors[state.id] = FakeActor(state)
+        self._writers[state.id] = FakeWriter(state)
         return state.id
 
     async def end(self, session_id: str) -> None:
-        if session_id not in self._actors:
+        if session_id not in self._writers:
             raise KeyError(session_id)
         self.ended.append(session_id)
-        self._actors.pop(session_id)
+        self._writers.pop(session_id)
 
     async def restore_all(self) -> None:
         return None

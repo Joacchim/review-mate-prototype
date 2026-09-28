@@ -92,19 +92,19 @@ def _tmp_kb(tmp_path):
     return ReviewKB(root=tmp_path / "kb")
 
 
-def build(tmp_path, provider, writer=None):
+def build(tmp_path, provider, host_writer=None):
     from review_mate.kb.store import ReviewKB
     from review_mate.writeback.service import Writeback
     manager = SessionManager(root=tmp_path / "sessions", mr_source=provider)
     # tmp-rooted on purpose: create_app defaults the KB to ~/.review-mate, and a test that submits
     # a review would otherwise write a watermark into the reviewer's own store
     return create_app(manager=manager, provider=provider, with_mcp=False,
-                      writeback=Writeback(manager, writer) if writer is not None else None,
+                      writeback=Writeback(manager, host_writer) if host_writer is not None else None,
                       kb=ReviewKB(root=tmp_path / "kb"),
                       resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
 
 
-class SpyWriter:
+class SpyHostWriter:
     """A host that records what a review sent it, so a test can name it rather than count calls."""
 
     def __init__(self):
@@ -444,8 +444,8 @@ async def test_sending_a_review_from_the_terminal_reaches_the_host(tmp_path):
     through the same sequence the browser's submit runs."""
     from review_mate.tui.app import Shell
 
-    writer = SpyWriter()
-    async with serving(build(tmp_path, DiffHost(), writer=writer)) as base:
+    host_writer = SpyHostWriter()
+    async with serving(build(tmp_path, DiffHost(), host_writer=host_writer)) as base:
         async with connected(base) as (client, watcher):
             await watcher.until(lambda v: v.get("queue_state") == "ready")
             await client.command("session.open", ref={"host": "gitlab", "project": "g/p", "iid": 1})
@@ -467,8 +467,8 @@ async def test_sending_a_review_from_the_terminal_reaches_the_host(tmp_path):
                 client.last_command_error
             await wait_for(lambda: shell.diff.review.get("posted") == 1)
 
-    assert writer.posted == ["reads well overall"]
-    assert writer.approved is False
+    assert host_writer.posted == ["reads well overall"]
+    assert host_writer.approved is False
     assert shell.diff.review["pending"] == 0
 
 
@@ -526,9 +526,9 @@ async def test_replying_from_the_terminal_reaches_the_merge_request(tmp_path):
         async def fetch_threads(self, ref):
             return list(answered)
 
-    writer = SpyWriter()
+    host_writer = SpyHostWriter()
     host = Answering()
-    app = build(tmp_path, host, writer=writer)
+    app = build(tmp_path, host, host_writer=host_writer)
 
     async with serving(app) as base:
         async with connected(base) as (client, watcher):
@@ -556,7 +556,7 @@ async def test_replying_from_the_terminal_reaches_the_merge_request(tmp_path):
 
             await wait_for(lambda: len(shell.diff.threads["threads"][0]["comments"]) == 2)
 
-    assert writer.replied == [("d1", "fixed")]
+    assert host_writer.replied == [("d1", "fixed")]
     said = shell.diff.threads["threads"][0]["comments"]
     assert [(c["body"], c["mine"]) for c in said] == [("prefer a guard", False), ("fixed", True)]
 

@@ -77,8 +77,8 @@ class ThreadsScope:
         )
 
     def _snapshot(self, session_id: str):
-        actor = self._manager.get(session_id)
-        if actor is None:
+        writer = self._manager.get(session_id)
+        if writer is None:
             return None
-        snapshot = actor.snapshot()
+        snapshot = writer.snapshot()
         return snapshot if snapshot.status is SessionStatus.ACTIVE else None

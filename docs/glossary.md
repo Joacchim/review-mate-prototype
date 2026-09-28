@@ -24,7 +24,9 @@ recorded as events.
 **Session state** — the document set folded from the events: the MR, files, highlights, cards,
 access requests, threads, messages, drafts.
 
-**Actor** — the single writer for one session. Serialises commands, appends events, publishes them.
+**Session writer** — the single writer for one session, and the only thing that appends to its
+log. Serialises commands, appends events, publishes them; because exactly one task mutates the
+state, writes need no locks.
 
 **Origin** — who submitted a command: `BROWSER`, `AGENT`, `SYSTEM`. An authority matrix rejects what
 an origin may not do.

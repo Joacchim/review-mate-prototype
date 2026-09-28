@@ -178,10 +178,10 @@ async def test_the_forge_is_not_asked_about_a_branch_it_has_never_seen(tmp_path,
 
     manager = SessionManager(root=tmp_path / "sessions", local_source=LocalBranchProvider())
     sid = await manager.create(ref=LocalRef(path=str(repo), branch="feat/retry", base="main"))
-    actor = manager.get(sid)
+    writer = manager.get(sid)
     from review_mate.session.commands import AddHighlight
     from review_mate.session.state import LineRange, Origin, Side
-    await actor.submit(AddHighlight(file="queue.py", side=Side.NEW,
+    await writer.submit(AddHighlight(file="queue.py", side=Side.NEW,
                                     line_range=LineRange(start=1, end=1)), Origin.BROWSER)
 
     view = await RailScope(manager, provider=Forge()).build(sid)

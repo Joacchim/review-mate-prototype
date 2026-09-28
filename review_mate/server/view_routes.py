@@ -126,10 +126,10 @@ def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
     async def _review_mark_reviewed(args: dict) -> JSONResponse:
         """Advance the reviewed watermark without sending anything — "I have read up to here"."""
         sid = _session_arg(args)
-        actor = manager.get(sid) if sid else None
-        if actor is None:
+        writer = manager.get(sid) if sid else None
+        if writer is None:
             return JSONResponse({"ok": False, "reason": "unknown session"}, status_code=404)
-        snapshot = actor.snapshot()
+        snapshot = writer.snapshot()
         if snapshot.mr is None or kb is None:
             return JSONResponse({"ok": False, "reason": "unavailable"}, status_code=400)
         kb.set_watermark(snapshot.mr.host, snapshot.mr.project, snapshot.mr.iid, snapshot.mr.sha)

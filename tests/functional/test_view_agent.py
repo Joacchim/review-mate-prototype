@@ -38,10 +38,10 @@ async def agent(tmp_path):
         await manager.shutdown()
 
 
-async def mark(actor, line=1):
-    await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+async def mark(writer, line=1):
+    await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
                                     line_range=LineRange(start=line, end=line)), Origin.BROWSER)
-    return actor.snapshot().highlights[-1]
+    return writer.snapshot().highlights[-1]
 
 
 async def test_it_says_what_is_being_reviewed_and_where_to_read_it(agent):
@@ -55,9 +55,9 @@ async def test_it_says_what_is_being_reviewed_and_where_to_read_it(agent):
 async def test_the_backlog_is_published_not_rederived(agent):
     """The worker used to recompute this from raw state — a third copy of the same predicate."""
     manager, sid, view = await agent()
-    actor = manager.get(sid)
-    highlight = await mark(actor)
-    await actor.submit(RequestContext(highlight_id=highlight.id), Origin.BROWSER)
+    writer = manager.get(sid)
+    highlight = await mark(writer)
+    await writer.submit(RequestContext(highlight_id=highlight.id), Origin.BROWSER)
     asks = (await view.build(sid))["chat"]["agent"]["asks"]
     assert [a["kind"] for a in asks] == ["context"]
 
@@ -74,9 +74,9 @@ async def test_the_reviewers_unsent_comment_is_not_in_it(agent):
     """A draft is private prose written expecting no reader. Once posted it is a discussion, and
     the agent reads it there like everyone else."""
     manager, sid, view = await agent()
-    actor = manager.get(sid)
-    highlight = await mark(actor)
-    await actor.submit(SaveDraft(highlight_id=highlight.id,
+    writer = manager.get(sid)
+    highlight = await mark(writer)
+    await writer.submit(SaveDraft(highlight_id=highlight.id,
                                  body="this is sloppy and the author never handles None"),
                        Origin.BROWSER)
     built = await view.build(sid)
@@ -106,10 +106,10 @@ async def test_a_session_that_is_not_there_is_named_rather_than_raised(agent):
 
 async def test_the_consent_list_reads_off_the_scope_the_reviewer_sees(agent):
     manager, sid, view = await agent()
-    actor = manager.get(sid)
-    await actor.submit(RequestAccess(repo="g/sibling", reason="the contract"), Origin.AGENT)
-    rid = actor.snapshot().access_requests[-1].id
-    await actor.submit(DecideAccess(request_id=rid, approve=False), Origin.BROWSER)
+    writer = manager.get(sid)
+    await writer.submit(RequestAccess(repo="g/sibling", reason="the contract"), Origin.AGENT)
+    rid = writer.snapshot().access_requests[-1].id
+    await writer.submit(DecideAccess(request_id=rid, approve=False), Origin.BROWSER)
 
     rows = await view.access(sid)
     assert rows == [{"id": rid, "repo": "g/sibling", "reason": "the contract",

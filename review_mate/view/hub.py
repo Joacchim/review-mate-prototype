@@ -117,10 +117,10 @@ class HubScope:
         for summ in self._manager.list():
             if summ.status is not SessionStatus.ACTIVE:
                 continue
-            actor = self._manager.get(summ.id)
-            if actor is None:
+            writer = self._manager.get(summ.id)
+            if writer is None:
                 continue
-            sessions.append(self._fold(summ.id, actor.snapshot()))
+            sessions.append(self._fold(summ.id, writer.snapshot()))
         # newest first — row order is a view decision, so both clients get the same one
         sessions.sort(key=lambda s: s.created_at, reverse=True)
         watcher = self._watcher() if self._watcher is not None else {}
@@ -221,10 +221,10 @@ class HubScope:
         for summ in self._manager.list():
             if summ.status is not SessionStatus.ACTIVE:
                 continue
-            actor = self._manager.get(summ.id)
-            if actor is None:
+            writer = self._manager.get(summ.id)
+            if writer is None:
                 continue
-            snap = actor.snapshot()
+            snap = writer.snapshot()
             if snap.mr is None:
                 continue
             ref = MRRef(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid)

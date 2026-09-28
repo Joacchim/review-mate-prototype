@@ -4,7 +4,7 @@ The cross-file view is why this is one scope rather than many — the numbering 
 is session-wide, and no per-file view can assign it.
 
 Most of this drives RailScope directly. The scope's own logic needs no transport, and a sync
-TestClient runs the application on another loop, so an actor reached from a test coroutine would be
+TestClient runs the application on another loop, so a writer reached from a test coroutine would be
 touching primitives that belong to a different one. The tail is the exception and is tested through
 the real stream, because that is the thing being checked.
 """
@@ -68,9 +68,9 @@ async def _done():
 
 async def test_highlights_carry_session_wide_numbering(session):
     manager, sid, provider = session
-    actor = manager.get(sid)
+    writer = manager.get(sid)
     for command in (highlight("a.py", 10, 12), highlight("pkg/b.py", 3, 3), highlight("a.py", 40, 41)):
-        await actor.submit(command, Origin.BROWSER)
+        await writer.submit(command, Origin.BROWSER)
     view = await rail_for(manager, provider).build(sid)
     assert [h["n"] for h in view["highlights"]] == [1, 2, 3]
     # the numbering spans files, which is why it cannot come from a per-file scope
@@ -79,12 +79,12 @@ async def test_highlights_carry_session_wide_numbering(session):
 
 async def test_a_card_lands_on_its_highlight_and_an_insight_stands_alone(session):
     manager, sid, provider = session
-    actor = manager.get(sid)
-    await actor.submit(highlight(), Origin.BROWSER)
-    hid = actor.snapshot().highlights[0].id
-    await actor.submit(EmitCard(highlight_id=hid, body="because the pool moved",
+    writer = manager.get(sid)
+    await writer.submit(highlight(), Origin.BROWSER)
+    hid = writer.snapshot().highlights[0].id
+    await writer.submit(EmitCard(highlight_id=hid, body="because the pool moved",
                                 citations=["pool.py:12"]), Origin.AGENT)
-    await actor.submit(EmitCard(highlight_id=None, body="this MR widens a lock"), Origin.AGENT)
+    await writer.submit(EmitCard(highlight_id=None, body="this MR widens a lock"), Origin.AGENT)
     view = await rail_for(manager, provider).build(sid)
     assert view["highlights"][0]["card"]["body"] == "because the pool moved"
     assert view["highlights"][0]["card"]["citations"] == ["pool.py:12"]
@@ -93,12 +93,12 @@ async def test_a_card_lands_on_its_highlight_and_an_insight_stands_alone(session
 
 async def test_a_draft_moves_the_highlights_comment_state(session):
     manager, sid, provider = session
-    actor = manager.get(sid)
-    await actor.submit(highlight(), Origin.BROWSER)
+    writer = manager.get(sid)
+    await writer.submit(highlight(), Origin.BROWSER)
     rail = rail_for(manager, provider)
     assert (await rail.build(sid))["highlights"][0]["comment_state"] == "context"
-    hid = actor.snapshot().highlights[0].id
-    await actor.submit(SaveDraft(highlight_id=hid, body="rename this"), Origin.BROWSER)
+    hid = writer.snapshot().highlights[0].id
+    await writer.submit(SaveDraft(highlight_id=hid, body="rename this"), Origin.BROWSER)
     assert (await rail.build(sid))["highlights"][0]["comment_state"] == "comment"
 
 
@@ -193,13 +193,13 @@ async def test_a_highlight_made_against_an_older_head_is_marked_stale(tmp_path):
     provider = BlameHost()
     manager = SessionManager(root=tmp_path / "sessions", mr_source=provider)
     sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
-    actor = manager.get(sid)
-    await actor.submit(highlight(), Origin.BROWSER)
+    writer = manager.get(sid)
+    await writer.submit(highlight(), Origin.BROWSER)
     rail = RailScope(manager, provider=provider)
     assert (await rail.build(sid))["highlights"][0]["stale"] is False
 
-    moved = actor.snapshot().mr.model_copy(update={"sha": "moved-on"})
-    await actor.submit(ApplyMRMetadata(mr=moved), Origin.SYSTEM)
+    moved = writer.snapshot().mr.model_copy(update={"sha": "moved-on"})
+    await writer.submit(ApplyMRMetadata(mr=moved), Origin.SYSTEM)
     assert (await rail.build(sid))["highlights"][0]["stale"] is True
     await manager.shutdown()
 
@@ -210,15 +210,15 @@ async def test_a_number_survives_the_removal_of_an_earlier_highlight(session):
     from review_mate.session.commands import RemoveHighlight
 
     manager, sid, provider = session
-    actor = manager.get(sid)
+    writer = manager.get(sid)
     for n in range(3):
-        await actor.submit(highlight(f"f{n}.py", n + 1, n + 1), Origin.BROWSER)
+        await writer.submit(highlight(f"f{n}.py", n + 1, n + 1), Origin.BROWSER)
     rail = rail_for(manager, provider)
     assert [(h["n"], h["file"]) for h in (await rail.build(sid))["highlights"]] == \
         [(1, "f0.py"), (2, "f1.py"), (3, "f2.py")]
 
-    second = actor.snapshot().highlights[1]
-    await actor.submit(RemoveHighlight(highlight_id=second.id), Origin.BROWSER)
+    second = writer.snapshot().highlights[1]
+    await writer.submit(RemoveHighlight(highlight_id=second.id), Origin.BROWSER)
     assert [(h["n"], h["file"]) for h in (await rail.build(sid))["highlights"]] == \
         [(1, "f0.py"), (3, "f2.py")]        # a gap, not a renumber
 
@@ -229,12 +229,12 @@ async def test_a_number_is_never_reused_after_the_newest_is_removed(session):
     from review_mate.session.commands import RemoveHighlight
 
     manager, sid, provider = session
-    actor = manager.get(sid)
-    await actor.submit(highlight("a.py", 1, 1), Origin.BROWSER)
-    await actor.submit(highlight("b.py", 2, 2), Origin.BROWSER)
-    newest = actor.snapshot().highlights[-1]
-    await actor.submit(RemoveHighlight(highlight_id=newest.id), Origin.BROWSER)
-    await actor.submit(highlight("c.py", 3, 3), Origin.BROWSER)
+    writer = manager.get(sid)
+    await writer.submit(highlight("a.py", 1, 1), Origin.BROWSER)
+    await writer.submit(highlight("b.py", 2, 2), Origin.BROWSER)
+    newest = writer.snapshot().highlights[-1]
+    await writer.submit(RemoveHighlight(highlight_id=newest.id), Origin.BROWSER)
+    await writer.submit(highlight("c.py", 3, 3), Origin.BROWSER)
     rail = rail_for(manager, provider)
     assert [(h["n"], h["file"]) for h in (await rail.build(sid))["highlights"]] == \
         [(1, "a.py"), (3, "c.py")]
@@ -245,15 +245,15 @@ async def test_removing_a_card_leaves_the_numbering_alone(session):
     from review_mate.session.commands import EmitCard, RemoveCard
 
     manager, sid, provider = session
-    actor = manager.get(sid)
-    await actor.submit(highlight("a.py", 1, 1), Origin.BROWSER)
-    await actor.submit(highlight("b.py", 2, 2), Origin.BROWSER)
-    first = actor.snapshot().highlights[0]
-    await actor.submit(EmitCard(highlight_id=first.id, body="an answer"), Origin.AGENT)
-    card = actor.snapshot().cards[0]
+    writer = manager.get(sid)
+    await writer.submit(highlight("a.py", 1, 1), Origin.BROWSER)
+    await writer.submit(highlight("b.py", 2, 2), Origin.BROWSER)
+    first = writer.snapshot().highlights[0]
+    await writer.submit(EmitCard(highlight_id=first.id, body="an answer"), Origin.AGENT)
+    card = writer.snapshot().cards[0]
     # the agent may not retract a card; the reviewer dismisses it
-    assert not (await actor.submit(RemoveCard(card_id=card.id), Origin.AGENT)).ok
-    assert (await actor.submit(RemoveCard(card_id=card.id), Origin.BROWSER)).ok
+    assert not (await writer.submit(RemoveCard(card_id=card.id), Origin.AGENT)).ok
+    assert (await writer.submit(RemoveCard(card_id=card.id), Origin.BROWSER)).ok
     rail = rail_for(manager, provider)
     view = await rail.build(sid)
     assert [h["n"] for h in view["highlights"]] == [1, 2]
@@ -268,10 +268,10 @@ async def test_numbering_survives_a_restart(tmp_path):
     root = tmp_path / "sessions"
     manager = SessionManager(root=root, mr_source=provider)
     sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
-    actor = manager.get(sid)
+    writer = manager.get(sid)
     for n in range(3):
-        await actor.submit(highlight(f"f{n}.py", n + 1, n + 1), Origin.BROWSER)
-    await actor.submit(RemoveHighlight(highlight_id=actor.snapshot().highlights[1].id),
+        await writer.submit(highlight(f"f{n}.py", n + 1, n + 1), Origin.BROWSER)
+    await writer.submit(RemoveHighlight(highlight_id=writer.snapshot().highlights[1].id),
                        Origin.BROWSER)
     await manager.shutdown()
 
@@ -291,21 +291,21 @@ async def test_the_rail_says_who_asked_and_whether_it_was_escalated(session):
     from review_mate.session.commands import RequestContext
 
     manager, sid, provider = session
-    actor = manager.get(sid)
-    await actor.submit(highlight("a.py", 1, 1), Origin.BROWSER)
-    await actor.submit(highlight("b.py", 2, 2), Origin.AGENT)
+    writer = manager.get(sid)
+    await writer.submit(highlight("a.py", 1, 1), Origin.BROWSER)
+    await writer.submit(highlight("b.py", 2, 2), Origin.AGENT)
     rail = rail_for(manager, provider)
     view = await rail.build(sid)
     assert [h["author"] for h in view["highlights"]] == ["browser", "agent"]
     assert [h["context_requested"] for h in view["highlights"]] == [False, False]
 
-    await actor.submit(RequestContext(highlight_id=actor.snapshot().highlights[0].id),
+    await writer.submit(RequestContext(highlight_id=writer.snapshot().highlights[0].id),
                        Origin.BROWSER)
     view = await rail.build(sid)
     assert view["highlights"][0]["context_requested"] is True
     # the escalation's own timestamp rides along: it is what ages the "Claude is working" cue
     assert view["highlights"][0]["context_requested_at"] == (
-        actor.snapshot().highlights[0].context_requested_at)
+        writer.snapshot().highlights[0].context_requested_at)
     assert view["highlights"][0]["context_requested_at"] != ""
 
 
@@ -384,11 +384,11 @@ async def test_a_corrected_label_says_whose_it_is_now(session):
     """A client shows a reviewer's correction differently from a claim nobody questioned."""
     manager, sid, provider = session
     scope = rail_for(manager, provider)
-    actor = manager.get(sid)
-    await actor.submit(EmitCard(highlight_id=None, body="x", label=Label(
+    writer = manager.get(sid)
+    await writer.submit(EmitCard(highlight_id=None, body="x", label=Label(
         theme=Theme.BUG, criticality=Criticality.HIGH)), Origin.AGENT)
-    cid = actor.snapshot().cards[0].id
-    await actor.submit(LabelCard(card_id=cid, label=Label(
+    cid = writer.snapshot().cards[0].id
+    await writer.submit(LabelCard(card_id=cid, label=Label(
         theme=Theme.STYLE, criticality=Criticality.LOW)), Origin.BROWSER)
     label = (await scope.build(sid))["insights"][0]["label"]
     assert label["theme"] == "style" and label["by"] == "browser"
@@ -399,11 +399,11 @@ async def test_a_corrected_label_says_whose_it_is_now(session):
 async def test_a_highlight_the_agent_fixed_says_what_it_became(session):
     manager, sid, provider = session
     scope = rail_for(manager, provider)
-    actor = manager.get(sid)
-    await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+    writer = manager.get(sid)
+    await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
                                     line_range=LineRange(start=1, end=1)), Origin.BROWSER)
-    hid = actor.snapshot().highlights[0].id
-    await actor.submit(RecordAddressed(subject=Subject(kind=SubjectKind.HIGHLIGHT, id=hid),
+    hid = writer.snapshot().highlights[0].id
+    await writer.submit(RecordAddressed(subject=Subject(kind=SubjectKind.HIGHLIGHT, id=hid),
                                        sha="def456", summary="bounded the retry at five"),
                        Origin.AGENT)
     row = (await scope.build(sid))["highlights"][0]
@@ -425,21 +425,21 @@ async def test_where_a_subject_stands_is_the_last_answer_not_the_first(session):
     """A subject answered twice was answered badly the first time."""
     manager, sid, provider = session
     scope = rail_for(manager, provider)
-    actor = manager.get(sid)
-    await actor.submit(AddHighlight(file="a.py", side=Side.NEW,
+    writer = manager.get(sid)
+    await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
                                     line_range=LineRange(start=1, end=1)), Origin.BROWSER)
-    subject = Subject(kind=SubjectKind.HIGHLIGHT, id=actor.snapshot().highlights[0].id)
+    subject = Subject(kind=SubjectKind.HIGHLIGHT, id=writer.snapshot().highlights[0].id)
     for sha in ("aaa111", "bbb222"):
-        await actor.submit(RecordAddressed(subject=subject, sha=sha), Origin.AGENT)
+        await writer.submit(RecordAddressed(subject=subject, sha=sha), Origin.AGENT)
     assert (await scope.build(sid))["highlights"][0]["addressed"]["sha"] == "bbb222"
 
 
 async def test_the_agent_can_fix_its_own_finding(session):
     manager, sid, provider = session
     scope = rail_for(manager, provider)
-    actor = manager.get(sid)
-    await actor.submit(EmitCard(highlight_id=None, body="the retry is unbounded"), Origin.AGENT)
-    cid = actor.snapshot().cards[0].id
-    await actor.submit(RecordAddressed(subject=Subject(kind=SubjectKind.INSIGHT, id=cid),
+    writer = manager.get(sid)
+    await writer.submit(EmitCard(highlight_id=None, body="the retry is unbounded"), Origin.AGENT)
+    cid = writer.snapshot().cards[0].id
+    await writer.submit(RecordAddressed(subject=Subject(kind=SubjectKind.INSIGHT, id=cid),
                                        sha="ccc333"), Origin.AGENT)
     assert (await scope.build(sid))["insights"][0]["addressed"]["sha"] == "ccc333"

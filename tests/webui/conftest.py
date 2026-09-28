@@ -71,7 +71,7 @@ def review_kb(tmp_path_factory):
     return ReviewKB(root=tmp_path_factory.mktemp("kb"))
 
 
-class StubWriter:
+class StubHostWriter:
     """The host a submitted review reaches. Records what it was sent, so a test can name it."""
 
     def __init__(self) -> None:
@@ -116,17 +116,17 @@ class StubWriter:
 
 
 @pytest.fixture(scope="session")
-def stub_writer() -> StubWriter:
-    return StubWriter()
+def stub_host_writer() -> StubHostWriter:
+    return StubHostWriter()
 
 
 @pytest.fixture(scope="session")
-def staged_app(fake_manager, stub_host, stub_workspace, review_kb, stub_writer):
+def staged_app(fake_manager, stub_host, stub_workspace, review_kb, stub_host_writer):
     """The production application over a manager, a host and a workspace a test can set."""
     from review_mate.writeback.service import Writeback
     fake_manager._workspace = stub_workspace
     return create_app(manager=fake_manager, provider=stub_host, with_mcp=False, kb=review_kb,
-                      writeback=Writeback(fake_manager, stub_writer),
+                      writeback=Writeback(fake_manager, stub_host_writer),
                       resolve_ref=lambda raw: MRRef(host="gitlab",
                                                     project="platform/virtu/control-plane",
                                                     iid=137))
@@ -154,9 +154,9 @@ def as_agent(_fixture_server, fake_manager):
     subscribed and the scope republishes exactly as it would in production.
     """
     def submit(session_id: str, command, origin=Origin.AGENT):
-        actor = fake_manager.actor(session_id)
-        assert actor is not None, f"no staged session {session_id}"
-        future = asyncio.run_coroutine_threadsafe(actor.submit(command, origin),
+        writer = fake_manager.writer(session_id)
+        assert writer is not None, f"no staged session {session_id}"
+        future = asyncio.run_coroutine_threadsafe(writer.submit(command, origin),
                                                   _fixture_server.loop)
         result = future.result(timeout=10)
         assert result.ok, result.reason
@@ -198,7 +198,7 @@ def as_claude_lookup(_fixture_server, staged_app):
 
 
 @pytest.fixture(autouse=True)
-def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app, stub_writer):
+def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app, stub_host_writer):
     """Reset the staged state between tests, so a scenario is the only thing a test relies on.
 
     Every scope caches what it read, for the life of the application — correctly, since content at
@@ -209,7 +209,7 @@ def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app, stub_
     It also waits for the previous test's page to be let go of. Closing a browser page does not make
     the server notice: the socket unwinds on its own schedule, and until it does the bus still holds
     that page's watches — so a session tail started for the old test keeps running, bound to the
-    actor this reset is about to throw away, and the new test gets a server that pushes it nothing.
+    writer this reset is about to throw away, and the new test gets a server that pushes it nothing.
     """
     _await_release(staged_app)
     fake_manager.reset()
@@ -226,10 +226,10 @@ def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app, stub_
     stub_host.issues = []
     stub_workspace.calls = []
     stub_workspace.clean = True
-    stub_writer.posted.clear()
-    stub_writer.approved = False
-    for recorded in (stub_writer.replied, stub_writer.resolved,
-                     stub_writer.edited, stub_writer.deleted):
+    stub_host_writer.posted.clear()
+    stub_host_writer.approved = False
+    for recorded in (stub_host_writer.replied, stub_host_writer.resolved,
+                     stub_host_writer.edited, stub_host_writer.deleted):
         recorded.clear()
     review_kb._data.watermarks = {}
     for scope in (staged_app.state.hub, staged_app.state.diff_scopes, staged_app.state.blob_scopes,
