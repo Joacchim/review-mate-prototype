@@ -58,8 +58,10 @@ class HubMR(BaseModel):
 
 
 class HubSession(BaseModel):
+    """One open review. There is no `status`: the hub lists what is open, so a status field could
+    only ever say "active" — it said so as a literal, and would have started lying the moment the
+    filter above it moved."""
     id: str
-    status: str
     created_at: str = ""
     mr: HubMR | None = None
     state: str = "new"
@@ -135,7 +137,7 @@ class HubTopic:
         counts = dict(highlights=len(snap.highlights), cards=len(snap.cards),
                       pending=pending, posted=posted, asks=len(outstanding(snap)))
         if snap.mr is None:
-            return HubSession(id=sid, status="active", created_at=snap.created_at, **counts,
+            return HubSession(id=sid, created_at=snap.created_at, **counts,
                               state=derive_state(mr_state="", pending=pending, posted=posted,
                                                  unresolved=0, behind=False, at_watermark=False))
         host = self._host.get(sid, {})
@@ -151,7 +153,7 @@ class HubTopic:
         behind = bool(wm and head and wm != head)
         at_watermark = bool(wm and head and wm == head)
         return HubSession(
-            id=sid, status="active", created_at=snap.created_at,
+            id=sid, created_at=snap.created_at,
             mr=HubMR(host=snap.mr.host, project=snap.mr.project, iid=snap.mr.iid,
                      label=snap.mr.label, title=snap.mr.title, url=snap.mr.url,
                      author=snap.mr.author),

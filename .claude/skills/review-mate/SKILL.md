@@ -24,10 +24,22 @@ session, not one shared with the reviewer's chat.
   be up when this session starts**, because MCP tools bind at session start. Starting the server
   mid-session does **not** make the tools appear (a skill can't fix this from inside the session) —
   restart the session once the server is up.
+- The `review-worker` agent lives in **this project** (`.claude/agents/review-worker.md`), so a
+  coordinator started somewhere else cannot spawn it — and nothing says so until the first dispatch,
+  because the MCP tools are user-scope and resolve fine. Run where the agent is reachable, or make
+  it user-scope yourself. If a spawn does fail with `Agent type 'review-worker' not found` just
+  after the agent became available, **try once more before concluding anything**: registration is
+  not instant, and a session restart is usually not needed.
 - **First action:** confirm the server answers —
-  `curl -s -m 5 -o /dev/null -w "%{http_code}" "http://127.0.0.1:8765/api/activity?since=0"`. If it
+  `curl -s -m 5 -o /dev/null -w "%{http_code}" "http://127.0.0.1:8765/api/outstanding"`. If it
   fails, tell the reviewer to start `uv run review-mate` and (if `mcp__review-mate__*` tools are
   absent) relaunch this session; do not proceed against a dead server.
+  **Not `/api/activity`** — that is the long poll, and it fails exactly when you need it. It
+  answers `since=0` at once only if the stream already holds an event; the stream is ephemeral, so
+  a freshly started server holds none, parks for up to 50s, and a 5s curl exits 28 with no status.
+  That reads as a dead server, on the one server state where the check is actually being used. It
+  self-heals as soon as anything happens, which is why it looks intermittent. It has already cost
+  one session its opening move.
 
 ## State you keep (in working memory)
 
