@@ -65,7 +65,7 @@ def views():
                                          "lines": [line("context", 1, 1, "def f():"),
                                                    line("added", None, 2, "    return 1")]}]},
         "rail:s1": {"session": "s1", "state": "ready", "highlights": [], "insights": []},
-        "chat:s1": {"session": "s1", "state": "ready", "conversations": [],
+        "chat:s1": {"session": "s1", "state": "ready", "chats": [],
                     "agent": {"state": "watching", "stale": False, "since": None,
                               "attached": True, "parked": False, "last_seen": None, "asks": []}},
         "chat:s1:review": {"session": "s1", "state": "ready", "kind": "review", "id": "",
@@ -244,10 +244,10 @@ async def test_navigation_keys_are_text_while_writing():
 async def test_moving_the_rail_cursor_moves_the_conversation_watched():
     shell, client = shell_on_a_review()
     with_highlights(shell, client)
-    assert shell.diff.conversation_scope() == "chat:s1:highlight:h0"
+    assert shell.diff.chat_scope() == "chat:s1:highlight:h0"
     press(shell, "j")
     await settle()
-    assert shell.diff.conversation_scope() == "chat:s1:highlight:h1"
+    assert shell.diff.chat_scope() == "chat:s1:highlight:h1"
     assert "chat:s1:highlight:h1" in client.scopes
 
 

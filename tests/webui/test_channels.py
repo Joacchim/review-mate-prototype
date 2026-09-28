@@ -55,7 +55,7 @@ def test_the_claude_channel_never_writes_to_the_merge_request(diff, rail, detail
     diff.load("s1")
     _open_first(rail, detail)
     detail.ask("why is this the only writer?")
-    expect(detail.messages).to_have_count(1)     # the conversation scope came back with it
+    expect(detail.messages).to_have_count(1)     # the chat scope came back with it
 
     sent = _commands(staged)
     names = [name for name, _ in sent]
@@ -67,7 +67,7 @@ def test_the_claude_channel_never_writes_to_the_merge_request(diff, rail, detail
 
 
 def test_the_review_channel_writes_a_draft_not_a_message(diff, rail, detail, staged):
-    """And the mirror: prose meant for the MR never lands in the conversation."""
+    """And the mirror: prose meant for the MR never lands in the chat."""
     staged.put(review_with_highlights("s1"))
     diff.load("s1")
     _open_first(rail, detail)
@@ -81,7 +81,7 @@ def test_the_review_channel_writes_a_draft_not_a_message(diff, rail, detail, sta
 
 
 def test_the_review_itself_is_a_subject_like_any_other(diff, rail, detail, staged):
-    """The MR row's Claude channel is the conversation anchored to nothing."""
+    """The MR row's Claude channel is the chat anchored to nothing."""
     staged.put(review_with_highlights("s1"))
     diff.load("s1")
     rail.mr_row.click()
@@ -93,7 +93,7 @@ def test_the_review_itself_is_a_subject_like_any_other(diff, rail, detail, stage
 
 
 def test_the_panel_holds_one_conversation_at_a_time(diff, rail, page, staged):
-    """It subscribes the conversation it has open and drops the one it left, as the diff does files."""
+    """It subscribes the chat it has open and drops the one it left, as the diff does files."""
     staged.put(review_with_highlights("s1"))
     diff.load("s1")
     rows = rail.index_rows
@@ -111,7 +111,7 @@ def test_the_panel_holds_one_conversation_at_a_time(diff, rail, page, staged):
 
 def test_closing_the_panel_drops_the_conversation_it_was_watching(diff, rail, detail, page, staged):
     """Switching subjects cleaned up on the way in; closing had nobody to clean up after it, so the
-    server kept rebuilding a conversation with no reader until some unrelated render came along."""
+    server kept rebuilding a chat with no reader until some unrelated render came along."""
     staged.put(review_with_highlights("s1"))
     diff.load("s1")
     rail.index_rows.first.click()

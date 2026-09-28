@@ -1,8 +1,8 @@
-"""Reading one conversation over the whole window.
+"""Reading one chat over the whole window.
 
 Full view is a mode, not a route: the same panel, the same subject, the same channel, given the
 frame. What the tests pin is that nothing is lost on the way in or out — the reviewer keeps the tab
-they were reading and the conversation stays subscribed — and that the width actually changes,
+they were reading and the chat stays subscribed — and that the width actually changes,
 since a mode whose only evidence is a class name proves nothing.
 """
 import pytest

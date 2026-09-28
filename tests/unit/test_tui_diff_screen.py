@@ -271,16 +271,16 @@ def test_focus_cycles_through_every_pane():
     screen.toggle_focus(); assert screen.focus == "files"
 
 
-# --- the conversation --------------------------------------------------------
+# --- one chat --------------------------------------------------------
 
 
-def chat_index(state="watching", stale=False, conversations=None):
-    return {"session": "s1", "state": "ready", "conversations": conversations or [],
+def chat_index(state="watching", stale=False, chats=None):
+    return {"session": "s1", "state": "ready", "chats": chats or [],
             "agent": {"state": state, "stale": stale, "since": None, "attached": state != "off",
                       "parked": False, "last_seen": None, "asks": []}}
 
 
-def conversation(messages, owed=False, kind="review", ident="", checking=False):
+def chat(messages, owed=False, kind="review", ident="", checking=False):
     return {"session": "s1", "state": "ready", "kind": kind, "id": ident, "owed": owed,
             "checking": checking, "messages": messages}
 
@@ -297,7 +297,7 @@ def test_the_review_conversation_is_what_the_screen_shows_by_default():
     screen = DiffScreen(StubClient({
         "diff:s1:full": listing([row("a.py")]),
         "chat:s1": chat_index(),
-        "chat:s1:review": conversation([message("user", "what is this for?"),
+        "chat:s1:review": chat([message("user", "what is this for?"),
                                         message("agent", "the fleet selector")]),
     }), "s1")
     rendered = text_of(screen)
@@ -308,7 +308,7 @@ def test_the_review_conversation_is_what_the_screen_shows_by_default():
 def test_an_empty_conversation_says_how_to_start_one():
     screen = DiffScreen(StubClient({"diff:s1:full": listing([row("a.py")]),
                                     "chat:s1": chat_index(),
-                                    "chat:s1:review": conversation([])}), "s1")
+                                    "chat:s1:review": chat([])}), "s1")
     assert "c writes a message" in text_of(screen)
 
 
@@ -467,7 +467,7 @@ def test_an_insight_is_not_something_to_escalate():
 def test_an_insights_conversation_is_the_one_the_screen_watches():
     screen = screen_with([hl(n=1)], [insight()])
     screen.focus = "rail"
-    assert screen.conversation_scope() == "chat:s1:insight:c1"
+    assert screen.chat_scope() == "chat:s1:insight:c1"
     assert "chat:s1:insight:c1" in screen.wanted()
 
 
@@ -490,7 +490,7 @@ def test_a_doubt_being_checked_says_so_rather_than_waiting_on_claude():
     screen = DiffScreen(StubClient({
         "diff:s1:full": listing([row("a.py")]),
         "chat:s1": chat_index(),
-        "chat:s1:review": conversation([message("user", "are you sure?")],
+        "chat:s1:review": chat([message("user", "are you sure?")],
                                        owed=True, checking=True)}), "s1")
     rendered = text_of(screen)
     assert "Claude is double-checking this" in rendered
@@ -500,8 +500,8 @@ def test_a_doubt_being_checked_says_so_rather_than_waiting_on_claude():
 def test_the_rail_cursor_picks_whose_conversation_is_shown():
     views = {"diff:s1:full": listing([row("a.py")]),
              "chat:s1": chat_index(),
-             "chat:s1:review": conversation([message("user", "about the review")]),
-             "chat:s1:highlight:h1": conversation([message("user", "about this line")],
+             "chat:s1:review": chat([message("user", "about the review")]),
+             "chat:s1:highlight:h1": chat([message("user", "about this line")],
                                                   kind="highlight", ident="h1"),
              "rail:s1": {"session": "s1", "state": "ready", "insights": [], "highlights": [
                  {"id": "h1", "n": 3, "file": "pkg/a.py", "side": "new", "start": 42, "end": 42,
@@ -562,11 +562,11 @@ def test_a_discussion_about_the_whole_change_says_so():
 
 
 def test_pointing_at_a_discussion_makes_it_the_subject():
-    """A discussion is a conversation subject, so the pane picks one the way the rail does."""
+    """A discussion is a chat subject, so the pane picks one the way the rail does."""
     screen = screen_with_threads([disc()])
     screen.focus = "threads"
     assert screen.subject() == {"kind": "thread", "id": "t1"}
-    assert screen.conversation_scope() == "chat:s1:thread:t1"
+    assert screen.chat_scope() == "chat:s1:thread:t1"
 
 
 def test_going_to_a_discussion_opens_its_line():

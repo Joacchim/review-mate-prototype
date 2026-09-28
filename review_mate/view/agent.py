@@ -9,7 +9,7 @@ there, because nothing had ever decided what the agent's view contained.
 So it is composed here, deliberately, out of the builders the clients already use:
 
 - **the rail** — what the reviewer marked, what was escalated, what has a card, and the MR-wide pass
-- **the chat index** — the conversations, and `asks`: the backlog, published rather than re-derived
+- **the chat index** — the chats, and `asks`: the backlog, published rather than re-derived
 - **the discussions** — what has been said on the merge request, for everyone
 - **the consent list** — which repositories were asked for and what came of each
 

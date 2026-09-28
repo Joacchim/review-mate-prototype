@@ -154,9 +154,9 @@ follows posting rather than racing it.
 | `diff:<sid>:<mode>:<path>` | one file's hunks, lines and token spans |
 | `blob:<sid>:<mode>:<path>` | a whole file at the resolved sha, for unfolding |
 | `rail:<sid>` | the session's highlights with their cards and host context, and MR-level insights |
-| `chat:<sid>` | an index of the review's conversations, and the agent state it is in |
-| `chat:<sid>:review` | the conversation about the change as a whole |
-| `chat:<sid>:<kind>:<id>` | one subject's conversation — kind is highlight, insight or thread |
+| `chat:<sid>` | an index of the review's chats, and the agent state it is in |
+| `chat:<sid>:review` | the chat about the change as a whole |
+| `chat:<sid>:<kind>:<id>` | one subject's chat — kind is highlight, insight or thread |
 | `review:<sid>` | the comments prepared to send, whether the change moved on, and who has approved |
 | `threads:<sid>` | the discussions already on the merge request, and which comments are the reviewer's |
 | `access:<sid>` | repositories Claude has asked to read, and what the reviewer decided |
@@ -173,14 +173,14 @@ assembling a second name. Names are validated: a path may contain a colon, a ses
 view mode may not, and a malformed name reports `malformed-name` instead of being read as a
 plausible path.
 
-### Conversations
+### Chats
 
 A message carries a **subject**: a highlight, an MR-level insight, or a host thread — or nothing,
-which is the review's own conversation. The kinds are exactly what a client can open a detail panel
-on, so a conversation renders where its subject already does.
+which is the review's own chat. The kinds are exactly what a client can open a detail panel
+on, so a chat renders where its subject already does.
 
 Each subject therefore has two channels, and they are never one list: the **agent** channel (its
-card and the conversation about it) and the **review** channel (the host thread other participants
+card and the chat about it) and the **review** channel (the host thread other participants
 see). They differ in authorship, durability and write path — a session command against host
 write-back — so a client composes them, and an internal message can never become a posted one by
 accident.
@@ -198,10 +198,10 @@ definition. "Is my ask being worked on" is the join, and no client performs it:
 worked on" is no longer the likely explanation — the case a restart strands, since the activity
 stream is ephemeral.
 
-A thread that vanishes on a host re-sync keeps its conversation. The host reconciling is not the
+A thread that vanishes on a host re-sync keeps its chat. The host reconciling is not the
 reviewer discarding — a discussion can leave because someone resolved and deleted it, or because a
 system note was filtered — and what the reviewer wrote about it privately is still theirs. The
-conversation is then reachable on the wire and not from any rail, which costs an orphan and is the
+chat is then reachable on the wire and not from any rail, which costs an orphan and is the
 cheaper mistake of the two.
 
 An agent's own question back to the reviewer is not an ask. Nothing distinguishes a question from a

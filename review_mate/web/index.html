@@ -184,7 +184,7 @@
     background:var(--panel);border:1px solid var(--line2);border-radius:10px;box-shadow:0 16px 48px var(--shadow);padding:14px 16px;z-index:40}
   .detail[hidden]{display:none}
   /* full view: the same panel, given the whole window. It opens edge to edge because a long
-     conversation is what makes a reviewer ask for it; `.reading` puts the text back on a measure
+     chat is what makes a reviewer ask for it; `.reading` puts the text back on a measure
      when the lines get hard to track. Nothing unmounts, so no scope is dropped on the way in. */
   .detail.max{top:10px;right:10px;left:10px;bottom:10px;width:auto;max-height:none;padding:20px 24px}
   .detail.max .dbody{max-width:none;margin:0 auto}
@@ -294,7 +294,7 @@
   .channelnote.host{color:var(--purple)}
   .conv{margin-top:12px}
   .convhdr{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--fg2)}
-  /* which side the conversation is waiting on — see owedSide() for why the two differ in kind */
+  /* which side the chat is waiting on — see owedSide() for why the two differ in kind */
   .owed{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:10px;
         font-family:var(--mono);white-space:nowrap;color:var(--fg2)}
   .owed::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--line2);flex:none}

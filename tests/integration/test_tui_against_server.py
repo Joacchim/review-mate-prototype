@@ -354,8 +354,8 @@ async def test_escalating_a_highlight_is_accepted_by_the_session(tmp_path):
 
 
 async def test_writing_in_the_terminal_reaches_the_conversation(tmp_path):
-    """The terminal holds a conversation over the same protocol: the message it writes becomes a
-    command, the session changes, and the conversation scope comes back carrying it."""
+    """The terminal holds a chat over the same protocol: the message it writes becomes a
+    command, the session changes, and the chat scope comes back carrying it."""
     from review_mate.tui.app import Shell
 
     async with serving(build(tmp_path, DiffHost())) as base:
@@ -375,10 +375,10 @@ async def test_writing_in_the_terminal_reaches_the_conversation(tmp_path):
             shell.cancel_compose()
             assert await client.session_command(session, command), client.last_command_error
 
-            await wait_for(lambda: shell.diff.conversation.get("messages"))
-            said = shell.diff.conversation["messages"][0]
+            await wait_for(lambda: shell.diff.chat.get("messages"))
+            said = shell.diff.chat["messages"][0]
             assert (said["role"], said["body"]) == ("user", "what is this guard for?")
-            assert shell.diff.conversation["owed"] is True          # the agent owes an answer
+            assert shell.diff.chat["owed"] is True          # the agent owes an answer
             rendered = "".join(text for _, text in shell.fragments())
             assert "what is this guard for?" in rendered
 

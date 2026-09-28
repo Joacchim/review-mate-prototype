@@ -65,11 +65,11 @@ def test_clear_chat_empties_messages_browser_only():
     assert s.messages == []
 
 
-# --- conversations: a message knows what it is about --------------------------
+# --- chats: a message knows what it is about --------------------------
 
 
 def _subject_state() -> SessionState:
-    """A review with one of each thing a conversation can be about."""
+    """A review with one of each thing a chat can be about."""
     return SessionState(
         id="s", created_at="t",
         highlights=[Highlight(id="h1", ordinal=1, file="a.py", side=Side.NEW,
@@ -181,7 +181,7 @@ async def test_asking_for_insights_records_when(setup):
 
 
 async def test_a_conversation_survives_a_replay(tmp_path):
-    """Anchors are in the log, so a restart rebuilds which conversation a message was in."""
+    """Anchors are in the log, so a restart rebuilds which chat a message was in."""
     root = tmp_path / "sessions"
     m = SessionManager(root=root)
     sid = await m.create()

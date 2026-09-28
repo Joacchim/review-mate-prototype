@@ -408,13 +408,13 @@ class Shell:
             spawn(self.resync(previous))
 
         def _moved(delta: int) -> None:
-            # the rail cursor picks the subject, so moving it changes which conversation is watched
+            # the rail cursor picks the subject, so moving it changes which chat is watched
             previous = self.diff.wanted() if self.diff is not None else []
             self.screen.move(delta)
             if self.diff is None:
                 return
             # the rail and the discussions pick a subject, so moving either changes which
-            # conversation is watched; the file list picks what the body reads
+            # chat is watched; the file list picks what the body reads
             if self.diff.focus in ("rail", "threads") or (self.diff.focus == "files"
                                                           and self.diff.browsing):
                 if self.diff.focus == "files":

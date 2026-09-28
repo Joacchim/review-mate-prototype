@@ -196,7 +196,7 @@ def test_outstanding_surfaces_a_trailing_user_message(tmp_path):
         data = client.get("/api/outstanding").json()
         assert data["total"] == 1
         assert [s["session_id"] for s in data["sessions"]] == [sid]
-        assert data["sessions"][0]["asks"][0]["kind"] == "conversation"
+        assert data["sessions"][0]["asks"][0]["kind"] == "chat"
         assert data["sessions"][0]["asks"][0]["since"]
 
 
@@ -233,7 +233,7 @@ async def test_outstanding_clears_once_the_agent_answers(tmp_path):
 
         await actor.submit(EmitCard(highlight_id=hid, body="here"), Origin.AGENT)
         assert [a["kind"] for a in (await c.get("/api/outstanding")).json()["sessions"][0]["asks"]] \
-            == ["conversation"]
+            == ["chat"]
         await actor.submit(PostMessage(body="had a look"), Origin.AGENT)   # trailing role → agent
         assert (await c.get("/api/outstanding")).json() == {"sessions": [], "total": 0}
     await mgr.shutdown()

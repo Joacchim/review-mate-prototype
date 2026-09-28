@@ -93,7 +93,7 @@ async def test_the_diff_is_not_in_it(agent):
 async def test_the_conversations_come_with_it(agent):
     manager, sid, view = await agent()
     await manager.get(sid).submit(PostMessage(body="why keep the legacy queue?"), Origin.BROWSER)
-    rows = (await view.build(sid))["chat"]["conversations"]
+    rows = (await view.build(sid))["chat"]["chats"]
     assert any(r["preview"] == "why keep the legacy queue?" for r in rows)
 
 

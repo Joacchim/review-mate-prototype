@@ -122,7 +122,7 @@ class PostMessage(BaseModel):
 
 class ClearChat(BaseModel):
     type: Literal["clear_chat"] = "clear_chat"
-    anchor: Subject | None = None      # clears that conversation only
+    anchor: Subject | None = None      # clears that chat only
 
 
 class RecordAddressed(BaseModel):
@@ -148,7 +148,7 @@ class RequestCheck(BaseModel):
     """Ask the agent to verify something already said — the reviewer's words, or the agent's own.
 
     A comment is checked through the highlight it sits on, with its text as `note`: a comment is
-    not something a conversation can be about, and inventing a fourth subject kind for it would
+    not something a chat can be about, and inventing a fourth subject kind for it would
     put every client and every chat scope in step with a distinction only this needs.
     """
     type: Literal["request_check"] = "request_check"
@@ -242,7 +242,7 @@ AUTHORITY: dict[str, set[Origin]] = {
 
 
 def _absent_subject(state, anchor: "Subject | None") -> str | None:
-    """Why a conversation cannot be held about this subject, or None if it can.
+    """Why a chat cannot be held about this subject, or None if it can.
 
     A message anchored to something that does not exist would be unreachable: no rail row carries
     it, so nothing would ever render it.

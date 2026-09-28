@@ -91,14 +91,14 @@ issue that references them. Nothing was asked of anyone to get that.
 
 Clicking that entry opens it.
 
-![A card on a highlight, and the conversation beneath it](images/claude-channel.png)
+![A card on a highlight, and the chat beneath it](images/claude-channel.png)
 
 > ① the two channels this subject has — see below · ② what Claude found, anchored to the lines you
 > marked · ③ doubt a claim and ask for it to be checked · ④ the reminder that this channel is yours
 > alone
 
 **The two tabs are two different audiences, and they never mix.** *Claude* is a private channel:
-the context, and a conversation about it that only you can see. *Review* is what the merge request
+the context, and a chat about it that only you can see. *Review* is what the merge request
 will see — the comment you are preparing for everyone else. Nothing written in one can leave by the
 other, which is the reason they are separate tabs rather than one box.
 
@@ -145,7 +145,7 @@ whole review, read it back, and send it in one go.
 ![What is written, what is sent](images/review-state.png)
 
 > ① what state each marked line is in · ② the change as a whole: a summary comment, and a
-> conversation with Claude about the change rather than about one line · ③ what is waiting to go,
+> chat with Claude about the change rather than about one line · ③ what is waiting to go,
 > and the approval that can go with it
 
 The counts at ① are also filters. **Cards** are ranges you have collected context on and not written
@@ -154,7 +154,7 @@ on the merge request. It is the difference between what is still yours and what 
 and it is the quickest way to answer "what have I actually written so far?".
 
 The merge request as a whole is a subject like any line is (②) — it takes a summary comment, and it
-has its own conversation with Claude, for the questions that are about the change rather than about
+has its own chat with Claude, for the questions that are about the change rather than about
 one place in it.
 
 The merge request's existing discussions are here too. Filter to what is unresolved, jump from a

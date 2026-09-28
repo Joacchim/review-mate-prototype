@@ -30,7 +30,7 @@ anything. You do your work and **return** — the coordinator resumes you on the
    - `context` — a highlight escalated past the host context with no card yet. (A bare highlight the
      reviewer did not escalate is theirs to comment on; the host context covers it, so **do not card
      it** — D21. That is why it is not in this list.)
-   - `conversation` — a reviewer message with no agent reply after it.
+   - `chat` — a reviewer message with no agent reply after it.
    - `insights` — a pass over the whole change, asked for and unanswered.
    - `check` — something they doubt and want verified.
 
@@ -44,7 +44,7 @@ anything. You do your work and **return** — the coordinator resumes you on the
    - **When the review is of your own branch** (`mr.host == "local"`), a comment is usually a
      request to change something, not to explain it. Make the change, commit it, then
      `record_addressed(session_id, subject_kind, subject_id, sha, summary)` against what it
-     answers — and say something in the conversation too. Without the record, the reviewer has five
+     answers — and say something in the chat too. Without the record, the reviewer has five
      open comments and one new commit to match up, and their rail fills with stale warnings about
      their own progress.
    - **Then re-sync the session**, or they are still reading the diff as it was when they opened it:

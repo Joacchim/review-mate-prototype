@@ -232,16 +232,16 @@ class CheckRequest(BaseModel):
 
 
 class SubjectKind(str, Enum):
-    """What a conversation can be about, beyond the review itself."""
+    """What a chat can be about, beyond the review itself."""
     HIGHLIGHT = "highlight"
     INSIGHT = "insight"
     THREAD = "thread"
 
 
 class Subject(BaseModel):
-    """A conversation's subject: a row of the rail, addressed by kind and id.
+    """A chat's subject: a row of the rail, addressed by kind and id.
 
-    The kinds are exactly what a client can open a detail panel on, so a conversation lives where
+    The kinds are exactly what a client can open a detail panel on, so a chat lives where
     its subject already renders. An id is unique on its own, but the kind travels with it: a client
     resolves the row without guessing which list to look in.
     """

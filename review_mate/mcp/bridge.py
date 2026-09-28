@@ -233,7 +233,7 @@ class AgentBridge:
 
     async def post_message(self, session_id: str, body: str,
                            anchor: Subject | None = None) -> CommandResult:
-        """Answer in a conversation. `anchor` names its subject; None is the review's own."""
+        """Answer in a chat. `anchor` names its subject; None is the review's own."""
         return await self._actor(session_id).submit(PostMessage(body=body, anchor=anchor),
                                                     Origin.AGENT)
 

@@ -27,7 +27,7 @@ let selected = null;                 // {kind:"hl"|"insight"|"mr"|"thread", id} 
 let detailTab = null;                // "claude" | "host" for the open subject; null picks the default
 let detailMax = false;               // the panel given the whole window, for reading a long one
 let detailReading = false;           // and held to a measure within it, when the lines get long
-const msgDraft = {};                 // conversation scope -> in-progress message (survives re-render)
+const msgDraft = {};                 // chat scope -> in-progress message (survives re-render)
 let msgFocused = null;               // scope of the focused composer, to restore after render
 const MR_KEY = "__mr__";             // draftBuffers/focus key for the (anchorless) MR-level comment
 let approveToggle = false;           // "Approve MR" checkbox on the submit bar
@@ -228,7 +228,7 @@ function reviewVersion() {
   return view ? view.version : null;
 }
 
-// this session's conversations, and the agent state they add up to
+// this session's chats with the agent, and the agent state they add up to
 function chatIndex() {
   return scopeViews[`chat:${SID}`] || null;
 }
@@ -388,15 +388,15 @@ function diffScopes() {
   if (currentFile) scopes.push(`${listing}:${currentFile}`);
   if (showAll) scopes.push(`tree:${SID}`);        // the file browser, only while it is open
   if (commitsMode) scopes.push(`commits:${SID}`); // and the commit list, only while reviewing one
-  if (selected) scopes.push(conversationScope(selected));   // only the conversation on screen
+  if (selected) scopes.push(chatScope(selected));   // only the chat on screen
   blobWanted.forEach((path) => scopes.push(`blob:${SID}:${mode}:${path}`));
   return scopes;
 }
 
 // --- one subject, two channels ----------------------------------------------
-// A conversation's subject is whatever the detail panel opens, addressed exactly as the protocol
+// A chat's subject is whatever the detail panel opens, addressed exactly as the protocol
 // addresses it (review_mate/view/chat.py). `mr` is the review itself: its Claude channel is the
-// conversation anchored to nothing, and its review channel is the MR-level note everyone sees.
+// chat anchored to nothing, and its review channel is the MR-level note everyone sees.
 const SUBJECT_KIND = { hl: "highlight", insight: "insight", thread: "thread" };
 
 function subjectAnchor(sel) {
@@ -404,13 +404,13 @@ function subjectAnchor(sel) {
   return { kind: SUBJECT_KIND[sel.kind], id: sel.id };
 }
 
-function conversationScope(sel) {
+function chatScope(sel) {
   const a = subjectAnchor(sel);
   return a ? `chat:${SID}:${a.kind}:${a.id}` : `chat:${SID}:review`;
 }
 
 function conversationMessages(sel) {
-  const view = scopeViews[conversationScope(sel)];
+  const view = scopeViews[chatScope(sel)];
   return view && view.state === "ready" ? view.messages : [];
 }
 
@@ -421,10 +421,10 @@ function conversationRow(sel) {
   const a = subjectAnchor(sel);
   const kind = a ? a.kind : "review";
   const id = a ? a.id : "";
-  return (index.conversations || []).find((c) => c.kind === kind && c.id === id) || null;
+  return (index.chats || []).find((c) => c.kind === kind && c.id === id) || null;
 }
 
-// Which side the conversation is waiting on. `owed` is the server's and means an answer is actually
+// Which side the chat is waiting on. `owed` is the server's and means an answer is actually
 // outstanding. The other direction has no server fact behind it by design — view/asks.py declines to
 // read Claude's last word as a question, because nothing in a message body distinguishes one — so it
 // is read here from who spoke last and means only that: Claude spoke, your turn if you want it.
@@ -1711,7 +1711,7 @@ function renderHlist() {
 // a call: the reviewer's × re-renders from the top, while a subject that vanished under the panel
 // is discovered *inside* a render and must not start another. So they share this instead.
 // `detailReading` is deliberately left alone — the width someone prefers to read at outlives the
-// conversation they were reading.
+// chat they were reading.
 function clearSubject() {
   selected = null;
   detailTab = null;
@@ -1719,7 +1719,7 @@ function clearSubject() {
 }
 
 // Opening a subject is a subscription change, and so is closing one: the panel holds the
-// conversation it has open and no other, the way the diff holds one file.
+// chat it has open and no other, the way the diff holds one file.
 function openSubject(sel) {
   if (sel) { selected = sel; detailTab = null; } else { clearSubject(); }
   if (SID) watchScopes(diffScopes());
@@ -1907,7 +1907,7 @@ function detailHead(subject, close) {
       `<span class="loc" title="jump to code">${esc(loc)}</span>`;
     head.querySelector(".loc").onclick = () => goToHighlight(hl);
   }
-  // A long conversation is the reason to ask for the whole window, so full view opens edge to edge
+  // A long chat is the reason to ask for the whole window, so full view opens edge to edge
   // and the measure is the opt-in — the other way round reads as a panel that refused to grow.
   if (detailMax) {
     head.appendChild(btn(detailReading ? "↔ Full width" : "↔ Reading width", "dmax",
@@ -1964,7 +1964,7 @@ function hostCount(subject) {
   return thread ? (thread.comments || []).length : 0;
 }
 
-// --- the Claude channel: the card, and the conversation beneath it -----------
+// --- the Claude channel: the card, and the chat beneath it -----------------
 
 function claudeChannel(subject) {
   const frag = document.createDocumentFragment();
@@ -2004,10 +2004,10 @@ function doubtControl(claim, label) {
   }));
 }
 
-// Whether Claude owes this conversation a verification. Server-side fact, same list the agent
+// Whether Claude owes this chat a verification. Server-side fact, same list the agent
 // works from, so what is shown waiting and what is actually owed cannot disagree.
 function beingChecked(sel) {
-  const view = scopeViews[conversationScope(sel)];
+  const view = scopeViews[chatScope(sel)];
   return !!(view && view.state === "ready" && view.checking);
 }
 
@@ -2075,9 +2075,9 @@ function labelControl(card) {
   return row;
 }
 
-// one subject's conversation with Claude: the messages, and the box that adds to them
+// one subject's chat with Claude: the messages, and the box that adds to them
 function conversationBlock(subject) {
-  const scope = conversationScope(selected);
+  const scope = chatScope(selected);
   const wrap = document.createElement("div");
   wrap.className = "conv";
 
@@ -2090,7 +2090,7 @@ function conversationBlock(subject) {
   const messages = conversationMessages(selected);
   if (messages.length) {
     head.appendChild(btn("clear", "btn ghost", () => {
-      if (confirm("Clear this conversation?")) post({ type: "clear_chat", anchor: subjectAnchor(selected) });
+      if (confirm("Clear this chat?")) post({ type: "clear_chat", anchor: subjectAnchor(selected) });
     }));
   }
   wrap.appendChild(head);
@@ -2180,7 +2180,7 @@ function hostChannel(subject) {
 // restore focus across a WS-driven re-render; never steal it
 function restoreDetailFocus(el, subject, tab) {
   if (tab === "claude") {
-    if (msgFocused === conversationScope(selected)) {
+    if (msgFocused === chatScope(selected)) {
       const inp = el.querySelector(".chatbox input");
       if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
     }
@@ -2257,7 +2257,7 @@ function draftEditor(key, anchor, draft) {
   return wrap;
 }
 
-// existing MR discussions (host threads) — list, filter, and open a conversation in the overlay
+// existing MR discussions (host threads) — list, filter, and open a discussion in the overlay
 function renderThreads(el) {
   // a posted draft is already shown inline under its highlight ("your comment"); don't also list
   // its thread here, or the reviewer's own comments double up once refresh re-mirrors them
@@ -2375,7 +2375,7 @@ async function deleteNote(tid, nid) {
   await threadCmd("thread.delete_note", { thread: tid, note: nid }, "deleted");
 }
 
-// the conversation for a thread — notes (edit/delete on your own) + reply + resolve.
+// the discussion for a thread — notes (edit/delete on your own) + reply + resolve.
 // Reused by the thread detail overlay and inline on a highlight whose comment became this thread.
 function threadConversationBlock(t) {
   const canThreads = !state.mr || (state.mr.capabilities || {}).threads !== false;

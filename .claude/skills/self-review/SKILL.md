@@ -61,11 +61,11 @@ have to read all over again.
 
 ## 4. Discuss, or change
 
-- A **question** — answer it in the conversation. `post_message` on that subject. Not everything is
+- A **question** — answer it in the chat. `post_message` on that subject. Not everything is
   a request for a change, and rewriting code to answer "why is this here?" is its own kind of wrong.
 - A **request to change something** — change it. This is the part that makes this loop worth having:
   they should not have to write the fix out in prose for you to apply.
-- **Unsure which it is?** Ask them, in the conversation, before touching anything.
+- **Unsure which it is?** Ask them, in the chat, before touching anything.
 
 ## 5. Where the change goes — think before you commit
 
@@ -98,11 +98,11 @@ no longer exist — see `docs/surprising-behaviors.md`.
 the review merely revealed, or a prerequisite you discovered while fixing something else. The test
 is *"is this edit needed for that commit to be right?"* If no, it has its own story.
 
-**When it is genuinely unclear, ask them in the conversation.** The branch's shape is the
+**When it is genuinely unclear, ask them in the chat.** The branch's shape is the
 reviewer's to decide as much as yours, and one message costs less than a history they did not want.
 
 **If the rebase conflicts, stop fighting it.** `git rebase --abort`, make it a plain commit on top,
-and say in the conversation that it could not be folded and why. A branch with an honest extra
+and say in the chat that it could not be folded and why. A branch with an honest extra
 commit beats a reviewer watching you wrestle git.
 
 ## 6. Record it, then let the review see it
@@ -115,7 +115,7 @@ Two calls, in this order, every time you change code:
 2. `session.resync` — `POST /api/cmd {"cmd": "session.resync", "args": {"session": "<id>"}}`.
    Committing changes the branch; nothing tells the review until it is asked to look again.
 
-Then **say something in the conversation as well**. The record is what the rail draws; it is not a
+Then **say something in the chat as well**. The record is what the rail draws; it is not a
 reply, and a fix that arrives with nothing said reads as being ignored.
 
 ## 7. Stop

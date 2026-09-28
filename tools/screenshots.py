@@ -280,7 +280,7 @@ def _side_by_side(page, base, stage):
     page.wait_for_timeout(300)
 
 
-@shot("claude-channel", "what Claude found on a line, and the conversation under it",
+@shot("claude-channel", "what Claude found on a line, and the chat under it",
       shows="#detail .card",
       marks=(("#detail .tabs, #detail .chathdr", "1"), ("#detail .card", "2"),
              ("#detail .noteacts .btn", "3"), ("#detail .channelnote", "4")))

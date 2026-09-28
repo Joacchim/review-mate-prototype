@@ -131,7 +131,7 @@ right command, and that a pushed update repaints. Review logic is the protocol s
 | Hub | `test_hub.py` | open reviews and their state chips, the queue and its filter, track, close, unsubmitted drafts, check-for-updates, a failing queue read, a review as a real link |
 | Diff | `test_diff.py` | file tree and selection, side and line numbering, what is selectable, syntax colour, unfold from the blob scope, side-by-side, markdown toggle, since-last and per-commit modes, a conflicted replay warning, the read-only repo browser |
 | Highlights | `test_highlights.py` | drag-selecting a range, the number the session gave a row, a stale highlight, marks in the diff, the host-context, escalation, a card arriving, dismissing an insight, a selection surviving a frame mid-drag |
-| Channels | `test_channels.py` | the two channels as tabs, that neither can leave by the other, the review as a subject like any other, one conversation at a time, and doubting a claim — Claude's or your own |
+| Channels | `test_channels.py` | the two channels as tabs, that neither can leave by the other, the review as a subject like any other, one chat at a time, and doubting a claim — Claude's or your own |
 | Agent state | `test_agent_state.py` | what the server says is outstanding, and what it says once answered |
 | Review | `test_review.py` | drafting per highlight and at MR level, editing one, the counts, batch submit and what landed, approve, the discussion list and its filter, jump to line, reply, resolve, and the review-pass control in all three of its states |
 | Consent | `test_consent.py` | what a cross-repo ask shows, allowing, refusing, an already-decided ask, and each repository answered on its own |

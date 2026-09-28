@@ -53,18 +53,18 @@ class DetailPage:
 
     @property
     def messages(self):
-        """The Claude channel's conversation as the server folded it — so its arrival is the proof
+        """The Claude channel's chat as the server folded it — so its arrival is the proof
         a message made the round trip, not a delay."""
         return self.page.locator("#detail .msgs .msg")
 
     # --- doubting what was said ----------------------------------------------
 
     def doubt(self, index: int = 0) -> None:
-        """Ask Claude to verify the claim in one message of the conversation."""
+        """Ask Claude to verify the claim in one message of the chat."""
         self.messages.nth(index).locator(".noteacts .btn", has_text="double-check").click()
 
     def doubt_card(self) -> None:
-        """Ask Claude to verify its own answer — the claim above the conversation."""
+        """Ask Claude to verify its own answer — the claim above the chat."""
         self.panel.locator(".noteacts .btn", has_text="double-check this").click()
 
     @property

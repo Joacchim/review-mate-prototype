@@ -134,7 +134,7 @@ class MessagePosted(_EventBase):
 
 class ChatCleared(_EventBase):
     type: Literal["chat_cleared"] = "chat_cleared"
-    anchor: Subject | None = None      # which conversation; None = the review's own
+    anchor: Subject | None = None      # which chat; None = the review's own
 
 
 class DraftSaved(_EventBase):

@@ -55,7 +55,7 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
     elif isinstance(event, ev.CardRemoved):
         s.cards = [c for c in s.cards if c.id != event.card_id]
         # dismissing an insight discards what was said about it, as removing a highlight discards
-        # its draft: a conversation whose subject is gone has no row left to render it
+        # its draft: a chat whose subject is gone has no row left to render it
         s.messages = [m for m in s.messages
                       if not (m.anchor is not None and m.anchor.kind is SubjectKind.INSIGHT
                               and m.anchor.id == event.card_id)]

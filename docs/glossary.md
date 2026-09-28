@@ -62,11 +62,12 @@ from when a reader unfolds the context between hunks.
 context, plus the MR-level insights. One scope per session rather than per file: the numbering
 is session-wide, and a card arriving would otherwise republish a whole tokenized file.
 
-**conversation** — an exchange between the reviewer and the agent about one **subject**, or about
-the review as a whole. Distinct from a **thread**, which is the host's own discussion that other
-participants see: they differ in who can read them and in how a message reaches them.
+**chat** — an exchange between the reviewer and the agent about one **subject**, or about the
+review as a whole. Private to the reviewer. Distinct from a **discussion**, which is the host's own
+and which other participants see: they differ in who can read them and in how a message reaches
+them. Both are conversations in the ordinary sense, which is why neither is called one.
 
-**subject** — what a conversation is about: a highlight, an MR-level insight, or a host thread,
+**subject** — what a chat is about: a highlight, an MR-level insight, or a host thread,
 addressed by kind and id. The set is exactly what a client can open a detail panel on.
 
 **presence** — whether an agent is consuming the activity stream at all (`attached`, `parked`,
@@ -93,7 +94,8 @@ touched them, and the issues the change closes. It arrives immediately and needs
 
 **Draft** — a review comment written locally. Nothing reaches the host until the review is submitted.
 
-**Thread** — a discussion on the MR, owned by the host and mirrored into session state.
+**Discussion** — a conversation on the MR that every participant sees, owned by the host and
+mirrored into session state. `thread` is its name on the wire.
 
 **Watermark** — the MR head a reviewer last marked as reviewed. What `since` measures from.
 

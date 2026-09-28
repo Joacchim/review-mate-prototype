@@ -1,6 +1,6 @@
-"""The chat scopes: an index of a review's conversations, and each conversation's messages.
+"""The chat scopes: an index of a review's chats, and each chat's messages.
 
-Split for the reason the diff is: a client subscribes to the conversation it has open. The index is
+Split for the reason the diff is: a client subscribes to the chat it has open. The index is
 also where presence stops being a raw fact and becomes an answer — "is my ask being worked on" is
 the join of who is listening with what is outstanding, and no client performs it.
 
@@ -48,7 +48,7 @@ async def mark(actor, file="a.py", line=1):
 
 
 def rows(view):
-    return {(r["kind"], r["id"]): r for r in view["conversations"]}
+    return {(r["kind"], r["id"]): r for r in view["chats"]}
 
 
 # --- the index ---------------------------------------------------------------
@@ -57,9 +57,9 @@ def rows(view):
 async def test_a_review_with_nothing_said_still_has_its_own_conversation(session):
     manager, sid = session
     view = await chat_for(manager).build(sid)
-    assert [r["kind"] for r in view["conversations"]] == ["review"]
-    assert view["conversations"][0]["scope"] == f"chat:{sid}:review"
-    assert view["conversations"][0]["count"] == 0
+    assert [r["kind"] for r in view["chats"]] == ["review"]
+    assert view["chats"][0]["scope"] == f"chat:{sid}:review"
+    assert view["chats"][0]["count"] == 0
 
 
 async def test_each_conversation_is_listed_with_where_to_read_it(session):
@@ -82,7 +82,7 @@ async def test_each_conversation_is_listed_with_where_to_read_it(session):
     assert listed[("insight", insight.id)]["preview"] == "about that finding"
 
 
-async def test_the_index_says_which_conversations_are_waiting_on_an_answer(session):
+async def test_the_index_says_which_chats_are_waiting_on_an_answer(session):
     manager, sid = session
     actor = manager.get(sid)
     highlight = await mark(actor)
@@ -102,7 +102,7 @@ async def test_an_unknown_session_is_reported(session):
     assert view["state"] == "unknown-session"
 
 
-# --- one conversation --------------------------------------------------------
+# --- one chat --------------------------------------------------------
 
 
 async def test_a_conversation_carries_only_its_own_messages(session):
@@ -266,9 +266,9 @@ def test_an_old_ask_with_an_agent_attached_is_flagged_stale():
     from review_mate.view.asks import Ask
     old = (datetime.now(timezone.utc) - timedelta(seconds=STALE_AFTER + 60)).isoformat()
     fresh = datetime.now(timezone.utc).isoformat()
-    assert agent_state([Ask(kind="conversation", since=old)], ATTACHED).stale is True
-    assert agent_state([Ask(kind="conversation", since=fresh)], ATTACHED).stale is False
-    assert agent_state([Ask(kind="conversation", since=old)], ALONE).stale is False
+    assert agent_state([Ask(kind="chat", since=old)], ATTACHED).stale is True
+    assert agent_state([Ask(kind="chat", since=fresh)], ATTACHED).stale is False
+    assert agent_state([Ask(kind="chat", since=old)], ALONE).stale is False
 
 
 def test_an_agents_own_question_is_not_the_reviewers_debt():

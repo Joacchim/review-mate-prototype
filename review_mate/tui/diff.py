@@ -143,8 +143,8 @@ class DiffScreen:
         return self.client.views.get(f"rail:{self.session}") or {}
 
     @property
-    def chat(self) -> dict:
-        """The index: every conversation this review holds, and the state the agent is in."""
+    def chat_index(self) -> dict:
+        """The index: every chat this review holds, and the state the agent is in."""
         return self.client.views.get(f"chat:{self.session}") or {}
 
     @property
@@ -289,7 +289,7 @@ class DiffScreen:
     def subject(self) -> dict | None:
         """What the chat pane is about: whatever the cursor is on, else the review.
 
-        The cursor is the terminal's selection, so the conversation follows it the way the open
+        The cursor is the terminal's selection, so the chat follows it the way the open
         file follows the file cursor — one place to point at a thing, and everything about that
         thing follows. A discussion is a subject like a highlight is, so pointing at one opens
         what has been said about it privately, beside what the merge request says publicly.
@@ -300,14 +300,14 @@ class DiffScreen:
         row = self.rail_row() if self.focus == "rail" else None
         return None if row is None else {"kind": row["kind"], "id": row["data"]["id"]}
 
-    def conversation_scope(self) -> str:
+    def chat_scope(self) -> str:
         anchor = self.subject()
         return (f"chat:{self.session}:review" if anchor is None
                 else f"chat:{self.session}:{anchor['kind']}:{anchor['id']}")
 
     @property
-    def conversation(self) -> dict:
-        return self.client.views.get(self.conversation_scope()) or {}
+    def chat(self) -> dict:
+        return self.client.views.get(self.chat_scope()) or {}
 
     @property
     def highlights(self) -> list[dict]:
@@ -357,7 +357,7 @@ class DiffScreen:
     def wanted(self) -> list[str]:
         scopes = [self.listing, f"rail:{self.session}", f"chat:{self.session}",
                   f"review:{self.session}", f"threads:{self.session}", f"access:{self.session}",
-                  self.conversation_scope()]
+                  self.chat_scope()]
         if self.browsing:
             scopes.append(f"tree:{self.session}")
         blob = self.blob_scope
@@ -671,7 +671,7 @@ class DiffScreen:
 
     def _agent_badge(self) -> list[tuple[str, str]]:
         """Working, stalled, watching or off — the server's word, not a rule applied here."""
-        agent = self.chat.get("agent") or {}
+        agent = self.chat_index.get("agent") or {}
         state = agent.get("state")
         if not state:
             return []
@@ -688,7 +688,7 @@ class DiffScreen:
             row = next((h for h in self.highlights if h["id"] == anchor["id"]), None)
             where = f"#{row['n']} {row['file'].split('/')[-1]}:{row['start']}" if row else "a highlight"
             heading = f"Chat \u2014 {where}"
-        view = self.conversation
+        view = self.chat
         out: list[tuple[str, str]] = [("class:header", f"\n {heading}\n")]
         messages = view.get("messages") or []
         if not messages:

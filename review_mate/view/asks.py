@@ -2,8 +2,8 @@
 
 One owner for a predicate that had two: the browser derived it to draw its indicator, and
 `/api/outstanding` derived it again so an agent whose notification was dropped by a restart could
-re-find its work. Two copies of a rule that is about to get harder — a conversation is outstanding
-when the reviewer spoke last, which is per conversation now rather than per review.
+re-find its work. Two copies of a rule that is about to get harder — a chat is outstanding when
+the reviewer spoke last, which is per chat now rather than per review.
 
 Nothing here reads the host or the clock beyond `now`, so it is cheap enough to run on every build.
 """
@@ -23,7 +23,7 @@ STALE_AFTER = 300.0
 
 class Ask(BaseModel):
     """One thing the agent owes an answer on."""
-    kind: str                          # conversation | context | insights
+    kind: str                          # chat | context | insights
     subject: Subject | None = None     # where the answer belongs; None = the review as a whole
     since: str = ""                    # when it was asked — the oldest ask ages the indicator
 
@@ -46,7 +46,7 @@ def _key(anchor: Subject | None) -> tuple[str, str]:
 def outstanding(snapshot) -> list[Ask]:
     """Every ask this review is waiting on, oldest first.
 
-    Four shapes, and they are not interchangeable: a conversation where the reviewer spoke last, a
+    Four shapes, and they are not interchangeable: a chat where the reviewer spoke last, a
     highlight escalated past the host context with no card yet, a request for insights on the change
     as a whole that nothing has answered, and something the reviewer asked to have verified.
 
@@ -62,7 +62,7 @@ def outstanding(snapshot) -> list[Ask]:
         if message.role != "user":
             continue
         anchor = None if kind == "review" else Subject(kind=SubjectKind(kind), id=ident)
-        asks.append(Ask(kind="conversation", subject=anchor, since=message.created_at))
+        asks.append(Ask(kind="chat", subject=anchor, since=message.created_at))
 
     carded = {c.highlight_id for c in snapshot.cards if c.highlight_id}
     for highlight in snapshot.highlights:

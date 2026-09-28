@@ -44,7 +44,7 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
 
     @mcp.tool()
     async def get_session(session_id: str) -> dict:
-        """The session as the reviewer sees it: the merge request, the rail, the conversations and
+        """The session as the reviewer sees it: the merge request, the rail, the chats and
         their `asks`, the discussions, and the consent list.
 
         `chat.asks` is your backlog — what the reviewer is waiting on you for, already worked out.
@@ -125,7 +125,7 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
         filling with stale warnings about their own progress, because a subject whose code moved
         with one of these against it moved *because* you fixed it.
 
-        `subject_kind` is `highlight`, `insight` or `thread`. Answer in the conversation as well if
+        `subject_kind` is `highlight`, `insight` or `thread`. Answer in the chat as well if
         there is anything to say; the record is not a substitute for talking to them.
         """
         return (await bridge.record_addressed(session_id, subject_kind, subject_id, sha,
@@ -191,9 +191,9 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
     @mcp.tool()
     async def post_message(session_id: str, body: str, anchor_kind: str | None = None,
                            anchor_id: str | None = None) -> dict:
-        """Post a chat message to the reviewer (the agent side of the conversation).
+        """Post a chat message to the reviewer (the agent side of the chat).
 
-        Leave the anchor out to speak in the review's own conversation. To answer where the
+        Leave the anchor out to speak in the review's own chat. To answer where the
         reviewer asked, name the subject: `anchor_kind` is highlight, insight or thread, and
         `anchor_id` is that row's id — both as they arrive on an inbound message's `anchor`.
         """

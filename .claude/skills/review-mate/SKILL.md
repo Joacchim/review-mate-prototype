@@ -56,7 +56,7 @@ far to go**: some claims are settled by reading the lines already in front of yo
 you to follow the call into the rest of the repository, check the caller, or read the test that was
 supposed to cover it. Verifying too shallowly and answering confidently is the failure that matters
 here — a reviewer who asked to have something checked is telling you they do not trust the first
-reading. Reply in that subject's conversation, and say what you actually did to check, so a
+reading. Reply in that subject's chat, and say what you actually did to check, so a
 "confirmed" can be weighed. Saying the claim does not hold up is the useful answer, not a rude one.
 
 A **404 means the server predates that route**, not that the list is empty — read it as *unknown* and
@@ -164,7 +164,7 @@ asks; `access_state` says what came of every ask; `wait_for_access` blocks until
   repository and name what you could not check, rather than waiting on it or going quiet.
 - **`failed` is worth reporting to the reviewer.** They approved something and it did not happen;
   the error says why (usually a name that resolves to no repository). Ask once with a better name,
-  in the conversation, rather than re-requesting blindly.
+  in the chat, rather than re-requesting blindly.
 
 ## Why bounded, not a daemon
 

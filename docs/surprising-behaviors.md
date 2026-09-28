@@ -10,7 +10,7 @@ If you find yourself explaining one of these twice, it belongs here.
 
 Asking the agent to verify something records an ask, and **any** message it posts about that subject
 afterwards closes it — whether or not it verified anything. A reviewer who asks "double-check this"
-and then asks "what does this function do?" in the same conversation will see the check counted as
+and then asks "what does this function do?" in the same chat will see the check counted as
 answered by the answer to the second question.
 
 The alternative was a verb for the agent to close a check with, which is a second way of saying what
@@ -18,14 +18,14 @@ a message already says, and which an agent could forget to call — leaving the 
 work that was done. Waiting on nothing is the worse failure, so this is the side the ambiguity falls
 on. See `_answered` in `review_mate/view/asks.py`.
 
-## A conversation outlives the discussion it was about
+## A chat outlives the discussion it was about
 
 When a host re-sync drops a thread, what the reviewer wrote about it privately stays. The
-conversation is then reachable on the wire and from no rail, which costs an orphan.
+chat is then reachable on the wire and from no rail, which costs an orphan.
 
 The host reconciling is not the reviewer discarding — a discussion can leave because someone
 resolved and deleted it, or because a system note was filtered — and losing the reviewer's own notes
-to that is the worse mistake. Explained in `docs/architecture.md`, "Conversations".
+to that is the worse mistake. Explained in `docs/architecture.md`, "Chats".
 
 ## A request survives the code it was about
 
@@ -62,7 +62,7 @@ Nothing resolves those shas, so nothing breaks: the mark that matters is that a 
 which is what distinguishes a subject the agent answered from one whose lines merely drifted. The
 sha is there to say what the code became at the time, and after a fold the honest answer for the
 latest change is the new head, which is what gets recorded. The alternative was not folding, which
-would leave the reviewer a branch shaped like the conversation instead of like the work.
+would leave the reviewer a branch shaped like the chat instead of like the work.
 
 ## Submitting advances the watermark even when it posts nothing
 

@@ -1,12 +1,12 @@
-"""The `chat` scope family: the conversations a review is holding.
+"""The `chat` scope family: the chats a review is holding with the agent.
 
-`chat:<sid>` is an index — one summary row per conversation that has anything in it, plus the
+`chat:<sid>` is an index — one summary row per chat that has anything in it, plus the
 review's own, and the agent state this session is in. `chat:<sid>:review` and
-`chat:<sid>:<kind>:<id>` carry one conversation's messages.
+`chat:<sid>:<kind>:<id>` carry one chat's messages.
 
-Split for the same reason the diff is: a client subscribes to the conversation it has open, so a
+Split for the same reason the diff is: a client subscribes to the chat it has open, so a
 message in one does not republish the others, and the index it always holds stays small enough to
-arrive on every turn. Measured against carrying every conversation in one view, or carrying them on
+arrive on every turn. Measured against carrying every chat in one view, or carrying them on
 the rail, on a review-sized load: 2.9 KB here for a message in the open subject and 1.0 KB for one
 elsewhere, against 8.6 KB and 14.7 KB.
 
@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from review_mate.session.state import SessionStatus, Subject, SubjectKind
 from review_mate.view.asks import AgentState, agent_state, outstanding
 
-REVIEW = "review"      # the conversation about the change as a whole, anchored to nothing
+REVIEW = "review"      # the chat about the change as a whole, anchored to nothing
 
 
 class ChatMessageView(BaseModel):
@@ -30,8 +30,8 @@ class ChatMessageView(BaseModel):
     created_at: str = ""
 
 
-class ConversationRow(BaseModel):
-    """A conversation, as the index lists it."""
+class ChatRow(BaseModel):
+    """A chat, as the index lists it."""
     kind: str                      # review | highlight | insight | thread
     id: str = ""                   # the subject's id; empty for the review's own
     scope: str                     # the name to subscribe to for its messages
@@ -47,10 +47,10 @@ class ChatIndexView(BaseModel):
     session: str
     state: str = "ready"           # ready | unknown-session
     agent: AgentState = Field(default_factory=AgentState)
-    conversations: list[ConversationRow] = Field(default_factory=list)
+    chats: list[ChatRow] = Field(default_factory=list)
 
 
-class ConversationView(BaseModel):
+class ChatView(BaseModel):
     session: str
     state: str = "ready"           # ready | unknown-session | malformed-name
     kind: str = REVIEW
@@ -84,7 +84,7 @@ def scope_name(session_id: str, anchor: Subject | None) -> str:
 
 
 class ChatScopes:
-    """Builds the index and each conversation. Never reads the host; `watcher` is a local fact."""
+    """Builds the index and each chat. Never reads the host; `watcher` is a local fact."""
 
     def __init__(self, manager, watcher=None) -> None:
         self._manager = manager
@@ -99,7 +99,7 @@ class ChatScopes:
             return self._conversation(session_id, None)
         if ident and kind in {k.value for k in SubjectKind}:
             return self._conversation(session_id, Subject(kind=SubjectKind(kind), id=ident))
-        return ConversationView(session=session_id, state="malformed-name").model_dump(mode="json")
+        return ChatView(session=session_id, state="malformed-name").model_dump(mode="json")
 
     # --- the index -----------------------------------------------------------
 
@@ -117,7 +117,7 @@ class ChatScopes:
         rows = []
         for (kind, ident), messages in by_address.items():
             last = messages[-1] if messages else None
-            rows.append(ConversationRow(
+            rows.append(ChatRow(
                 kind=kind, id=ident,
                 scope=(f"chat:{session_id}:{kind}" if ident == ""
                        else f"chat:{session_id}:{kind}:{ident}"),
@@ -131,18 +131,18 @@ class ChatScopes:
         # the review's own first, then by most recent — a client renders the order it is given
         rows.sort(key=lambda r: (r.kind != REVIEW, _descending(r.last_at)))
         return ChatIndexView(session=session_id, agent=agent_state(asks, self._watcher_now()),
-                             conversations=rows).model_dump(mode="json")
+                             chats=rows).model_dump(mode="json")
 
-    # --- one conversation ----------------------------------------------------
+    # --- one chat ----------------------------------------------------
 
     def _conversation(self, session_id: str, anchor: Subject | None) -> dict:
         snapshot = self._snapshot(session_id)
         kind, ident = _address(anchor)
         if snapshot is None:
-            return ConversationView(session=session_id, state="unknown-session", kind=kind,
+            return ChatView(session=session_id, state="unknown-session", kind=kind,
                                     id=ident).model_dump(mode="json")
         messages = [m for m in snapshot.messages if _address(m.anchor) == (kind, ident)]
-        return ConversationView(
+        return ChatView(
             session=session_id, kind=kind, id=ident,
             owed=bool(messages and messages[-1].role == "user"),
             checking=(kind, ident) in _being_checked(outstanding(snapshot)),
@@ -164,5 +164,5 @@ class ChatScopes:
 
 
 def _descending(value: str) -> tuple:
-    """Sort key that puts the most recent first, with never-used conversations last."""
+    """Sort key that puts the most recent first, with never-used chats last."""
     return (value == "", tuple(-ord(c) for c in value))

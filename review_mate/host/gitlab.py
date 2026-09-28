@@ -316,7 +316,7 @@ class GitLabProvider:
 
     async def fetch_threads(self, ref: MRRef) -> list[ReviewThread]:
         """The MR's discussions, mapped to the host-neutral review model — the read side of the
-        thread-conversation surface (used by initial load and by on-demand refresh)."""
+        discussion surface (used by initial load and by on-demand refresh)."""
         pid = quote(ref.project, safe="")
         discussions = await self._get_paged(f"/projects/{pid}/merge_requests/{ref.iid}/discussions")
         # drop system-note-only discussions (approvals, pushes, label changes, …) — not review threads
