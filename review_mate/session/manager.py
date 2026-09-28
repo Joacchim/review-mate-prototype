@@ -144,7 +144,7 @@ class SessionManager:
         await writer.submit(ApplyFiles(files=payload.files), Origin.SYSTEM)
         for thread in payload.threads:
             await writer.submit(ApplyThread(thread=thread), Origin.SYSTEM)
-        await self._materialize_checkout(session_id, writer, payload)
+        await self.materialize_checkout(session_id, writer, payload)
 
     def source_for(self, ref):
         """The source that understands this kind of reference.
@@ -155,10 +155,14 @@ class SessionManager:
         """
         return self._local_source if isinstance(ref, LocalRef) else self._mr_source
 
-    async def _materialize_checkout(self, session_id, writer, payload) -> None:
-        """Eagerly check out the MR on disk (a worktree off the bare mirror) so the agent can run
+    async def materialize_checkout(self, session_id, writer, payload) -> None:
+        """Check out the change on disk (a worktree off the bare mirror) so the agent can run
         code-graph / LSP / grep against real files, not just the API. Best-effort: a clone/auth
         failure leaves checkout_path unset and the review still works over the host API.
+
+        Called on load and again whenever the change is re-read, because a worktree is cut at a
+        fixed sha and the head moves under it: after a push, the tree on disk holds the code the
+        reviewer is no longer reviewing, and nothing about `checkout_path` says so.
 
         A payload that names its own checkout is already on disk and is taken at its word — a branch
         being reviewed before it leaves this machine is being *edited* while it is reviewed, so a
@@ -173,6 +177,9 @@ class SessionManager:
         clone_url = payload.clone_url or payload.mr.clone_url
         if self._workspace is None or not clone_url or not payload.mr.sha:
             return
+        # whatever we hold is at the previous head. Release it first: keeping it would leak a
+        # worktree per push, and the handle we are about to overwrite is the only way to remove it.
+        await self._release_checkout(session_id)
         try:
             repo = RepoRef(host=payload.mr.host, project=payload.mr.project, clone_url=clone_url)
             result = self._workspace.materialize(repo, payload.mr.sha)

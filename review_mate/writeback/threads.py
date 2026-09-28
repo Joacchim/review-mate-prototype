@@ -71,6 +71,9 @@ class ThreadVerbs:
             await writer.submit(ApplyMRMetadata(mr=payload.mr), Origin.SYSTEM)
             await writer.submit(ApplyFiles(files=payload.files), Origin.SYSTEM)
             await writer.submit(ReplaceThreads(threads=payload.threads), Origin.SYSTEM)
+            # the head may have moved, and the worktree on disk is cut at the old one — an agent
+            # reading `checkout_path` would be reading code that is no longer under review
+            await self._manager.materialize_checkout(session_id, writer, payload)
             return {"ok": True, "head": payload.mr.sha, "threads": len(payload.threads)}
         # a host that cannot re-read the whole change can still re-read the discussions
         mirrored = await self._remirror(writer, ref)

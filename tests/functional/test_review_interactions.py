@@ -479,3 +479,58 @@ async def test_resyncing_drops_the_commit_list_it_read(tmp_path):
         topics.forget_commits(sid)
         assert (await topics.build_commits(sid))["state"] == "idle"
     await manager.shutdown()
+
+
+class RecordingWorkspace:
+    """Hands out a worktree per sha and records what it was asked to make and to drop."""
+
+    def __init__(self):
+        self.made, self.released = [], []
+
+    async def materialize(self, repo, commit):
+        from review_mate.contracts import CheckoutHandle
+        self.made.append(commit)
+        return CheckoutHandle(repo=repo.project, commit=commit, path=f"/wt/{commit}")
+
+    async def release(self, handle):
+        self.released.append(handle.commit)
+
+
+async def test_resync_moves_the_checkout_to_the_new_head(tmp_path):
+    """A worktree is cut at a fixed sha, so a push leaves the tree on disk holding the code that is
+    no longer under review — and `checkout_path` says nothing about it, so an agent reading there
+    reviews the wrong code with no signal.
+
+    The old worktree is released in the same step. Without that every push leaks one, and the handle
+    being overwritten is the only way to remove it.
+    """
+    from review_mate.contracts import MRPayload
+
+    heads = iter(["head-2", "head-3"])
+
+    class Moving(StubProvider):
+        async def load(self, ref):
+            return MRPayload(mr=MR.model_copy(update={"sha": next(heads),
+                                                      "clone_url": "https://gl/g/p.git"}),
+                             files=[], threads=[], clone_url="https://gl/g/p.git")
+
+    workspace = RecordingWorkspace()
+    provider = Moving()
+    manager = SessionManager(root=tmp_path / "s", workspace=workspace, mr_source=provider)
+    app = create_app(manager=manager, with_mcp=False, provider=provider,
+                     writeback=Writeback(manager, StubHostWriter()))
+    sid = await manager.create()
+    await manager.load(sid, MRRef(host="gitlab", project="g/p", iid=42))
+    assert workspace.made == ["head-2"]
+    assert manager.get(sid).snapshot().checkout_path == "/wt/head-2"
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        assert (await _cmd(client, "session.resync", session=sid)).json()["head"] == "head-3"
+
+    snapshot = manager.get(sid).snapshot()
+    assert snapshot.mr.sha == "head-3"
+    assert snapshot.checkout_path == "/wt/head-3"      # the tree follows the change
+    assert workspace.made == ["head-2", "head-3"]
+    assert workspace.released == ["head-2"]            # and the old one does not pile up
+    await manager.shutdown()
