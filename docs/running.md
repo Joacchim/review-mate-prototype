@@ -177,10 +177,20 @@ is the main reason to run it as a unit rather than starting it by hand.
 
 ## Troubleshooting
 
-- **An install did not bring the change you were expecting** — `uv tool install` from a `git+` URL
-  resolves the repository's **default branch**. A fix that has not landed there yet is not in what
-  you installed, however recently you ran it. Install from a checkout of the branch you want
-  (`uv tool install --force '.[tui]'` inside it) to get that one instead.
+- **An install did not bring the change you were expecting** — two separate causes, and the
+  second is the quiet one.
+  - `uv tool install` from a `git+` URL resolves the repository's **default branch**. A fix that
+    has not landed there yet is not in what you installed, however recently you ran it. Install
+    from a checkout of the branch you want to get that one instead.
+  - Installing from a checkout, uv reuses a **cached build** of that directory, and the project
+    version alone does not invalidate it. A plain `uv tool install '.[tui]'` — with or without
+    `--force` — will rewrite every file and still deploy the build it made days ago. Use
+    `uv tool install --reinstall --force '.[tui]'`; `--reinstall` implies `--refresh`, which is
+    what actually rebuilds.
+
+  Either way, confirm what landed rather than trusting the command: the dist-info's
+  `uv_cache.json` carries the timestamp of the build that was used, and a `grep` of the installed
+  tree for something the change introduced settles it in one line.
 - **The service exits immediately with `No module named 'mcp.server.fastmcp'`** — an installed
   build resolved a newer major of the `mcp` package than it was written against. Reinstall with
   `--force` from a version that caps it; `systemctl --user status review-mate` and

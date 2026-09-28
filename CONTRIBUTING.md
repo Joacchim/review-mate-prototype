@@ -15,8 +15,15 @@ To try the packaged form — what a user gets, executables and all — install f
 than from the URL in the README, which resolves the repository's default branch:
 
 ```bash
-uv tool install --force '.[tui]'
+uv tool install --reinstall --force '.[tui]'
 ```
+
+**`--reinstall` is not optional here, and `--force` does not stand in for it.** `--force` replaces
+the installed tool; it says nothing about where the build came from. uv caches the wheel it builds
+from a directory, and the project version alone does not invalidate that cache — so a plain install
+from a checkout happily redeploys a build from days ago, writing fresh files with stale content.
+`--reinstall` implies `--refresh`, which is what rebuilds. Verified by installing into an empty
+tool directory: without it, a checkout carrying a day of commits deployed none of them.
 
 That is also how to test a change to packaging, or a fix that has not landed on the default branch
 yet. For running it as a service, see [running it](docs/running.md).
@@ -51,7 +58,9 @@ the difference in prose.
 
 `uv.lock` pins what a checkout gets. It does **not** pin what an install gets: `uv tool install`
 resolves afresh, so a dependency with no upper bound picks up whatever major is current that day.
-A green checkout is therefore not evidence that `uv tool install` works.
+A green checkout is therefore not evidence that `uv tool install` works — nor is a successful
+install evidence that it installed *this* code. Check the artifact, not the command's exit status:
+`grep` the installed tree under `~/.local/share/uv/tools/` for something the change introduced.
 
 So direct dependencies whose API we reach into are capped at the major they were built against, and
 raising a cap is a migration with its own commit rather than a bump. A boundary test holds the line
