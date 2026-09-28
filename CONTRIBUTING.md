@@ -60,7 +60,9 @@ the difference in prose.
 resolves afresh, so a dependency with no upper bound picks up whatever major is current that day.
 A green checkout is therefore not evidence that `uv tool install` works — nor is a successful
 install evidence that it installed *this* code. Check the artifact, not the command's exit status:
-`grep` the installed tree under `~/.local/share/uv/tools/` for something the change introduced.
+`grep` the installed tree under `~/.local/share/uv/tools/` for a line the change introduced. That
+is the only check that has been shown to tell the truth; the dist-info records a source timestamp
+that stays old across a correct install, so it reports stale on a build that is fine.
 
 So direct dependencies whose API we reach into are capped at the major they were built against, and
 raising a cap is a migration with its own commit rather than a bump. A boundary test holds the line

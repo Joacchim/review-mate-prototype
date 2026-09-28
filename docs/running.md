@@ -188,9 +188,10 @@ is the main reason to run it as a unit rather than starting it by hand.
     `uv tool install --reinstall --force '.[tui]'`; `--reinstall` implies `--refresh`, which is
     what actually rebuilds.
 
-  Either way, confirm what landed rather than trusting the command: the dist-info's
-  `uv_cache.json` carries the timestamp of the build that was used, and a `grep` of the installed
-  tree for something the change introduced settles it in one line.
+  Either way, confirm what landed rather than trusting the command — and confirm it by grepping
+  the installed tree under `~/.local/share/uv/tools/` for a line the change introduced. Nothing in
+  the dist-info answers this: its `uv_cache.json` timestamp describes the cached source and stays
+  old across a correct install, so reading it as freshness reports a stale build that is fine.
 - **The service exits immediately with `No module named 'mcp.server.fastmcp'`** — an installed
   build resolved a newer major of the `mcp` package than it was written against. Reinstall with
   `--force` from a version that caps it; `systemctl --user status review-mate` and
