@@ -48,7 +48,7 @@ def test_an_active_control_can_still_be_read(diff, page, staged, theme):
 def test_a_filter_can_still_be_read_once_it_is_the_one_chosen(diff, page, staged):
     staged.put(review_with_highlights("s1"))
     diff.load("s1")
-    page.wait_for_selector("#railseg .btn")
-    page.locator("#railseg .btn", has_text="Comments").click()
+    page.wait_for_selector("#annseg .btn")
+    page.locator("#annseg .btn", has_text="Comments").click()
     page.wait_for_timeout(200)
     assert _unreadable(page) == []

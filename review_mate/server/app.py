@@ -41,7 +41,7 @@ PRESENCE_TICK = 5.0
 
 # The scope families named after a session, rather than after the fleet. A review's lifetime is
 # decided by whether any of these is being read, so a new one belongs here and nowhere else.
-SESSION_FAMILIES = ("diff", "blob", "rail", "chat", "review", "threads", "access",
+SESSION_FAMILIES = ("diff", "blob", "annotations", "chat", "review", "threads", "access",
                     "tree", "commits")
 
 
@@ -101,7 +101,7 @@ def create_app(manager: SessionManager | None = None,
     from review_mate.view.bus import ViewBus
     from review_mate.view.chat import ChatScopes
     from review_mate.view.diffscope import BlobScopes, DiffScopes
-    from review_mate.view.rail import RailScope
+    from review_mate.view.annotations import AnnotationsScope
     from review_mate.view.review import ReviewScope
     from review_mate.view.access import AccessScope
     from review_mate.view.browse import BrowseScopes
@@ -250,9 +250,9 @@ def create_app(manager: SessionManager | None = None,
     bus.register_family("diff", diff_scopes.build)
     blob_scopes = BlobScopes(manager, provider=provider, publish=bus.publish)
     bus.register_family("blob", blob_scopes.build)
-    rail_scope = RailScope(manager, provider=provider,
-                           publish=lambda session_id: bus.publish(f"rail:{session_id}"))
-    bus.register_family("rail", rail_scope.build)
+    annotations_scope = AnnotationsScope(manager, provider=provider,
+                           publish=lambda session_id: bus.publish(f"annotations:{session_id}"))
+    bus.register_family("annotations", annotations_scope.build)
     chat_scopes = ChatScopes(manager, watcher=watcher)
     bus.register_family("chat", chat_scopes.build)
     review_scope = ReviewScope(manager, provider=provider, kb=kb)
@@ -340,7 +340,7 @@ def create_app(manager: SessionManager | None = None,
         from review_mate.view.agent import AgentView
         # the agent reads the same folded scopes the clients do — the same instances, so it shares
         # their caches and cannot drift from what the reviewer is looking at
-        agent_view = AgentView(manager, rail=rail_scope, chat=chat_scopes,
+        agent_view = AgentView(manager, annotations=annotations_scope, chat=chat_scopes,
                                threads=threads_scope, access=access_scope, diffs=diff_scopes)
         bridge = AgentBridge(manager, broker=broker, provider=provider, view=agent_view)
         mcp_app = build_mcp_server(bridge, mountable=True).streamable_http_app()
@@ -360,7 +360,7 @@ def create_app(manager: SessionManager | None = None,
         await hub.aclose()
         await diff_scopes.aclose()
         await blob_scopes.aclose()
-        await rail_scope.aclose()
+        await annotations_scope.aclose()
         await _stop_pumps()
         await manager.shutdown()
 
@@ -374,7 +374,7 @@ def create_app(manager: SessionManager | None = None,
     app.state.bridge = bridge if with_mcp else None
     app.state.diff_scopes = diff_scopes
     app.state.blob_scopes = blob_scopes
-    app.state.rail_scope = rail_scope
+    app.state.annotations_scope = annotations_scope
     app.state.chat_scopes = chat_scopes
     # whether the presence ticker is running — a test asserts it starts and stops with the
     # watching, which is otherwise invisible from outside

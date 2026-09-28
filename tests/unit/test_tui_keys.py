@@ -64,7 +64,7 @@ def views():
                                          "new_count": 2, "heading": "f()", "gap_before": 0,
                                          "lines": [line("context", 1, 1, "def f():"),
                                                    line("added", None, 2, "    return 1")]}]},
-        "rail:s1": {"session": "s1", "state": "ready", "highlights": [], "insights": []},
+        "annotations:s1": {"session": "s1", "state": "ready", "highlights": [], "insights": []},
         "chat:s1": {"session": "s1", "state": "ready", "chats": [],
                     "agent": {"state": "watching", "stale": False, "since": None,
                               "attached": True, "parked": False, "last_seen": None, "asks": []}},
@@ -142,7 +142,7 @@ async def test_escape_cancels_a_selection_before_it_leaves_the_review():
 
 async def test_a_asks_about_the_highlight_in_focus():
     shell, client = shell_on_a_review()
-    client.views["rail:s1"]["highlights"] = [
+    client.views["annotations:s1"]["highlights"] = [
         {"id": "h1", "n": 1, "file": "a.py", "side": "new", "start": 2, "end": 2,
          "question": None, "status": "open", "stale": False, "comment_state": "context",
          "created_at": "", "context": {"state": "idle", "blame": [], "linked_issues": [],
@@ -175,8 +175,8 @@ async def test_keys_that_belong_to_the_hub_do_nothing_in_a_review():
 
 
 def with_highlights(shell, client, count=2):
-    """Put highlights in the rail and focus it, as a reader picking a subject would."""
-    client.views["rail:s1"] = {
+    """Put highlights in the annotations and focus it, as a reader picking a subject would."""
+    client.views["annotations:s1"] = {
         "session": "s1", "state": "ready", "insights": [],
         "highlights": [{"id": f"h{n}", "n": n + 1, "file": "a.py", "side": "new",
                         "start": 1 + n, "end": 1 + n, "question": None, "status": "open",
@@ -186,7 +186,7 @@ def with_highlights(shell, client, count=2):
                                                       "linked_issues": [], "error": ""},
                         "card": None}
                        for n in range(count)]}
-    shell.diff.focus = "rail"
+    shell.diff.focus = "annotations"
 
 
 async def test_c_opens_the_composer_and_enter_sends_what_was_written():
@@ -241,7 +241,7 @@ async def test_navigation_keys_are_text_while_writing():
     assert shell.diff.focus == before
 
 
-async def test_moving_the_rail_cursor_moves_the_conversation_watched():
+async def test_moving_the_annotation_cursor_moves_the_chat_watched():
     shell, client = shell_on_a_review()
     with_highlights(shell, client)
     assert shell.diff.chat_scope() == "chat:s1:highlight:h0"
@@ -256,10 +256,10 @@ async def test_moving_the_rail_cursor_moves_the_conversation_watched():
 # text goes and which keys commit it — the two must not blur, because one is private and the other
 # is what the merge request will read.
 
-def _rail_on(shell, highlight):
-    shell.client.views["rail:s1"] = {"session": "s1", "state": "ready",
+def _annotations_on(shell, highlight):
+    shell.client.views["annotations:s1"] = {"session": "s1", "state": "ready",
                                      "highlights": [highlight], "insights": []}
-    shell.diff.focus = "rail"
+    shell.diff.focus = "annotations"
 
 
 def hl(id="h1", n=1, comment_state="context"):
@@ -269,9 +269,9 @@ def hl(id="h1", n=1, comment_state="context"):
             "context": {"state": "idle", "blame": [], "linked_issues": [], "error": ""}}
 
 
-async def test_d_opens_a_comment_on_whatever_the_rail_points_at():
+async def test_d_opens_a_comment_on_whatever_the_annotations_point_at():
     shell, _ = shell_on_a_review()
-    _rail_on(shell, hl())
+    _annotations_on(shell, hl())
     press(shell, "d")
     assert shell.composing and shell.compose_kind == "draft"
     assert "comment>" in "".join(t for _, t in shell.compose_prompt())
@@ -279,7 +279,7 @@ async def test_d_opens_a_comment_on_whatever_the_rail_points_at():
 
 async def test_with_nothing_selected_the_comment_is_the_mr_summary():
     shell, _ = shell_on_a_review()
-    press(shell, "d")                          # the rail is unfocused, so this is MR-level
+    press(shell, "d")                          # the annotations is unfocused, so this is MR-level
     assert "note>" in "".join(t for _, t in shell.compose_prompt())
     shell.compose.text = "reads well overall"
     assert shell.compose_submission() == ("session", {"type": "save_draft", "highlight_id": None,
@@ -288,7 +288,7 @@ async def test_with_nothing_selected_the_comment_is_the_mr_summary():
 
 async def test_saving_a_comment_sends_it_anchored():
     shell, client = shell_on_a_review()
-    _rail_on(shell, hl())
+    _annotations_on(shell, hl())
     press(shell, "d")
     shell.compose.text = "this needs a test"
     press(shell, "c-s")
@@ -319,7 +319,7 @@ async def test_a_message_still_sends_on_enter():
 async def test_reopening_a_comment_brings_back_what_was_written():
     """Saving again is a correction, not a second comment — so the editor starts from the text."""
     shell, _ = shell_on_a_review()
-    _rail_on(shell, hl(comment_state="comment"))
+    _annotations_on(shell, hl(comment_state="comment"))
     shell.client.views["review:s1"] = dict(
         shell.client.views["review:s1"],
         drafts=[{"id": "d1", "highlight_id": "h1", "body": "half a thought", "suggestion": None,
@@ -330,7 +330,7 @@ async def test_reopening_a_comment_brings_back_what_was_written():
 
 async def test_x_discards_the_comment_prepared_here():
     shell, client = shell_on_a_review()
-    _rail_on(shell, hl(comment_state="comment"))
+    _annotations_on(shell, hl(comment_state="comment"))
     shell.client.views["review:s1"] = dict(
         shell.client.views["review:s1"],
         drafts=[{"id": "d1", "highlight_id": "h1", "body": "never mind", "suggestion": None,
@@ -342,7 +342,7 @@ async def test_x_discards_the_comment_prepared_here():
 
 async def test_x_with_nothing_prepared_does_nothing():
     shell, client = shell_on_a_review()
-    _rail_on(shell, hl())
+    _annotations_on(shell, hl())
     press(shell, "x")
     await settle()
     assert client.session_commands == []
@@ -350,7 +350,7 @@ async def test_x_with_nothing_prepared_does_nothing():
 
 async def test_escape_abandons_a_comment_without_saving_it():
     shell, client = shell_on_a_review()
-    _rail_on(shell, hl())
+    _annotations_on(shell, hl())
     press(shell, "d")
     shell.compose.text = "half-written"
     press(shell, "escape")
@@ -605,11 +605,11 @@ async def test_with_nothing_asked_there_is_nothing_to_decide():
 # --- asking for a pass over the whole change ----------------------------------
 
 def _pass_state(shell, **fields):
-    rail = dict(shell.client.views.get("rail:s1") or
+    annotations = dict(shell.client.views.get("annotations:s1") or
                 {"session": "s1", "state": "ready", "highlights": [], "insights": []})
-    rail["review_pass"] = {"requested": False, "at": "", "sha": None,
+    annotations["review_pass"] = {"requested": False, "at": "", "sha": None,
                            "stale": False, "available": True, **fields}
-    shell.client.views["rail:s1"] = rail
+    shell.client.views["annotations:s1"] = annotations
 
 
 async def test_asking_for_a_review_pass():
@@ -643,13 +643,13 @@ async def test_a_pass_the_change_moved_past_says_so_and_can_be_asked_again():
 
 def _with_insight(criticality="high"):
     shell, client = shell_on_a_review()
-    client.views["rail:s1"] = {
+    client.views["annotations:s1"] = {
         "session": "s1", "state": "ready", "highlights": [],
         "insights": [{"id": "c1", "body": "this name is confusing", "citations": [],
                       "status": "", "created_at": "",
                       "label": {"theme": "bug", "criticality": criticality, "about": "",
                                 "by": "agent"}}]}
-    shell.diff.focus = "rail"
+    shell.diff.focus = "annotations"
     return shell, client
 
 
@@ -689,7 +689,7 @@ async def test_the_prompt_takes_the_keyboard_while_it_is_open():
         press(shell, "n")
 
 
-async def test_nothing_happens_on_a_highlight_or_off_the_rail():
+async def test_nothing_happens_on_a_highlight_or_off_the_annotations():
     """Only an insight carries a label, so only an insight offers the prompt."""
     shell, _client = shell_on_a_review()
     shell.diff.focus = "body"

@@ -7,7 +7,7 @@ review's own, and the agent state this session is in. `chat:<sid>:review` and
 Split for the same reason the diff is: a client subscribes to the chat it has open, so a
 message in one does not republish the others, and the index it always holds stays small enough to
 arrive on every turn. Measured against carrying every chat in one view, or carrying them on
-the rail, on a review-sized load: 2.9 KB here for a message in the open subject and 1.0 KB for one
+the annotations, on a review-sized load: 2.9 KB here for a message in the open subject and 1.0 KB for one
 elsewhere, against 8.6 KB and 14.7 KB.
 
 The agent state rides the index rather than a scope of its own because it is what the chat surface

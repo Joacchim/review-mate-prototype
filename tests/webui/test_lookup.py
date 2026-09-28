@@ -97,5 +97,5 @@ def test_the_link_an_agent_hands_over_actually_opens_the_review(page, base_url, 
     staged.put(review_with_highlights("s1"))
     handed = AgentBridge(staged, base_url=base_url).session_url("s1")
     page.goto(handed)          # exactly the link an agent would give them
-    page.wait_for_selector("#rail .hrow")
+    page.wait_for_selector("#ann .hrow")
     assert page.locator("#sid").inner_text().startswith("s1")

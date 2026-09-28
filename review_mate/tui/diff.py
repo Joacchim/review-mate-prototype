@@ -48,7 +48,7 @@ AGENT_STYLE = {"working": "class:info", "stalled": "class:error",
 AGENT_LABEL = {"working": "Claude is on it", "stalled": "nothing is listening",
                "watching": "Claude is watching", "off": "no agent"}
 
-# whether a line already has a comment prepared for it, or one already sent — the rail says so
+# whether a line already has a comment prepared for it, or one already sent — the annotations say so
 # without the reviewer opening anything
 COMMENT_MARK = {"comment": ("class:info", "✎ "), "posted": ("class:ok", "✓ ")}
 # how much a finding matters, in the column a reviewer scans to decide what to open
@@ -103,9 +103,9 @@ class DiffScreen:
         self.file_index = 0
         self.scroll = 0
         self.body_cursor = 0          # index into the rendered body rows
-        self.rail_index = 0
+        self.annotation_index = 0
         self.anchor: int | None = None   # a selection in progress, at this new-side line
-        self.focus = "files"          # files | body | rail | threads
+        self.focus = "files"          # files | body | annotations | threads
         self.thread_index = 0
         self.thread_filter = "unresolved"   # unresolved | all
         self.browsing = False         # the file list shows the whole repository, not just the diff
@@ -139,8 +139,8 @@ class DiffScreen:
         return f"{self.listing}:{row['path']}"
 
     @property
-    def rail(self) -> dict:
-        return self.client.views.get(f"rail:{self.session}") or {}
+    def annotations(self) -> dict:
+        return self.client.views.get(f"annotations:{self.session}") or {}
 
     @property
     def chat_index(self) -> dict:
@@ -275,7 +275,7 @@ class DiffScreen:
         return 0
 
     def draft_body(self) -> str:
-        """The comment already prepared for whatever the rail points at, so editing one reopens it.
+        """The comment already prepared for whatever the annotations point at, so editing one reopens it.
 
         Empty when there is none, which is also what the composer wants to start from.
         """
@@ -297,7 +297,7 @@ class DiffScreen:
         if self.focus == "threads":
             thread = self.current_thread()
             return {"kind": "thread", "id": thread["id"]} if thread else None
-        row = self.rail_row() if self.focus == "rail" else None
+        row = self.annotation_row() if self.focus == "annotations" else None
         return None if row is None else {"kind": row["kind"], "id": row["data"]["id"]}
 
     def chat_scope(self) -> str:
@@ -311,8 +311,8 @@ class DiffScreen:
 
     @property
     def highlights(self) -> list[dict]:
-        """This session's highlights, newest last. The rail is session-wide; the overlay selects."""
-        return self.rail.get("highlights", [])
+        """This session's highlights, newest last. The annotations are session-wide; the overlay selects."""
+        return self.annotations.get("highlights", [])
 
     def _insight_order(self) -> list[dict]:
         """Worst first, unclassified last — the same reading the browser's pin gives.
@@ -324,8 +324,8 @@ class DiffScreen:
         return sorted(self.insights,
                       key=lambda c: rank.get((c.get("label") or {}).get("criticality"), 3))
 
-    def rail_rows(self) -> list[dict]:
-        """What the rail cursor moves over: the change's own findings, then what was asked.
+    def annotation_rows(self) -> list[dict]:
+        """What the annotation cursor moves over: the change's own findings, then what was asked.
 
         Insights come first for the reason the browser pins them above its index — they are about
         the change rather than a line, so a run of highlights must not bury them. One list rather
@@ -335,14 +335,14 @@ class DiffScreen:
         return ([{"kind": "insight", "data": card} for card in self._insight_order()]
                 + [{"kind": "highlight", "data": h} for h in self.highlights])
 
-    def rail_row(self) -> dict | None:
-        rows = self.rail_rows()
-        return rows[max(0, min(self.rail_index, len(rows) - 1))] if rows else None
+    def annotation_row(self) -> dict | None:
+        rows = self.annotation_rows()
+        return rows[max(0, min(self.annotation_index, len(rows) - 1))] if rows else None
 
     @property
     def insights(self) -> list[dict]:
         """What Claude found about the change as a whole — anchored to no line."""
-        return self.rail.get("insights", [])
+        return self.annotations.get("insights", [])
 
     def highlights_here(self) -> list[dict]:
         row = self.current
@@ -355,7 +355,7 @@ class DiffScreen:
         return lines
 
     def wanted(self) -> list[str]:
-        scopes = [self.listing, f"rail:{self.session}", f"chat:{self.session}",
+        scopes = [self.listing, f"annotations:{self.session}", f"chat:{self.session}",
                   f"review:{self.session}", f"threads:{self.session}", f"access:{self.session}",
                   self.chat_scope()]
         if self.browsing:
@@ -401,10 +401,10 @@ class DiffScreen:
         out.extend(self._file_pane())
         out.append(("", "\n"))
         out.extend(self._body_pane())
-        out.extend(self._rail_pane())
+        out.extend(self._annotation_pane())
         out.extend(self._thread_pane())
         out.extend(self._chat_pane())
-        error = self.client.errors.get(f"rail:{self.session}") or self.client.last_command_error
+        error = self.client.errors.get(f"annotations:{self.session}") or self.client.last_command_error
         if error:
             out.append(("class:error", f"\n {error}\n"))
         out.append(("class:footer", self._footer()))
@@ -525,17 +525,17 @@ class DiffScreen:
                 out.extend(row["pieces"])
         return out
 
-    def _rail_pane(self) -> list[tuple[str, str]]:
-        rows = self.rail_rows()
+    def _annotation_pane(self) -> list[tuple[str, str]]:
+        rows = self.annotation_rows()
         out: list[tuple[str, str]] = [("class:header", "\n Asked\n")]
         if not rows:
             out.append(("class:muted", "   nothing yet \u2014 v selects lines, v again asks\n"))
             return out
-        self.rail_index = max(0, min(self.rail_index, len(rows) - 1))
-        top = max(0, min(self.rail_index - RAIL_PANE_ROWS // 2, len(rows) - RAIL_PANE_ROWS))
+        self.annotation_index = max(0, min(self.annotation_index, len(rows) - 1))
+        top = max(0, min(self.annotation_index - RAIL_PANE_ROWS // 2, len(rows) - RAIL_PANE_ROWS))
         for index in range(top, min(top + RAIL_PANE_ROWS, len(rows))):
             row = rows[index]
-            selected = index == self.rail_index and self.focus == "rail"
+            selected = index == self.annotation_index and self.focus == "annotations"
             if row["kind"] == "insight":
                 out.extend(self._insight_line(row["data"], selected))
                 continue
@@ -582,7 +582,7 @@ class DiffScreen:
                 ("class:ok", card.get("body", "").splitlines()[0][:60] + _moved(card) + "\n")]
 
     def review_pass(self) -> dict:
-        return self.rail.get("review_pass") or {}
+        return self.annotations.get("review_pass") or {}
 
     def _pass_badge(self) -> list[tuple[str, str]]:
         """What the MR-wide pass is doing. Stale says so rather than going quiet."""
@@ -710,7 +710,7 @@ class DiffScreen:
             return "\n j/k extend   v ask about the selection   esc cancel\n"
         if self.focus == "body":
             return "\n tab pane   j/k line   v select   n/p file   m diff view   b back   q quit\n"
-        if self.focus == "rail":
+        if self.focus == "annotations":
             return ("\n tab pane   j/k move   a ask Claude   D double-check   L label   c write"
                     "   d comment   S send   b back   q quit\n")
         if self.focus == "threads":
@@ -742,10 +742,10 @@ class DiffScreen:
             if rows:
                 self.file_index = max(0, min(self.file_index + delta, len(rows) - 1))
                 self.scroll = self.body_cursor = 0
-        elif self.focus == "rail":
-            rows = self.rail_rows()
+        elif self.focus == "annotations":
+            rows = self.annotation_rows()
             if rows:
-                self.rail_index = max(0, min(self.rail_index + delta, len(rows) - 1))
+                self.annotation_index = max(0, min(self.annotation_index + delta, len(rows) - 1))
         elif self.focus == "threads":
             rows = self.thread_rows()
             if rows:
@@ -762,7 +762,7 @@ class DiffScreen:
             self.anchor = None
 
     def toggle_focus(self) -> None:
-        order = ("files", "body", "rail", "threads")
+        order = ("files", "body", "annotations", "threads")
         self.focus = order[(order.index(self.focus) + 1) % len(order)]
 
     def cycle_mode(self) -> str:
@@ -803,7 +803,7 @@ class DiffScreen:
 
     def ask_command(self) -> dict | None:
         """Escalate the highlight in focus from the host context to the agent."""
-        row = self.rail_row() if self.focus == "rail" else None
+        row = self.annotation_row() if self.focus == "annotations" else None
         if row is not None:
             # an insight is already an answer, so there is nothing to escalate about one
             target = row["data"] if row["kind"] == "highlight" else None

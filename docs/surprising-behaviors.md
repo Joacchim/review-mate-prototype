@@ -21,7 +21,7 @@ on. See `_answered` in `review_mate/view/asks.py`.
 ## A chat outlives the discussion it was about
 
 When a host re-sync drops a thread, what the reviewer wrote about it privately stays. The
-chat is then reachable on the wire and from no rail, which costs an orphan.
+chat is then reachable on the wire and from no annotation, which costs an orphan.
 
 The host reconciling is not the reviewer discarding — a discussion can leave because someone
 resolved and deleted it, or because a system note was filtered — and losing the reviewer's own notes
@@ -37,7 +37,7 @@ at once.
 That duplication is the point: an ask that vanished would take its waiting cue with it, leaving a
 reviewer watching something that stopped, with nothing arriving and nothing said. A late answer
 still has somewhere to land. `Highlight.created_sha` is the oldest instance of the rule; `_pass` in
-`review_mate/view/rail.py` is where `stale` and `available` are deliberately kept as two facts.
+`review_mate/view/annotations.py` is where `stale` and `available` are deliberately kept as two facts.
 
 ## Asking Claude to find a merge request leaves no trace
 

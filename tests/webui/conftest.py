@@ -233,7 +233,7 @@ def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app, stub_
         recorded.clear()
     review_kb._data.watermarks = {}
     for scope in (staged_app.state.hub, staged_app.state.diff_scopes, staged_app.state.blob_scopes,
-                  staged_app.state.rail_scope):
+                  staged_app.state.annotations_scope):
         scope.reset()
     yield fake_manager
     fake_manager.reset()

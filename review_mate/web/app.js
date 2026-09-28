@@ -20,9 +20,9 @@ const blobWanted = new Set();        // paths whose whole-file content this page
 const expandedGaps = {};             // path -> Map of gap-start -> {top, bot, all} lines unfolded
 const mdRendered = new Set();        // .md paths currently shown rendered (vs raw diff)
 let viewingPath = null;              // a non-diff file currently shown (plain view)
-let railFilter = "all";              // index filter: all | context | comment | posted
-let railQuery = "";                  // index text search (file + comment + question)
-let railSearchFocused = false;       // restore search focus after a WS-driven re-render
+let annotationFilter = "all";              // index filter: all | context | comment | posted
+let annotationQuery = "";                  // index text search (file + comment + question)
+let annotationSearchFocused = false;       // restore search focus after a WS-driven re-render
 let selected = null;                 // {kind:"hl"|"insight"|"mr"|"thread", id} shown in the detail overlay
 let detailTab = null;                // "claude" | "host" for the open subject; null picks the default
 let detailMax = false;               // the panel given the whole window, for reading a long one
@@ -378,12 +378,12 @@ function diffMode() {
 }
 
 // the scopes the review page reads: the file list, the file being shown, any whole file it needs,
-// the rail, the chat index that carries the agent's state, the review it is preparing, and the
+// the annotations, the chat index that carries the agent's state, the review it is preparing, and the
 // discussions already on the merge request
 function diffScopes() {
   const mode = diffMode();
   const listing = `diff:${SID}:${mode}`;
-  const scopes = [listing, `rail:${SID}`, `chat:${SID}`, `review:${SID}`, `threads:${SID}`,
+  const scopes = [listing, `annotations:${SID}`, `chat:${SID}`, `review:${SID}`, `threads:${SID}`,
                   `access:${SID}`];
   if (currentFile) scopes.push(`${listing}:${currentFile}`);
   if (showAll) scopes.push(`tree:${SID}`);        // the file browser, only while it is open
@@ -458,24 +458,24 @@ function scopeHunks(path) {
 }
 
 // what this review has asked about, as the server folded it: numbering, state, cards, host context
-function railView() {
-  return scopeViews[`rail:${SID}`] || null;
+function annotationsView() {
+  return scopeViews[`annotations:${SID}`] || null;
 }
 
-function railHighlights() {
-  const view = railView();
+function annotationHighlights() {
+  const view = annotationsView();
   return view && view.state === "ready" ? view.highlights : [];
 }
 
 // the MR-wide pass: whether one is running, whether it is about code that has moved, and whether
-// asking now would say anything new. All three are the server's — see view/rail.py
+// asking now would say anything new. All three are the server's — see view/annotations.py
 function reviewPass() {
-  const view = railView();
+  const view = annotationsView();
   return (view && view.state === "ready" && view.review_pass) || null;
 }
 
-function railInsights() {
-  const view = railView();
+function annotationInsights() {
+  const view = annotationsView();
   return view && view.state === "ready" ? view.insights : [];
 }
 
@@ -486,7 +486,7 @@ const CRITICALITY_RANK = { high: 0, medium: 1, low: 2 };
 let insightTheme = "";          // "" = every theme
 
 function sortedInsights() {
-  const rows = railInsights().filter((c) => !insightTheme
+  const rows = annotationInsights().filter((c) => !insightTheme
                                     || (c.label && c.label.theme === insightTheme));
   return rows.slice().sort((a, b) => {
     const ra = a.label ? CRITICALITY_RANK[a.label.criticality] : 3;
@@ -497,14 +497,14 @@ function sortedInsights() {
 
 function insightThemes() {
   const seen = [];
-  railInsights().forEach((c) => {
+  annotationInsights().forEach((c) => {
     if (c.label && !seen.includes(c.label.theme)) seen.push(c.label.theme);
   });
   return seen.sort();
 }
 
-function railHighlight(id) {
-  return railHighlights().find((h) => h.id === id) || null;
+function annotationHighlight(id) {
+  return annotationHighlights().find((h) => h.id === id) || null;
 }
 
 // a whole file at the MR head: [{n, text, tokens}], or null until its scope arrives
@@ -699,7 +699,7 @@ function mrItem(it) {
 
 async function showLanding() {
   $("mr").textContent = "—";
-  $("files").innerHTML = ""; $("rail").innerHTML = "";
+  $("files").innerHTML = ""; $("ann").innerHTML = "";
   const land = document.createElement("div");
   land.className = "land";
   const d = $("diff"); d.innerHTML = ""; d.appendChild(land);
@@ -882,7 +882,7 @@ async function renderSuggestions(query) {
   land.appendChild(fallback);
   land.appendChild(claudePanel);
   d.appendChild(land);
-  if (!SID) { $("files").innerHTML = ""; $("rail").innerHTML = ""; }
+  if (!SID) { $("files").innerHTML = ""; $("ann").innerHTML = ""; }
   let data = null;
   try { data = await fetch(`/api/search?q=${encodeURIComponent(query)}`).then((r) => r.json()); }
   catch (e) { data = { error: String(e) }; }
@@ -997,7 +997,7 @@ function render() {
   }
   renderTree();
   renderDiff();
-  renderRail();
+  renderAnnotations();
 }
 
 // --- file tree (nested, foldable) -------------------------------------------
@@ -1107,7 +1107,7 @@ function selectFile(entry) {
 
 function highlightLines(path) {
   const set = new Set();
-  railHighlights().filter((h) => h.file === path).forEach((h) => {
+  annotationHighlights().filter((h) => h.file === path).forEach((h) => {
     for (let l = h.start; l <= h.end; l++) set.add(l);
   });
   return set;
@@ -1178,7 +1178,7 @@ function gapContaining(file, line) {
 }
 
 function highlightExact(path, lo, hi) {
-  return railHighlights().find((h) => h.file === path && h.start === lo && h.end === hi);
+  return annotationHighlights().find((h) => h.file === path && h.start === lo && h.end === hi);
 }
 
 // the per-file diffs currently in play: the since-last delta when that mode is on and parsed, else
@@ -1534,25 +1534,25 @@ function firstLine(s) {
   return ln.length > 80 ? ln.slice(0, 79) + "…" : ln;
 }
 
-function railMatch(hl) {
-  if (railFilter !== "all" && hl.comment_state !== railFilter) return false;
-  if (railQuery) {
+function annotationMatch(hl) {
+  if (annotationFilter !== "all" && hl.comment_state !== annotationFilter) return false;
+  if (annotationQuery) {
     const d = state.drafts.find((x) => x.highlight_id === hl.id);
     const buf = (hl.id in draftBuffers) ? draftBuffers[hl.id] : (d ? d.body : "");
     const hay = `${hl.file} ${hl.question || ""} ${buf}`.toLowerCase();
-    if (!hay.includes(railQuery.toLowerCase())) return false;
+    if (!hay.includes(annotationQuery.toLowerCase())) return false;
   }
   return true;
 }
 
-// The rail has two zones. The pinned one holds what the reviewer wants within reach whatever they
+// The annotations have two zones. The pinned one holds what the reviewer wants within reach whatever they
 // are reading — the MR-level comment, and the insights Claude raised about the change as a whole —
 // and it is capped, so its own growth cannot bury what sits under it. Everything else scrolls, in
 // the order it already had: the per-line index, then the discussions, then the access requests,
 // each under its own heading. The pin is about what stays reachable, not a home for every row that
 // happens to be MR-wide.
-function renderRail() {
-  const el = $("rail");
+function renderAnnotations() {
+  const el = $("ann");
   el.innerHTML = "";
 
   renderVersionBanner(el);      // "updated since your last review" (diff-versions)
@@ -1561,11 +1561,11 @@ function renderRail() {
   el.appendChild(renderMrZone());
 
   const list = document.createElement("div");
-  list.className = "raillist";
+  list.className = "annlist";
   el.appendChild(list);
 
-  list.appendChild(railSplit("Per line"));
-  renderRailTools(list);        // filter chips + text search
+  list.appendChild(annotationSplit("Per line"));
+  renderAnnotationTools(list);        // filter chips + text search
   const hlist = document.createElement("div");
   hlist.id = "hlist";
   list.appendChild(hlist);
@@ -1596,8 +1596,8 @@ function renderRail() {
 
   renderDetail();
 
-  if (railSearchFocused) {  // a WS-driven re-render shouldn't steal the search box you're typing in
-    const s = $("railsearch");
+  if (annotationSearchFocused) {  // a WS-driven re-render shouldn't steal the search box you're typing in
+    const s = $("annsearch");
     if (s) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
   }
 }
@@ -1607,8 +1607,8 @@ function renderRail() {
 // cap and scroll within it, however many arrive.
 function renderMrZone() {
   const zone = document.createElement("div");
-  zone.className = "railpin";
-  const insights = railInsights();
+  zone.className = "annpin";
+  const insights = annotationInsights();
   const whole = local() ? "The branch" : "The merge request";
   zone.appendChild(h3(insights.length ? `${whole} · ${insights.length} insights` : whole));
   zone.appendChild(reviewPassRow());
@@ -1616,7 +1616,7 @@ function renderMrZone() {
   const themes = insightThemes();
   if (themes.length > 1) zone.appendChild(themeFilter(themes));
   const box = document.createElement("div");
-  box.className = "railinsights";
+  box.className = "anninsights";
   sortedInsights().forEach((c) => box.appendChild(insightRow(c)));
   zone.appendChild(box);
   return zone;
@@ -1629,7 +1629,7 @@ function themeFilter(themes) {
   wrap.className = "themes";
   const chip = (value, text) => {
     const b = btn(text, "btn chipbtn" + (insightTheme === value ? " on" : ""),
-                  () => { insightTheme = value; renderRail(); });
+                  () => { insightTheme = value; renderAnnotations(); });
     return b;
   };
   wrap.appendChild(chip("", "all"));
@@ -1661,49 +1661,49 @@ function reviewPassRow() {
   return wrap;
 }
 
-function railSplit(label) {
+function annotationSplit(label) {
   const el = document.createElement("div");
-  el.className = "railsplit";
+  el.className = "annsplit";
   el.textContent = label;
   return el;
 }
 
-function renderRailTools(el) {
-  if (!railHighlights().length) return;
+function renderAnnotationTools(el) {
+  if (!annotationHighlights().length) return;
   const wrap = document.createElement("div");
-  wrap.className = "railtools";
-  const seg = document.createElement("div"); seg.className = "seg"; seg.id = "railseg";
+  wrap.className = "anntools";
+  const seg = document.createElement("div"); seg.className = "seg"; seg.id = "annseg";
   wrap.appendChild(seg);
   const inp = document.createElement("input");
-  inp.id = "railsearch"; inp.placeholder = "filter…"; inp.value = railQuery;
-  inp.oninput = (e) => { railQuery = e.target.value; renderHlist(); };  // list-only → input keeps focus
-  inp.onfocus = () => { railSearchFocused = true; };
-  inp.onblur = () => { railSearchFocused = false; };
+  inp.id = "annsearch"; inp.placeholder = "filter…"; inp.value = annotationQuery;
+  inp.oninput = (e) => { annotationQuery = e.target.value; renderHlist(); };  // list-only → input keeps focus
+  inp.onfocus = () => { annotationSearchFocused = true; };
+  inp.onblur = () => { annotationSearchFocused = false; };
   wrap.appendChild(inp);
   el.appendChild(wrap);
   fillSeg();
 }
 
 function fillSeg() {
-  const seg = $("railseg"); if (!seg) return;
+  const seg = $("annseg"); if (!seg) return;
   seg.innerHTML = "";
-  const rows = railHighlights();
+  const rows = annotationHighlights();
   const counts = { all: rows.length, context: 0, comment: 0, posted: 0 };
   rows.forEach((hl) => { counts[hl.comment_state] += 1; });
   [["all", "All"], ["context", "Cards"], ["comment", "Comments"], ["posted", "Posted"]].forEach(([k, label]) => {
-    seg.appendChild(btn(`${label} ${counts[k]}`, "btn" + (railFilter === k ? " on" : ""),
-      () => { railFilter = k; fillSeg(); renderHlist(); }));
+    seg.appendChild(btn(`${label} ${counts[k]}`, "btn" + (annotationFilter === k ? " on" : ""),
+      () => { annotationFilter = k; fillSeg(); renderHlist(); }));
   });
 }
 
 function renderHlist() {
   const list = $("hlist"); if (!list) return;
   list.innerHTML = "";
-  const rows = railHighlights();
+  const rows = annotationHighlights();
   if (!rows.length) { list.appendChild(empty("highlight a line to ask for context")); return; }
   let shown = 0;
   // #N is the server's, fixed when the highlight was made — a position here would move on removal
-  rows.forEach((hl) => { if (railMatch(hl)) { list.appendChild(hlRow(hl, hl.n)); shown += 1; } });
+  rows.forEach((hl) => { if (annotationMatch(hl)) { list.appendChild(hlRow(hl, hl.n)); shown += 1; } });
   if (!shown) list.appendChild(empty("no highlights match this filter"));
 }
 
@@ -1723,7 +1723,7 @@ function clearSubject() {
 function openSubject(sel) {
   if (sel) { selected = sel; detailTab = null; } else { clearSubject(); }
   if (SID) watchScopes(diffScopes());
-  renderRail();
+  renderAnnotations();
 }
 
 // Whether a subject's code moving is a warning or a result.
@@ -1861,14 +1861,14 @@ function detailSubject() {
   if (!selected) return null;
   if (selected.kind === "mr") return { kind: "mr" };
   if (selected.kind === "insight") {
-    const card = railInsights().find((x) => x.id === selected.id);
+    const card = annotationInsights().find((x) => x.id === selected.id);
     return card ? { kind: "insight", card } : null;
   }
   if (selected.kind === "thread") {
     const thread = threadById(selected.id);
     return thread ? { kind: "thread", thread } : null;
   }
-  const hl = railHighlight(selected.id);
+  const hl = annotationHighlight(selected.id);
   return hl ? { kind: "hl", hl } : null;
 }
 
@@ -2223,7 +2223,7 @@ function draftEditor(key, anchor, draft) {
   const sugActive = canSuggest && (suggOpen[key] || (draft && draft.suggestion != null));
   let sta = null;
   if (sugActive) {
-    const hl = railHighlight(anchor);
+    const hl = annotationHighlight(anchor);
     const seed = (draft && draft.suggestion != null) ? draft.suggestion
                : (hl ? newSideLines(hl.file, hl.start, hl.end) : "");
     if (!(key in suggBuf)) suggBuf[key] = seed;
@@ -2247,7 +2247,7 @@ function draftEditor(key, anchor, draft) {
   if (canSuggest) row.appendChild(btn(sugActive ? "Drop suggestion" : "＋ Suggest a change", "btn ghost", () => {
     if (sugActive) { suggOpen[key] = false; delete suggBuf[key]; }
     else { suggOpen[key] = true; }
-    renderRail();
+    renderAnnotations();
   }));
   if (draft) row.appendChild(btn("Remove", "btn ghost", () => {
     post({ type: "remove_draft", highlight_id: anchor });
@@ -2282,7 +2282,7 @@ function renderThreads(el) {
   const unresolved = threads.filter((t) => !t.resolved).length;
   [["unresolved", `Unresolved ${unresolved}`], ["all", `All ${threads.length}`]].forEach(([k, label]) => {
     seg.appendChild(btn(label, "btn" + (threadFilter === k ? " on" : ""),
-      () => { threadFilter = k; renderRail(); }));
+      () => { threadFilter = k; renderAnnotations(); }));
   });
   el.appendChild(seg);
 
@@ -2327,7 +2327,7 @@ function threadRow(t) {
 function matchingHighlight(t) {
   if (!t.anchor || !t.anchor.file) return null;
   const line = t.anchor.line;
-  const hl = railHighlights().find((h) => h.file === t.anchor.file && line != null &&
+  const hl = annotationHighlights().find((h) => h.file === t.anchor.file && line != null &&
     line >= h.start && line <= h.end);
   return hl ? { hl, n: hl.n } : null;
 }
@@ -2353,7 +2353,7 @@ async function replyThread(tid) {
   const body = (threadReplyBuf[tid] || "").trim();
   if (!body) return;
   if (await threadCmd("thread.reply", { thread: tid, body }, "reply posted")) {
-    delete threadReplyBuf[tid]; renderRail();
+    delete threadReplyBuf[tid]; renderAnnotations();
   }
 }
 
@@ -2366,7 +2366,7 @@ async function submitNoteEdit(tid, nid) {
   const body = (noteEdit[nid] || "").trim();
   if (!body) return;
   if (await threadCmd("thread.edit_note", { thread: tid, note: nid, body }, "edited")) {
-    delete noteEdit[nid]; renderRail();
+    delete noteEdit[nid]; renderAnnotations();
   }
 }
 
@@ -2391,14 +2391,14 @@ function threadConversationBlock(t) {
       ta.oninput = (e) => { noteEdit[c.id] = e.target.value; };
       const row = document.createElement("div"); row.className = "draftbtns";
       row.appendChild(btn("Save", "btn", () => submitNoteEdit(t.id, c.id)));
-      row.appendChild(btn("Cancel", "btn ghost", () => { delete noteEdit[c.id]; renderRail(); }));
+      row.appendChild(btn("Cancel", "btn ghost", () => { delete noteEdit[c.id]; renderAnnotations(); }));
       d.innerHTML = `<div class="who">${esc(c.author)}</div>`;
       d.appendChild(ta); d.appendChild(row);
     } else {
       d.innerHTML = `<div class="who">${esc(c.author)}</div><div class="md">${md(c.body)}</div>`;
       if (canThreads && c.mine) {    // your own note → edit / delete
         const acts = document.createElement("div"); acts.className = "noteacts";
-        acts.appendChild(btn("edit", "btn ghost", () => { noteEdit[c.id] = c.body; renderRail(); }));
+        acts.appendChild(btn("edit", "btn ghost", () => { noteEdit[c.id] = c.body; renderAnnotations(); }));
         acts.appendChild(btn("delete", "btn ghost", () => deleteNote(t.id, c.id)));
         d.appendChild(acts);
       }

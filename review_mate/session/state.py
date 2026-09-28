@@ -164,7 +164,7 @@ class Addressed(BaseModel):
 
     The other kind of answer. A card explains, a message replies, and neither is what a reviewer
     means when they say "this retry is unbounded" — they mean fix it. Recording the change against
-    the subject it answers is what lets the rail say *addressed at abc123* instead of leaving five
+    the subject it answers is what lets an annotation say *addressed at abc123* instead of leaving five
     open comments and one new commit for the reviewer to match up themselves.
 
     It is also what keeps a moving head readable. Elsewhere `created_sha != head` means "these lines
@@ -239,7 +239,7 @@ class SubjectKind(str, Enum):
 
 
 class Subject(BaseModel):
-    """A chat's subject: a row of the rail, addressed by kind and id.
+    """A chat's subject: an annotation row, addressed by kind and id.
 
     The kinds are exactly what a client can open a detail panel on, so a chat lives where
     its subject already renders. An id is unique on its own, but the kind travels with it: a client

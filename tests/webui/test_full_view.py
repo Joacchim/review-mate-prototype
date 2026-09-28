@@ -14,7 +14,7 @@ from review_mate.session.state import Origin
 from webui.fixtures.scenarios import review_with_highlights
 from webui.pages.detail import DetailPage
 from webui.pages.diff import DiffPage
-from webui.pages.rail import RailPage
+from webui.pages.annotations import AnnotationsPage
 
 
 @pytest.fixture
@@ -23,8 +23,8 @@ def diff(page, base_url) -> DiffPage:
 
 
 @pytest.fixture
-def rail_page(page) -> RailPage:
-    return RailPage(page)
+def annotations_page(page) -> AnnotationsPage:
+    return AnnotationsPage(page)
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def opened(page, diff, staged) -> DetailPage:
     """A review with its first highlight open in the panel."""
     staged.put(review_with_highlights("s1"))
     diff.load("s1")
-    RailPage(page).index_rows.first.click()
+    AnnotationsPage(page).index_rows.first.click()
     detail = DetailPage(page)
     expect(detail.panel).to_be_visible()
     return detail
@@ -93,10 +93,10 @@ def test_the_conversation_stays_subscribed_across_the_mode(opened):
     assert before == after and len(after) == 1, (before, after)
 
 
-def test_losing_the_subject_leaves_full_view_behind(page, opened, rail_page, as_agent, staged):
+def test_losing_the_subject_leaves_full_view_behind(page, opened, annotations_page, as_agent, staged):
     """Full view is a mode the panel is in, so it must end when the panel does — by whichever route.
 
-    The reviewer cannot reach the rail to discard anything while the panel covers the window, but a
+    The reviewer cannot reach the annotations to discard anything while the panel covers the window, but a
     removal from elsewhere still arrives: another client, or the agent dismissing what it raised.
     The panel closes on that, and if the mode outlived it the next subject would open maximised.
     """
@@ -106,6 +106,6 @@ def test_losing_the_subject_leaves_full_view_behind(page, opened, rail_page, as_
     as_agent("s1", RemoveHighlight(highlight_id="h1"), origin=Origin.BROWSER)
     expect(opened.panel).to_be_hidden()
 
-    rail_page.index_rows.first.click()
+    annotations_page.index_rows.first.click()
     expect(opened.panel).to_be_visible()
     expect(opened.maximised).to_have_count(0)

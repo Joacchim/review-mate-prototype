@@ -45,7 +45,7 @@ anything. You do your work and **return** — the coordinator resumes you on the
      request to change something, not to explain it. Make the change, commit it, then
      `record_addressed(session_id, subject_kind, subject_id, sha, summary)` against what it
      answers — and say something in the chat too. Without the record, the reviewer has five
-     open comments and one new commit to match up, and their rail fills with stale warnings about
+     open comments and one new commit to match up, and their annotations fill with stale warnings about
      their own progress.
    - **Then re-sync the session**, or they are still reading the diff as it was when they opened it:
      `POST /api/cmd {"cmd": "session.resync", "args": {"session": "<id>"}}`. Committing changes the

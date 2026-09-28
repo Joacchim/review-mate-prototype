@@ -15,7 +15,7 @@ from review_mate.session.state import DraftComment, DraftStatus
 from webui.fixtures.scenarios import review_with_highlights, two_file_review
 from webui.pages.detail import DetailPage
 from webui.pages.diff import DiffPage
-from webui.pages.rail import RailPage
+from webui.pages.annotations import AnnotationsPage
 from webui.pages.reviewbar import ReviewBarPage
 from webui.pages.shell import ShellPage
 from webui.pages.threads import ThreadsPage
@@ -27,8 +27,8 @@ def diff(page, base_url) -> DiffPage:
 
 
 @pytest.fixture
-def rail(page) -> RailPage:
-    return RailPage(page)
+def annotations(page) -> AnnotationsPage:
+    return AnnotationsPage(page)
 
 
 @pytest.fixture
@@ -92,29 +92,29 @@ def test_a_posted_comment_moves_between_the_counts(diff, review, staged):
 
 # --- writing one ------------------------------------------------------------
 
-def test_drafting_at_mr_level_reaches_the_bar(diff, rail, detail, review, staged):
+def test_drafting_at_mr_level_reaches_the_bar(diff, annotations, detail, review, staged):
     """Written in the panel, counted by the server, shown in the bar — with no page arithmetic."""
     staged.put(review_with_highlights("s1"))
     diff.load("s1")
-    rail.mr_row.click()
+    annotations.mr_row.click()
     detail.tab("Review").click()
     detail.save_draft("reads well overall")
     expect(review.counts).to_contain_text("1 pending")
 
 
-def test_drafting_on_a_highlight_reaches_the_bar(diff, rail, detail, review, staged):
+def test_drafting_on_a_highlight_reaches_the_bar(diff, annotations, detail, review, staged):
     staged.put(review_with_highlights("s1"))
     diff.load("s1")
-    rail.index_rows.first.click()
+    annotations.index_rows.first.click()
     detail.tab("Review").click()
     detail.save_draft("this needs a test")
     expect(review.counts).to_contain_text("1 pending")
 
 
-def test_editing_a_draft_does_not_make_a_second_one(diff, rail, detail, review, staged):
+def test_editing_a_draft_does_not_make_a_second_one(diff, annotations, detail, review, staged):
     staged.put(review_with_highlights("s1"))
     diff.load("s1")
-    rail.index_rows.first.click()
+    annotations.index_rows.first.click()
     detail.tab("Review").click()
     detail.save_draft("half a thought")
     expect(review.counts).to_contain_text("1 pending")
@@ -246,31 +246,31 @@ def _reviewed_at(sha, requested=False):
     return state
 
 
-def test_a_change_nobody_has_asked_about_offers_the_pass(diff, rail, staged):
+def test_a_change_nobody_has_asked_about_offers_the_pass(diff, annotations, staged):
     staged.put(_reviewed_at("abc123"))
     diff.load("s1")
-    expect(rail.review_pass).to_be_enabled()
+    expect(annotations.review_pass).to_be_enabled()
 
 
-def test_a_pass_covering_this_code_greys_the_control_rather_than_hiding_it(diff, rail, staged):
+def test_a_pass_covering_this_code_greys_the_control_rather_than_hiding_it(diff, annotations, staged):
     """A control that vanishes reads as broken; one that is greyed reads as already done."""
     staged.put(_reviewed_at("abc123", requested=True))
     diff.load("s1")
-    expect(rail.review_pass).to_have_count(1)
-    expect(rail.review_pass).to_be_disabled()
+    expect(annotations.review_pass).to_have_count(1)
+    expect(annotations.review_pass).to_be_disabled()
 
 
-def test_a_pass_the_change_moved_past_says_so_and_offers_another(diff, rail, staged):
+def test_a_pass_the_change_moved_past_says_so_and_offers_another(diff, annotations, staged):
     state = _reviewed_at("abc123", requested=True)
     state.mr = state.mr.model_copy(update={"sha": "moved-on"})   # a push since the pass
     staged.put(state)
     diff.load("s1")
-    expect(rail.pass_note).to_contain_text("about an earlier version")
-    expect(rail.review_pass).to_be_enabled()
+    expect(annotations.pass_note).to_contain_text("about an earlier version")
+    expect(annotations.review_pass).to_be_enabled()
 
 
-def test_asking_records_the_request(diff, rail, staged):
+def test_asking_records_the_request(diff, annotations, staged):
     staged.put(_reviewed_at("abc123"))
     diff.load("s1")
-    rail.review_pass.click()
-    expect(rail.review_pass).to_be_disabled()      # the server answered, and the control followed
+    annotations.review_pass.click()
+    expect(annotations.review_pass).to_be_disabled()      # the server answered, and the control followed

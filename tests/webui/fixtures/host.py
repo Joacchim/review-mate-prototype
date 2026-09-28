@@ -40,7 +40,7 @@ class StubHost:
         return list(self.commit_files.get(sha, []))
 
     async def blame(self, project: str, path: str, ref: str, start: int, end: int):
-        """Last-touch for a line range — the host context the rail folds in."""
+        """Last-touch for a line range — the host context the annotations folds in."""
         if self.fail_with is not None:
             raise self.fail_with
         return list(self.blame_lines)

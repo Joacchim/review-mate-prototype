@@ -1,7 +1,7 @@
-"""The `rail` scope: what a reviewer has asked about, and what came back.
+"""The `annotations` scope: what a reviewer has asked about, and what came back.
 
 One scope per session, carrying every highlight with its card, plus the MR-level insights. The diff
-overlay selects the open file's highlights out of it; the right-hand rail lists them all.
+overlay selects the open file's highlights out of it; the right-hand panel lists them all.
 
 They live together rather than inside each file's scope because the numbering is session-wide — a
 reviewer references a card as "#2", which no per-file view can assign — and because a card arriving
@@ -22,7 +22,7 @@ from review_mate.contracts import serves
 from review_mate.session.state import DraftStatus, SessionStatus, SubjectKind
 
 
-class RailLabel(BaseModel):
+class AnnotationLabel(BaseModel):
     """What an insight is about and how much it matters — the pair a client filters and sorts on,
     plus the line it renders beside the row so the label is worth reading before the card is."""
     theme: str
@@ -31,24 +31,24 @@ class RailLabel(BaseModel):
     by: str = "agent"              # whose claim: the agent's, or the reviewer's once they corrected
 
 
-class RailCard(BaseModel):
+class AnnotationCard(BaseModel):
     id: str
     body: str = ""
     citations: list[str] = Field(default_factory=list)
     status: str = ""
-    label: RailLabel | None = None   # absent means nobody classified it, never "unimportant"
-    addressed: "RailAddressed | None" = None   # set when the agent changed the code over it
+    label: AnnotationLabel | None = None   # absent means nobody classified it, never "unimportant"
+    addressed: "AnnotationAddressed | None" = None   # set when the agent changed the code over it
     created_at: str = ""
 
 
-class RailContext(BaseModel):
+class AnnotationContext(BaseModel):
     state: str = "idle"          # idle | loading | ready | unavailable | error
     blame: list[dict] = Field(default_factory=list)
     linked_issues: list[dict] = Field(default_factory=list)
     error: str = ""
 
 
-class RailAddressed(BaseModel):
+class AnnotationAddressed(BaseModel):
     """What the agent changed in answer to a subject, and when.
 
     The reason a highlight's `stale` is not the whole story. A head that moved with one of these
@@ -60,7 +60,7 @@ class RailAddressed(BaseModel):
     at: str = ""
 
 
-class RailHighlight(BaseModel):
+class AnnotationHighlight(BaseModel):
     id: str
     n: int                       # session-wide, and what a reviewer references in chat
     file: str
@@ -69,15 +69,15 @@ class RailHighlight(BaseModel):
     end: int = 0
     question: str | None = None
     status: str = "open"
-    author: str = "browser"          # a highlight the agent made reads differently in the rail
+    author: str = "browser"          # a highlight the agent made reads differently in the panel
     context_requested: bool = False  # escalated past the host context, so an answer is expected
     context_requested_at: str = ""   # when they escalated — a client ages the "working" cue from it
     stale: bool = False          # made against an earlier head, so its lines may have moved
-    addressed: "RailAddressed | None" = None   # the agent changed the code in answer to this
+    addressed: "AnnotationAddressed | None" = None   # the agent changed the code in answer to this
     comment_state: str = "context"   # context | comment | posted
     created_at: str = ""
-    context: RailContext = Field(default_factory=RailContext)
-    card: RailCard | None = None
+    context: AnnotationContext = Field(default_factory=AnnotationContext)
+    card: AnnotationCard | None = None
 
 
 class ReviewPass(BaseModel):
@@ -95,15 +95,15 @@ class ReviewPass(BaseModel):
     available: bool = True
 
 
-class RailView(BaseModel):
+class AnnotationsView(BaseModel):
     session: str
     state: str = "ready"         # ready | unknown-session
-    highlights: list[RailHighlight] = Field(default_factory=list)
-    insights: list[RailCard] = Field(default_factory=list)
+    highlights: list[AnnotationHighlight] = Field(default_factory=list)
+    insights: list[AnnotationCard] = Field(default_factory=list)
     review_pass: ReviewPass = Field(default_factory=ReviewPass)
 
 
-def _addressed(snapshot, kind, ident) -> RailAddressed | None:
+def _addressed(snapshot, kind, ident) -> AnnotationAddressed | None:
     """The last change the agent made in answer to a subject, if it made one.
 
     The last rather than all of them: a subject answered twice was answered badly the first time,
@@ -112,12 +112,12 @@ def _addressed(snapshot, kind, ident) -> RailAddressed | None:
     """
     for record in reversed(snapshot.addressed or []):
         if record.subject.kind is kind and record.subject.id == ident:
-            return RailAddressed(sha=record.sha, summary=record.summary, at=record.at)
+            return AnnotationAddressed(sha=record.sha, summary=record.summary, at=record.at)
     return None
 
 
-class RailScope:
-    """Builds the rail, and owns the host context's cache.
+class AnnotationsScope:
+    """Builds the annotations, and owns the host context's cache.
 
     `build` never calls the host: the host context is fetched by a one-shot task per line
     range, keyed on the sha it was read at.
@@ -134,14 +134,14 @@ class RailScope:
     async def build(self, session_id: str) -> dict:
         snapshot = self._snapshot(session_id)
         if snapshot is None:
-            return RailView(session=session_id, state="unknown-session").model_dump(mode="json")
+            return AnnotationsView(session=session_id, state="unknown-session").model_dump(mode="json")
         head = snapshot.mr.sha if snapshot.mr else ""
         by_highlight = {c.highlight_id: c for c in snapshot.cards if c.highlight_id}
         drafts = {d.highlight_id: d for d in snapshot.drafts if d.highlight_id}
         rows = []
         for highlight in snapshot.highlights:
             draft = drafts.get(highlight.id)
-            rows.append(RailHighlight(
+            rows.append(AnnotationHighlight(
                 id=highlight.id, n=highlight.ordinal, file=highlight.file,
                 side=getattr(highlight.side, "value", "new"),
                 start=highlight.line_range.start, end=highlight.line_range.end,
@@ -159,7 +159,7 @@ class RailScope:
                 card=self._card(by_highlight.get(highlight.id)),
             ))
         insights = [self._card(c, snapshot) for c in snapshot.cards if not c.highlight_id]
-        return RailView(session=session_id, highlights=rows,
+        return AnnotationsView(session=session_id, highlights=rows,
                         insights=[c for c in insights if c],
                         review_pass=self._pass(snapshot, head)).model_dump(mode="json")
 
@@ -174,36 +174,36 @@ class RailScope:
                           stale=stale, available=stale)
 
     @staticmethod
-    def _card(card, snapshot=None) -> RailCard | None:
+    def _card(card, snapshot=None) -> AnnotationCard | None:
         if card is None:
             return None
         label = card.label
-        return RailCard(
+        return AnnotationCard(
             id=card.id, body=card.body, citations=list(card.citations),
             status=getattr(card.status, "value", ""), created_at=card.created_at,
             addressed=(None if snapshot is None
                        else _addressed(snapshot, SubjectKind.INSIGHT, card.id)),
-            label=None if label is None else RailLabel(
+            label=None if label is None else AnnotationLabel(
                 theme=label.theme.value, criticality=label.criticality.value,
                 about=label.about, by=getattr(label.by, "value", str(label.by))))
 
     # --- the host context -----------------------------------------------------
 
-    def _context_for(self, snapshot, highlight, session_id: str) -> RailContext:
+    def _context_for(self, snapshot, highlight, session_id: str) -> AnnotationContext:
         if snapshot.mr is None:
-            return RailContext(state="unavailable")
+            return AnnotationContext(state="unavailable")
         key = (snapshot.mr.sha, highlight.file, highlight.line_range.start, highlight.line_range.end)
         if key in self._failed:
-            return RailContext(state="error", error=self._failed[key])
+            return AnnotationContext(state="error", error=self._failed[key])
         found = self._context.get(key)
         if found is not None:
-            return RailContext(state="ready", blame=found["blame"],
+            return AnnotationContext(state="ready", blame=found["blame"],
                                linked_issues=found["linked_issues"])
         if self._provider is None or not hasattr(self._provider, "blame") \
                 or not serves(self._provider, snapshot):
-            return RailContext(state="unavailable")
+            return AnnotationContext(state="unavailable")
         self._start(key, snapshot.mr.project, snapshot.mr.iid, session_id)
-        return RailContext(state="loading")
+        return AnnotationContext(state="loading")
 
     def _start(self, key, project: str, iid, session_id: str) -> None:
         if key in self._tasks:

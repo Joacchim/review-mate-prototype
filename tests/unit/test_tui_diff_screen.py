@@ -81,7 +81,7 @@ def test_the_file_scope_is_the_listing_plus_the_path():
 
 def test_it_watches_everything_the_review_screen_shows():
     screen = DiffScreen(StubClient({"diff:s1:full": listing([row("a.py"), row("b.py")])}), "s1")
-    assert screen.wanted() == ["diff:s1:full", "rail:s1", "chat:s1", "review:s1", "threads:s1",
+    assert screen.wanted() == ["diff:s1:full", "annotations:s1", "chat:s1", "review:s1", "threads:s1",
                                "access:s1", "chat:s1:review", "diff:s1:full:a.py"]
 
 
@@ -138,7 +138,7 @@ def test_scrolling_the_body_never_goes_negative():
 
 # --- highlights --------------------------------------------------------------
 
-def rail(highlights=(), insights=()):
+def annotations(highlights=(), insights=()):
     return {"session": "s1", "state": "ready",
             "highlights": list(highlights), "insights": list(insights)}
 
@@ -164,7 +164,7 @@ def label(theme="bug", criticality="high", about="", by="agent"):
 def screen_with(highlights=(), insights=(), **kwargs):
     client = StubClient({"diff:s1:full": listing([row("a.py")]),
                          "diff:s1:full:a.py": body(**kwargs),
-                         "rail:s1": rail(highlights, insights)})
+                         "annotations:s1": annotations(highlights, insights)})
     return DiffScreen(client, "s1")
 
 
@@ -213,7 +213,7 @@ def test_highlighted_lines_are_marked_in_the_body():
     assert "▌" not in plain and "▌" in marked
 
 
-def test_the_rail_lists_what_was_asked_across_files():
+def test_the_annotations_list_what_was_asked_across_files():
     screen = screen_with([hl(1, "a.py", 1, 2), hl(2, "pkg/b.py", 9, 9)])
     rendered = text_of(screen)
     assert "#1" in rendered and "a.py:1-2" in rendered
@@ -236,10 +236,10 @@ def test_a_stale_highlight_says_so():
     assert "(stale)" in text_of(screen_with([hl(stale=True)]))
 
 
-def test_asking_from_the_rail_targets_the_selected_highlight():
+def test_asking_from_the_annotations_targets_the_selected_highlight():
     screen = screen_with([hl(1), hl(2, start=5, end=5)])
-    screen.focus = "rail"
-    screen.rail_index = 1
+    screen.focus = "annotations"
+    screen.annotation_index = 1
     assert screen.ask_command() == {"type": "request_context", "highlight_id": "h2"}
 
 
@@ -266,7 +266,7 @@ def test_focus_cycles_through_every_pane():
     screen = screen_with()
     assert screen.focus == "files"
     screen.toggle_focus(); assert screen.focus == "body"
-    screen.toggle_focus(); assert screen.focus == "rail"
+    screen.toggle_focus(); assert screen.focus == "annotations"
     screen.toggle_focus(); assert screen.focus == "threads"
     screen.toggle_focus(); assert screen.focus == "files"
 
@@ -341,7 +341,7 @@ def req(repo="g/sibling", status="pending", grant=None):
 def screen_with_access(*requests):
     client = StubClient({"diff:s1:full": listing([row("a.py")]),
                          "diff:s1:full:a.py": body(),
-                         "rail:s1": rail(), "access:s1": access(*requests)})
+                         "annotations:s1": annotations(), "access:s1": access(*requests)})
     return DiffScreen(client, "s1")
 
 
@@ -380,9 +380,9 @@ def test_a_refusal_is_not_followed_up():
     assert "fetching" not in rendered and "could not be fetched" not in rendered
 
 
-# --- what the change owns, on the rail ----------------------------------------
+# --- what the change owns, on the annotations ----------------------------------------
 
-def test_an_insight_is_on_the_rail_above_the_lines():
+def test_an_insight_is_annotated_above_the_lines():
     """It is about the change, not a line, so a run of highlights must not bury it."""
     screen = screen_with([hl(n=1, file="a.py")], [insight(body="one queue is assumed")])
     rendered = text_of(screen)
@@ -392,7 +392,7 @@ def test_an_insight_is_on_the_rail_above_the_lines():
 
 def test_the_cursor_spans_both_kinds():
     screen = screen_with([hl(n=1)], [insight()])
-    screen.focus = "rail"
+    screen.focus = "annotations"
     assert screen.subject() == {"kind": "insight", "id": "c1"}
     screen.move(1)
     assert screen.subject() == {"kind": "highlight", "id": "h1"}
@@ -450,7 +450,7 @@ def test_a_label_the_reviewer_set_is_marked_as_theirs():
 def test_claudes_own_finding_can_be_double_checked_from_the_terminal():
     """The asymmetry this closes: the browser could doubt an insight and the terminal could not."""
     screen = screen_with([hl(n=1)], [insight()])
-    screen.focus = "rail"
+    screen.focus = "annotations"
     assert screen.check_command() == {"type": "request_check",
                                       "subject": {"kind": "insight", "id": "c1"}}
 
@@ -458,7 +458,7 @@ def test_claudes_own_finding_can_be_double_checked_from_the_terminal():
 def test_an_insight_is_not_something_to_escalate():
     """It is already an answer. `a` on one asks for nothing rather than escalating the row below."""
     screen = screen_with([hl(n=1)], [insight()])
-    screen.focus = "rail"
+    screen.focus = "annotations"
     assert screen.ask_command() is None
     screen.move(1)
     assert screen.ask_command() == {"type": "request_context", "highlight_id": "h1"}
@@ -466,14 +466,14 @@ def test_an_insight_is_not_something_to_escalate():
 
 def test_an_insights_conversation_is_the_one_the_screen_watches():
     screen = screen_with([hl(n=1)], [insight()])
-    screen.focus = "rail"
+    screen.focus = "annotations"
     assert screen.chat_scope() == "chat:s1:insight:c1"
     assert "chat:s1:insight:c1" in screen.wanted()
 
 
 def test_a_doubt_is_raised_about_whatever_the_cursor_is_on():
     screen = screen_with([hl(n=1)])
-    screen.focus = "rail"
+    screen.focus = "annotations"
     assert screen.check_command() == {"type": "request_check",
                                       "subject": {"kind": "highlight", "id": "h1"}}
 
@@ -497,13 +497,13 @@ def test_a_doubt_being_checked_says_so_rather_than_waiting_on_claude():
     assert "waiting on Claude" not in rendered
 
 
-def test_the_rail_cursor_picks_whose_conversation_is_shown():
+def test_the_annotation_cursor_picks_whose_chat_is_shown():
     views = {"diff:s1:full": listing([row("a.py")]),
              "chat:s1": chat_index(),
              "chat:s1:review": chat([message("user", "about the review")]),
              "chat:s1:highlight:h1": chat([message("user", "about this line")],
                                                   kind="highlight", ident="h1"),
-             "rail:s1": {"session": "s1", "state": "ready", "insights": [], "highlights": [
+             "annotations:s1": {"session": "s1", "state": "ready", "insights": [], "highlights": [
                  {"id": "h1", "n": 3, "file": "pkg/a.py", "side": "new", "start": 42, "end": 42,
                   "question": None, "status": "open", "author": "browser",
                   "context_requested": False, "context_requested_at": "", "stale": False,
@@ -512,7 +512,7 @@ def test_the_rail_cursor_picks_whose_conversation_is_shown():
                   "card": None}]}}
     screen = DiffScreen(StubClient(views), "s1")
     assert "about the review" in text_of(screen)
-    screen.focus = "rail"
+    screen.focus = "annotations"
     rendered = text_of(screen)
     assert "Chat — #3 a.py:42" in rendered
     assert "about this line" in rendered and "about the review" not in rendered
@@ -538,7 +538,7 @@ def disc(id="t1", resolved=False, file="a.py", line=2, said="prefer a guard", n=
 def screen_with_threads(rows=()):
     client = StubClient({"diff:s1:full": listing([row("a.py")]),
                          "diff:s1:full:a.py": body(),
-                         "rail:s1": rail(),
+                         "annotations:s1": annotations(),
                          "threads:s1": discussions(rows)})
     return DiffScreen(client, "s1")
 
@@ -562,7 +562,7 @@ def test_a_discussion_about_the_whole_change_says_so():
 
 
 def test_pointing_at_a_discussion_makes_it_the_subject():
-    """A discussion is a chat subject, so the pane picks one the way the rail does."""
+    """A discussion is a chat subject, so the pane picks one the way the annotations does."""
     screen = screen_with_threads([disc()])
     screen.focus = "threads"
     assert screen.subject() == {"kind": "thread", "id": "t1"}
@@ -607,7 +607,7 @@ def blob(lines=(), state="ready"):
 def browsing_screen(paths=("a.py", "README.md"), **views):
     client = StubClient({"diff:s1:full": listing([row("a.py")]),
                          "diff:s1:full:a.py": body(),
-                         "rail:s1": rail(),
+                         "annotations:s1": annotations(),
                          "tree:s1": repo(paths), **views})
     screen = DiffScreen(client, "s1")
     return screen

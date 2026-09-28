@@ -264,7 +264,7 @@ def _hub(page, base, stage):
 
 @shot("diff", "the three panels a change is read in",
       shows="table.hunk .add",
-      marks=(("#files", "1"), ("#diff", "2"), ("#rail", "3"),
+      marks=(("#files", "1"), ("#diff", "2"), ("#ann", "3"),
              ("#t-left", "4"), ("#t-right", "5"), ("#mr", "6")))
 def _diff(page, base, stage):
     stage(showcase())
@@ -306,12 +306,12 @@ def _review(page, base, stage):
 
 
 @shot("review-state", "what is written, what is sent, and what the merge request will see",
-      shows="#railseg .btn",
-      marks=(("#railseg", "1"), (".railpin .hrow.mr", "2"), (".rbar, .reviewbar", "3")))
+      shows="#annseg .btn",
+      marks=(("#annseg", "1"), (".annpin .hrow.mr", "2"), (".rbar, .reviewbar", "3")))
 def _review_state(page, base, stage):
     stage(showcase())
     _open(page, base)
-    page.wait_for_selector("#railseg .btn")
+    page.wait_for_selector("#annseg .btn")
     page.wait_for_timeout(300)
 
 
@@ -371,23 +371,23 @@ def _dark(page, base, stage):
 
 
 @shot("insights", "Claude's own read of the change, worst first",
-      shows=".railpin .railinsights .chip.crit",
-      marks=((".passrow .btn", "1"), (".railpin .railinsights .chip.crit", "2"),
-             (".railpin .themes", "3")))
+      shows=".annpin .anninsights .chip.crit",
+      marks=((".passrow .btn", "1"), (".annpin .anninsights .chip.crit", "2"),
+             (".annpin .themes", "3")))
 def _insights(page, base, stage):
     stage(showcase())
     _open(page, base)
-    page.wait_for_selector(".railpin .railinsights .hrow")
+    page.wait_for_selector(".annpin .anninsights .hrow")
     page.wait_for_timeout(300)
 
 
 @shot("consent", "Claude asking to read another repository, and nothing read until you answer",
-      shows=".rail .req button",
-      marks=((".rail .req .why", "1"), (".rail .req button", "2")))
+      shows=".ann .req button",
+      marks=((".ann .req .why", "1"), (".ann .req button", "2")))
 def _consent(page, base, stage):
     stage(showcase())
     _open(page, base)
-    page.locator(".rail .req").first.scroll_into_view_if_needed()
+    page.locator(".ann .req").first.scroll_into_view_if_needed()
     page.wait_for_timeout(300)
 
 
@@ -461,7 +461,7 @@ def main() -> int:
                              "summary": "split the queue per fleet"}]
         HOST.issues = [{"iid": 402, "title": "scheduler starves the legacy fleet",
                         "url": "https://gitlab.example/issues/402"}]
-        app.state.rail_scope.reset()
+        app.state.annotations_scope.reset()
         manager.put(state)
 
     written = []

@@ -1,7 +1,7 @@
 """The header light in a browser: the word the server joined, not one the page worked out.
 
 `chat:<sid>` carries the join of presence with what the review is still owed, because neither half
-answers the reviewer's question alone. The page used to compute it from the rail and the last chat
+answers the reviewer's question alone. The page used to compute it from the annotations and the last chat
 message, which is why these scenarios matter: each is one the old derivation got wrong, so a test
 that passes here cannot be passing against a client-side copy of the rule.
 """

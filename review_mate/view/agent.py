@@ -8,7 +8,7 @@ there, because nothing had ever decided what the agent's view contained.
 
 So it is composed here, deliberately, out of the builders the clients already use:
 
-- **the rail** — what the reviewer marked, what was escalated, what has a card, and the MR-wide pass
+- **the annotations** — what the reviewer marked, what was escalated, what has a card, and the MR-wide pass
 - **the chat index** — the chats, and `asks`: the backlog, published rather than re-derived
 - **the discussions** — what has been said on the merge request, for everyone
 - **the consent list** — which repositories were asked for and what came of each
@@ -28,10 +28,10 @@ from review_mate.session.state import SessionStatus
 class AgentView:
     """Builds the agent's read of a session. Owns no state — the scopes it composes own theirs."""
 
-    def __init__(self, manager, rail=None, chat=None, threads=None, access=None,
+    def __init__(self, manager, annotations=None, chat=None, threads=None, access=None,
                  diffs=None) -> None:
         self._manager = manager
-        self._rail = rail
+        self._annotations = annotations
         self._chat = chat
         self._threads = threads
         self._access = access
@@ -70,7 +70,7 @@ class AgentView:
             # the on-disk worktree the agent reads code from — a session fact, not a scope's
             "checkout_path": snapshot.checkout_path,
         }
-        for name, scope, argument in (("rail", self._rail, session_id),
+        for name, scope, argument in (("annotations", self._annotations, session_id),
                                       ("chat", self._chat, session_id),
                                       ("threads", self._threads, session_id),
                                       ("access", self._access, session_id)):

@@ -291,9 +291,9 @@ async def test_leaving_a_review_drops_its_scopes(tmp_path):
             assert shell.screen is shell.hub
 
 
-async def test_highlighting_in_the_terminal_reaches_the_rail(tmp_path):
+async def test_highlighting_in_the_terminal_reaches_the_annotations(tmp_path):
     """The write path and the read path meet: a selection becomes a command, the session changes,
-    the tail republishes, and the rail the screen renders comes back with it."""
+    the tail republishes, and the annotations the screen renders comes back with it."""
     from review_mate.tui.app import Shell
 
     async with serving(build(tmp_path, DiffHost())) as base:
@@ -306,7 +306,7 @@ async def test_highlighting_in_the_terminal_reaches_the_rail(tmp_path):
             watcher.also = shell.on_change
             await shell.open_review(session)
             await wait_for(lambda: client.views.get(f"diff:{session}:full:a.py"))
-            await wait_for(lambda: client.views.get(f"rail:{session}") is not None)
+            await wait_for(lambda: client.views.get(f"annotations:{session}") is not None)
 
             screen = shell.diff
             assert screen.highlights == []
@@ -347,7 +347,7 @@ async def test_escalating_a_highlight_is_accepted_by_the_session(tmp_path):
             await client.session_command(session, screen.start_or_commit_selection())
             await wait_for(lambda: screen.highlights)
 
-            screen.focus = "rail"
+            screen.focus = "annotations"
             ask = screen.ask_command()
             assert ask["type"] == "request_context"
             assert await client.session_command(session, ask), client.last_command_error

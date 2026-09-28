@@ -1,9 +1,9 @@
-"""The rail scope: what a reviewer asked about, and what came back.
+"""The annotations scope: what a reviewer asked about, and what came back.
 
 The cross-file view is why this is one scope rather than many — the numbering a reviewer references
 is session-wide, and no per-file view can assign it.
 
-Most of this drives RailScope directly. The scope's own logic needs no transport, and a sync
+Most of this drives AnnotationsScope directly. The scope's own logic needs no transport, and a sync
 TestClient runs the application on another loop, so a writer reached from a test coroutine would be
 touching primitives that belong to a different one. The tail is the exception and is tested through
 the real stream, because that is the thing being checked.
@@ -23,7 +23,7 @@ from review_mate.session.manager import SessionManager
 from review_mate.session.state import (
     Criticality, Label, LineRange, Origin, Side, Subject, SubjectKind, Theme,
 )
-from review_mate.view.rail import RailScope
+from review_mate.view.annotations import AnnotationsScope
 
 
 class BlameHost(HostStub):
@@ -56,8 +56,8 @@ async def session(tmp_path):
     await manager.shutdown()
 
 
-def rail_for(manager, provider, published=None):
-    return RailScope(manager, provider=provider,
+def annotations_for(manager, provider, published=None):
+    return AnnotationsScope(manager, provider=provider,
                      publish=None if published is None else
                      (lambda session_id: published.append(session_id) or _done()))
 
@@ -71,7 +71,7 @@ async def test_highlights_carry_session_wide_numbering(session):
     writer = manager.get(sid)
     for command in (highlight("a.py", 10, 12), highlight("pkg/b.py", 3, 3), highlight("a.py", 40, 41)):
         await writer.submit(command, Origin.BROWSER)
-    view = await rail_for(manager, provider).build(sid)
+    view = await annotations_for(manager, provider).build(sid)
     assert [h["n"] for h in view["highlights"]] == [1, 2, 3]
     # the numbering spans files, which is why it cannot come from a per-file scope
     assert [h["file"] for h in view["highlights"]] == ["a.py", "pkg/b.py", "a.py"]
@@ -85,7 +85,7 @@ async def test_a_card_lands_on_its_highlight_and_an_insight_stands_alone(session
     await writer.submit(EmitCard(highlight_id=hid, body="because the pool moved",
                                 citations=["pool.py:12"]), Origin.AGENT)
     await writer.submit(EmitCard(highlight_id=None, body="this MR widens a lock"), Origin.AGENT)
-    view = await rail_for(manager, provider).build(sid)
+    view = await annotations_for(manager, provider).build(sid)
     assert view["highlights"][0]["card"]["body"] == "because the pool moved"
     assert view["highlights"][0]["card"]["citations"] == ["pool.py:12"]
     assert [i["body"] for i in view["insights"]] == ["this MR widens a lock"]
@@ -95,22 +95,22 @@ async def test_a_draft_moves_the_highlights_comment_state(session):
     manager, sid, provider = session
     writer = manager.get(sid)
     await writer.submit(highlight(), Origin.BROWSER)
-    rail = rail_for(manager, provider)
-    assert (await rail.build(sid))["highlights"][0]["comment_state"] == "context"
+    annotations = annotations_for(manager, provider)
+    assert (await annotations.build(sid))["highlights"][0]["comment_state"] == "context"
     hid = writer.snapshot().highlights[0].id
     await writer.submit(SaveDraft(highlight_id=hid, body="rename this"), Origin.BROWSER)
-    assert (await rail.build(sid))["highlights"][0]["comment_state"] == "comment"
+    assert (await annotations.build(sid))["highlights"][0]["comment_state"] == "comment"
 
 
 async def test_the_host_context_loads_then_lands(session):
     manager, sid, provider = session
     await manager.get(sid).submit(highlight("a.py", 10, 12), Origin.BROWSER)
     published = []
-    rail = rail_for(manager, provider, published)
-    first = await rail.build(sid)
+    annotations = annotations_for(manager, provider, published)
+    first = await annotations.build(sid)
     assert first["highlights"][0]["context"]["state"] == "loading"   # build never calls the host
-    await rail._tasks[("abc", "a.py", 10, 12)]
-    view = await rail.build(sid)
+    await annotations._tasks[("abc", "a.py", 10, 12)]
+    view = await annotations.build(sid)
     context = view["highlights"][0]["context"]
     assert context["state"] == "ready"
     assert context["blame"][0]["author"] == "luigi"
@@ -122,12 +122,12 @@ async def test_the_host_context_loads_then_lands(session):
 async def test_one_read_serves_a_range(session):
     manager, sid, provider = session
     await manager.get(sid).submit(highlight("a.py", 10, 12), Origin.BROWSER)
-    rail = rail_for(manager, provider)
-    await rail.build(sid)
-    await rail._tasks[("abc", "a.py", 10, 12)]
-    await rail.build(sid)
-    await rail.build(sid)
-    # a range at a fixed sha cannot change, so it is read once however often the rail is built
+    annotations = annotations_for(manager, provider)
+    await annotations.build(sid)
+    await annotations._tasks[("abc", "a.py", 10, 12)]
+    await annotations.build(sid)
+    await annotations.build(sid)
+    # a range at a fixed sha cannot change, so it is read once however often the annotations is built
     assert provider.blame_calls.count(("a.py", "abc", 10, 12)) == 1
 
 
@@ -140,10 +140,10 @@ async def test_a_failing_blame_does_not_cost_the_linked_issues(session):
 
     provider.blame = broken_blame
     await manager.get(sid).submit(highlight(), Origin.BROWSER)
-    rail = rail_for(manager, provider)
-    await rail.build(sid)
-    await rail._tasks[("abc", "a.py", 10, 12)]
-    context = (await rail.build(sid))["highlights"][0]["context"]
+    annotations = annotations_for(manager, provider)
+    await annotations.build(sid)
+    await annotations._tasks[("abc", "a.py", 10, 12)]
+    context = (await annotations.build(sid))["highlights"][0]["context"]
     assert context["state"] == "ready" and context["blame"] == []
     assert context["linked_issues"][0]["iid"] == 322
 
@@ -151,18 +151,18 @@ async def test_a_failing_blame_does_not_cost_the_linked_issues(session):
 async def test_a_host_that_cannot_blame_says_unavailable(session):
     manager, sid, _ = session
     await manager.get(sid).submit(highlight(), Origin.BROWSER)
-    view = await RailScope(manager, provider=HostStub()).build(sid)
+    view = await AnnotationsScope(manager, provider=HostStub()).build(sid)
     assert view["highlights"][0]["context"]["state"] == "unavailable"
 
 
 async def test_an_unknown_session_is_reported(session):
     manager, _, provider = session
-    assert (await rail_for(manager, provider).build("ghost"))["state"] == "unknown-session"
+    assert (await annotations_for(manager, provider).build("ghost"))["state"] == "unknown-session"
 
 
 # --- the tail, through the real stream ---------------------------------------
 
-def test_the_rail_republishes_when_the_session_changes(tmp_path):
+def test_the_annotations_republish_when_the_session_changes(tmp_path):
     """Without the tail on a watched session's events, a card would never reach a client."""
     provider = BlameHost()
     manager = SessionManager(root=tmp_path / "sessions", mr_source=provider)
@@ -172,7 +172,7 @@ def test_the_rail_republishes_when_the_session_changes(tmp_path):
         sid = tc.post("/api/cmd", json={"cmd": "session.open",
                                         "args": {"ref": "g/p!1"}}).json()["session"]
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": [f"rail:{sid}"]})
+            ws.send_json({"action": "subscribe", "scopes": [f"annotations:{sid}"]})
             assert json.loads(ws.receive_text())["view"]["highlights"] == []
             tc.post(f"/api/sessions/{sid}/commands",
                     json={"type": "add_highlight", "file": "a.py", "side": "new",
@@ -182,7 +182,7 @@ def test_the_rail_republishes_when_the_session_changes(tmp_path):
                 if view.get("highlights"):
                     assert view["highlights"][0]["n"] == 1
                     return
-            raise AssertionError("the rail never republished")
+            raise AssertionError("the annotations never republished")
 
 
 async def test_a_highlight_made_against_an_older_head_is_marked_stale(tmp_path):
@@ -195,12 +195,12 @@ async def test_a_highlight_made_against_an_older_head_is_marked_stale(tmp_path):
     sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
     writer = manager.get(sid)
     await writer.submit(highlight(), Origin.BROWSER)
-    rail = RailScope(manager, provider=provider)
-    assert (await rail.build(sid))["highlights"][0]["stale"] is False
+    annotations = AnnotationsScope(manager, provider=provider)
+    assert (await annotations.build(sid))["highlights"][0]["stale"] is False
 
     moved = writer.snapshot().mr.model_copy(update={"sha": "moved-on"})
     await writer.submit(ApplyMRMetadata(mr=moved), Origin.SYSTEM)
-    assert (await rail.build(sid))["highlights"][0]["stale"] is True
+    assert (await annotations.build(sid))["highlights"][0]["stale"] is True
     await manager.shutdown()
 
 
@@ -213,13 +213,13 @@ async def test_a_number_survives_the_removal_of_an_earlier_highlight(session):
     writer = manager.get(sid)
     for n in range(3):
         await writer.submit(highlight(f"f{n}.py", n + 1, n + 1), Origin.BROWSER)
-    rail = rail_for(manager, provider)
-    assert [(h["n"], h["file"]) for h in (await rail.build(sid))["highlights"]] == \
+    annotations = annotations_for(manager, provider)
+    assert [(h["n"], h["file"]) for h in (await annotations.build(sid))["highlights"]] == \
         [(1, "f0.py"), (2, "f1.py"), (3, "f2.py")]
 
     second = writer.snapshot().highlights[1]
     await writer.submit(RemoveHighlight(highlight_id=second.id), Origin.BROWSER)
-    assert [(h["n"], h["file"]) for h in (await rail.build(sid))["highlights"]] == \
+    assert [(h["n"], h["file"]) for h in (await annotations.build(sid))["highlights"]] == \
         [(1, "f0.py"), (3, "f2.py")]        # a gap, not a renumber
 
 
@@ -235,8 +235,8 @@ async def test_a_number_is_never_reused_after_the_newest_is_removed(session):
     newest = writer.snapshot().highlights[-1]
     await writer.submit(RemoveHighlight(highlight_id=newest.id), Origin.BROWSER)
     await writer.submit(highlight("c.py", 3, 3), Origin.BROWSER)
-    rail = rail_for(manager, provider)
-    assert [(h["n"], h["file"]) for h in (await rail.build(sid))["highlights"]] == \
+    annotations = annotations_for(manager, provider)
+    assert [(h["n"], h["file"]) for h in (await annotations.build(sid))["highlights"]] == \
         [(1, "a.py"), (3, "c.py")]
 
 
@@ -254,8 +254,8 @@ async def test_removing_a_card_leaves_the_numbering_alone(session):
     # the agent may not retract a card; the reviewer dismisses it
     assert not (await writer.submit(RemoveCard(card_id=card.id), Origin.AGENT)).ok
     assert (await writer.submit(RemoveCard(card_id=card.id), Origin.BROWSER)).ok
-    rail = rail_for(manager, provider)
-    view = await rail.build(sid)
+    annotations = annotations_for(manager, provider)
+    view = await annotations.build(sid)
     assert [h["n"] for h in view["highlights"]] == [1, 2]
     assert view["highlights"][0]["card"] is None
 
@@ -277,16 +277,16 @@ async def test_numbering_survives_a_restart(tmp_path):
 
     restored = SessionManager(root=root, mr_source=provider)
     await restored.restore_all()
-    view = await RailScope(restored, provider=provider).build(sid)
+    view = await AnnotationsScope(restored, provider=provider).build(sid)
     assert [h["n"] for h in view["highlights"]] == [1, 3]
     # and the next highlight continues past the gap rather than filling it
     await restored.get(sid).submit(highlight("new.py", 9, 9), Origin.BROWSER)
-    view = await RailScope(restored, provider=provider).build(sid)
+    view = await AnnotationsScope(restored, provider=provider).build(sid)
     assert [h["n"] for h in view["highlights"]] == [1, 3, 4]
     await restored.shutdown()
 
 
-async def test_the_rail_says_who_asked_and_whether_it_was_escalated(session):
+async def test_the_annotations_say_who_asked_and_whether_it_was_escalated(session):
     """A highlight the agent made reads differently, and an escalated one is awaiting an answer."""
     from review_mate.session.commands import RequestContext
 
@@ -294,14 +294,14 @@ async def test_the_rail_says_who_asked_and_whether_it_was_escalated(session):
     writer = manager.get(sid)
     await writer.submit(highlight("a.py", 1, 1), Origin.BROWSER)
     await writer.submit(highlight("b.py", 2, 2), Origin.AGENT)
-    rail = rail_for(manager, provider)
-    view = await rail.build(sid)
+    annotations = annotations_for(manager, provider)
+    view = await annotations.build(sid)
     assert [h["author"] for h in view["highlights"]] == ["browser", "agent"]
     assert [h["context_requested"] for h in view["highlights"]] == [False, False]
 
     await writer.submit(RequestContext(highlight_id=writer.snapshot().highlights[0].id),
                        Origin.BROWSER)
-    view = await rail.build(sid)
+    view = await annotations.build(sid)
     assert view["highlights"][0]["context_requested"] is True
     # the escalation's own timestamp rides along: it is what ages the "Claude is working" cue
     assert view["highlights"][0]["context_requested_at"] == (
@@ -316,14 +316,14 @@ async def test_the_rail_says_who_asked_and_whether_it_was_escalated(session):
 
 async def test_a_review_nobody_has_asked_about_can_be_asked_about(session):
     manager, sid, provider = session
-    scope = rail_for(manager, provider)
+    scope = annotations_for(manager, provider)
     passed = (await scope.build(sid))["review_pass"]
     assert passed["requested"] is False and passed["available"] is True
 
 
 async def test_a_pass_in_flight_cannot_be_asked_for_again(session):
     manager, sid, provider = session
-    scope = rail_for(manager, provider)
+    scope = annotations_for(manager, provider)
     await manager.get(sid).submit(RequestInsights(), Origin.BROWSER)
     passed = (await scope.build(sid))["review_pass"]
     assert passed["requested"] is True and passed["stale"] is False
@@ -332,7 +332,7 @@ async def test_a_pass_in_flight_cannot_be_asked_for_again(session):
 
 async def test_a_pass_the_change_moved_past_stays_visible_and_reads_stale(session):
     manager, sid, provider = session
-    scope = rail_for(manager, provider)
+    scope = annotations_for(manager, provider)
     await manager.get(sid).submit(RequestInsights(), Origin.BROWSER)
     snapshot = manager.get(sid).snapshot()
     await manager.get(sid).submit(
@@ -346,7 +346,7 @@ async def test_a_pass_the_change_moved_past_stays_visible_and_reads_stale(sessio
 
 async def test_asking_again_about_the_new_code_is_no_longer_stale(session):
     manager, sid, provider = session
-    scope = rail_for(manager, provider)
+    scope = annotations_for(manager, provider)
     await manager.get(sid).submit(RequestInsights(), Origin.BROWSER)
     snapshot = manager.get(sid).snapshot()
     await manager.get(sid).submit(
@@ -362,7 +362,7 @@ async def test_asking_again_about_the_new_code_is_no_longer_stale(session):
 
 async def test_an_insight_carries_its_label(session):
     manager, sid, provider = session
-    scope = rail_for(manager, provider)
+    scope = annotations_for(manager, provider)
     await manager.get(sid).submit(EmitCard(
         highlight_id=None, body="the retry is unbounded",
         label=Label(theme=Theme.BUG, criticality=Criticality.HIGH, about="the retry path")),
@@ -375,7 +375,7 @@ async def test_an_insight_carries_its_label(session):
 async def test_an_unclassified_insight_says_nothing_rather_than_low(session):
     """Absent must not read as unimportant — it means nobody looked at it that way."""
     manager, sid, provider = session
-    scope = rail_for(manager, provider)
+    scope = annotations_for(manager, provider)
     await manager.get(sid).submit(EmitCard(highlight_id=None, body="a note"), Origin.AGENT)
     assert (await scope.build(sid))["insights"][0]["label"] is None
 
@@ -383,7 +383,7 @@ async def test_an_unclassified_insight_says_nothing_rather_than_low(session):
 async def test_a_corrected_label_says_whose_it_is_now(session):
     """A client shows a reviewer's correction differently from a claim nobody questioned."""
     manager, sid, provider = session
-    scope = rail_for(manager, provider)
+    scope = annotations_for(manager, provider)
     writer = manager.get(sid)
     await writer.submit(EmitCard(highlight_id=None, body="x", label=Label(
         theme=Theme.BUG, criticality=Criticality.HIGH)), Origin.AGENT)
@@ -398,7 +398,7 @@ async def test_a_corrected_label_says_whose_it_is_now(session):
 
 async def test_a_highlight_the_agent_fixed_says_what_it_became(session):
     manager, sid, provider = session
-    scope = rail_for(manager, provider)
+    scope = annotations_for(manager, provider)
     writer = manager.get(sid)
     await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
                                     line_range=LineRange(start=1, end=1)), Origin.BROWSER)
@@ -414,7 +414,7 @@ async def test_a_highlight_the_agent_fixed_says_what_it_became(session):
 async def test_a_highlight_nobody_fixed_carries_nothing(session):
     """Absent, so a client cannot mistake "not yet" for "done"."""
     manager, sid, provider = session
-    scope = rail_for(manager, provider)
+    scope = annotations_for(manager, provider)
     await manager.get(sid).submit(AddHighlight(file="a.py", side=Side.NEW,
                                                line_range=LineRange(start=1, end=1)),
                                   Origin.BROWSER)
@@ -424,7 +424,7 @@ async def test_a_highlight_nobody_fixed_carries_nothing(session):
 async def test_where_a_subject_stands_is_the_last_answer_not_the_first(session):
     """A subject answered twice was answered badly the first time."""
     manager, sid, provider = session
-    scope = rail_for(manager, provider)
+    scope = annotations_for(manager, provider)
     writer = manager.get(sid)
     await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
                                     line_range=LineRange(start=1, end=1)), Origin.BROWSER)
@@ -436,7 +436,7 @@ async def test_where_a_subject_stands_is_the_last_answer_not_the_first(session):
 
 async def test_the_agent_can_fix_its_own_finding(session):
     manager, sid, provider = session
-    scope = rail_for(manager, provider)
+    scope = annotations_for(manager, provider)
     writer = manager.get(sid)
     await writer.submit(EmitCard(highlight_id=None, body="the retry is unbounded"), Origin.AGENT)
     cid = writer.snapshot().cards[0].id

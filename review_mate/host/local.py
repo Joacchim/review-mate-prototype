@@ -1,7 +1,7 @@
 """Reviewing a branch that is still on this machine.
 
 The other thing worth reviewing: work an agent has just produced, before anyone else is asked to
-look at it. Same review — the diff, the rail, highlights, the chat — against a branch in the
+look at it. Same review — the diff, the annotations, highlights, the chat — against a branch in the
 working repository instead of a merge request on a forge.
 
 It is a provider, not a mode. `MRSource` is two methods, and everything downstream already turns

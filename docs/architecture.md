@@ -20,7 +20,7 @@ flowchart TB
 
     subgraph server["review-mate — one local server"]
         direction LR
-        SCOPE["Scope stream<br/>hub · diff · files · rail<br/>chat · review · threads · consent"]
+        SCOPE["Scope stream<br/>hub · diff · files · annotations<br/>chat · review · threads · consent"]
         SESS["Session commands<br/>marked lines · cards<br/>drafts · messages"]
         NAMED["Named commands<br/>open · close · re-sync<br/>submit · mark read"]
         FIND["Discovery<br/>search, or ask<br/>by description"]
@@ -153,7 +153,7 @@ follows posting rather than racing it.
 | `diff:<sid>:<mode>` | the file list and the MR |
 | `diff:<sid>:<mode>:<path>` | one file's hunks, lines and token spans |
 | `blob:<sid>:<mode>:<path>` | a whole file at the resolved sha, for unfolding |
-| `rail:<sid>` | the session's highlights with their cards and host context, and MR-level insights |
+| `annotations:<sid>` | the session's highlights with their cards and host context, and MR-level insights |
 | `chat:<sid>` | an index of the review's chats, and the agent state it is in |
 | `chat:<sid>:review` | the chat about the change as a whole |
 | `chat:<sid>:<kind>:<id>` | one subject's chat — kind is highlight, insight or thread |
@@ -201,7 +201,7 @@ stream is ephemeral.
 A thread that vanishes on a host re-sync keeps its chat. The host reconciling is not the
 reviewer discarding — a discussion can leave because someone resolved and deleted it, or because a
 system note was filtered — and what the reviewer wrote about it privately is still theirs. The
-chat is then reachable on the wire and not from any rail, which costs an orphan and is the
+chat is then reachable on the wire and not from any annotation, which costs an orphan and is the
 cheaper mistake of the two.
 
 An agent's own question back to the reviewer is not an ask. Nothing distinguishes a question from a
@@ -276,11 +276,11 @@ messages are about what is inside one.
 Alongside the view protocol, the session document is served directly: `GET /api/sessions/{id}`
 returns the folded state, `POST /api/sessions/{id}/commands` submits a session command, and a
 per-session websocket streams its events. A client reads what the scopes fold — highlights, their
-cards and the host context all arrive on `rail:<sid>` — and reaches for the document only for what no
+cards and the host context all arrive on `annotations:<sid>` — and reaches for the document only for what no
 scope carries: drafts under edit, threads, chat. The agent reaches the same sessions in-process
 through the MCP bridge rather than over HTTP.
 
-It reads the same folded scopes, through the same instances. `get_session` composes the rail, the
+It reads the same folded scopes, through the same instances. `get_session` composes the annotations, the
 chat index, the discussions and the consent list rather than returning the session document, so
 there is one representation of a review and not one per audience. That is what stopped the
 outstanding-asks predicate being worked out in three places, and it is why the agent's backlog is

@@ -12,17 +12,17 @@ class ThreadsPage:
 
     @property
     def heading(self):
-        return self.page.locator(".rail h3", has_text="Discussions")
+        return self.page.locator(".ann h3", has_text="Discussions")
 
     @property
     def rows(self):
-        """Discussion rows, which the rail renders after its per-line index."""
-        return self.page.locator(".raillist .hrow:has(.chip)").filter(
+        """Discussion rows, which the annotations renders after its per-line index."""
+        return self.page.locator(".annlist .hrow:has(.chip)").filter(
             has=self.page.locator(".chip.comment, .chip.posted")).filter(
             has_not=self.page.locator(".num:text-matches('^#')"))
 
     def row(self, text: str):
-        return self.page.locator(".raillist .hrow", has_text=text)
+        return self.page.locator(".annlist .hrow", has_text=text)
 
     def show(self, which: str) -> None:
         """`Unresolved` or `All` — the filter a reviewer arrives with, and the other one.
@@ -33,7 +33,7 @@ class ThreadsPage:
         self.page.locator(".threadseg .btn", has_text=which).click()
 
     def refresh(self) -> None:
-        self.page.locator(".raillist .btn", has_text="refresh").click()
+        self.page.locator(".annlist .btn", has_text="refresh").click()
 
     def jump_from(self, text: str) -> None:
         """Click a discussion's location, which takes the diff to the line it is about."""

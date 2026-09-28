@@ -44,7 +44,7 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
 
     @mcp.tool()
     async def get_session(session_id: str) -> dict:
-        """The session as the reviewer sees it: the merge request, the rail, the chats and
+        """The session as the reviewer sees it: the merge request, the annotations, the chats and
         their `asks`, the discussions, and the consent list.
 
         `chat.asks` is your backlog — what the reviewer is waiting on you for, already worked out.
@@ -121,7 +121,7 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
         did.
 
         Recording it is what makes the change legible. Five open comments and one new commit is a
-        matching exercise the reviewer should not have to do — and it is what stops their rail
+        matching exercise the reviewer should not have to do — and it is what stops their annotations
         filling with stale warnings about their own progress, because a subject whose code moved
         with one of these against it moved *because* you fixed it.
 

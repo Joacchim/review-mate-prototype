@@ -55,7 +55,7 @@ def review_with_drafts(session_id="s1") -> SessionState:
 def review_with_highlights(session_id="s1") -> SessionState:
     """A review already asked about: one answered, one escalated and waiting, one made older.
 
-    The numbers are 1, 3 and 4 — #2 was removed — so a rail that renumbers from its own row order
+    The numbers are 1, 3 and 4 — #2 was removed — so a annotations that renumbers from its own row order
     disagrees with what the reviewer and the agent call these.
     """
     state = two_file_review(session_id)

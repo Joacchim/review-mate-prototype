@@ -110,7 +110,7 @@ async def test_a_message_can_be_about_a_highlight_an_insight_or_a_thread(setup):
 
 
 def test_a_subject_that_does_not_exist_is_rejected():
-    """An anchored message no rail row carries would never be rendered by anything."""
+    """An anchored message no annotations row carries would never be rendered by anything."""
     state = _subject_state()
     for kind, reason in ((SubjectKind.HIGHLIGHT, "no such highlight: nope"),
                          (SubjectKind.INSIGHT, "no such insight: nope"),

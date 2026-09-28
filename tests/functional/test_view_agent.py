@@ -17,7 +17,7 @@ from review_mate.view.access import AccessScope
 from review_mate.view.agent import AgentView
 from review_mate.view.chat import ChatScopes
 from review_mate.view.diffscope import DiffScopes
-from review_mate.view.rail import RailScope
+from review_mate.view.annotations import AnnotationsScope
 from review_mate.view.threads import ThreadsScope
 
 
@@ -29,7 +29,7 @@ async def agent(tmp_path):
         manager = SessionManager(root=tmp_path / "sessions", mr_source=HostStub())
         made.append(manager)
         sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
-        view = AgentView(manager, rail=RailScope(manager), chat=ChatScopes(manager),
+        view = AgentView(manager, annotations=AnnotationsScope(manager), chat=ChatScopes(manager),
                          threads=ThreadsScope(manager, user="reviewer"),
                          access=AccessScope(manager), diffs=DiffScopes(manager))
         return manager, sid, view
@@ -62,11 +62,11 @@ async def test_the_backlog_is_published_not_rederived(agent):
     assert [a["kind"] for a in asks] == ["context"]
 
 
-async def test_a_bare_highlight_is_on_the_rail_and_owes_nothing(agent):
+async def test_a_bare_highlight_is_annotated_and_owes_nothing(agent):
     manager, sid, view = await agent()
     highlight = await mark(manager.get(sid))
     built = await view.build(sid)
-    assert [h["id"] for h in built["rail"]["highlights"]] == [highlight.id]
+    assert [h["id"] for h in built["annotations"]["highlights"]] == [highlight.id]
     assert built["chat"]["agent"]["asks"] == []
 
 

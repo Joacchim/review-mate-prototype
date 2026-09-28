@@ -40,7 +40,7 @@ code as in production and validated by the same models. No test writes protocol 
 ```mermaid
 flowchart LR
     T["a test"] -->|stages state| F["FakeManager<br/>SessionState objects"]
-    F --> S["HubScope · DiffScopes · BlobScopes · RailScope<br/><i>production code</i>"]
+    F --> S["HubScope · DiffScopes · BlobScopes · AnnotationsScope<br/><i>production code</i>"]
     S --> B["ViewBus<br/><i>production code</i>"]
     B --> R["build_view_routes<br/><i>production code</i>"]
     R -->|"/api/stream · /api/cmd"| P["the page under test"]
@@ -89,7 +89,7 @@ async def test_tracking_moves_an_mr_into_open_reviews(hub: HubPage):
     await expect(hub.queue.row("g/p!7")).to_have_count(0)
 ```
 
-One page object per surface: `HubPage`, `DiffPage`, `RailPage`, `ShellPage`, `DetailPage`,
+One page object per surface: `HubPage`, `DiffPage`, `AnnotationsPage`, `ShellPage`, `DetailPage`,
 `ReviewBarPage`, `ThreadsPage`, `ConsentPage`. Each exposes
 intent (`track`, `unfold`, `highlight_lines`, `submit`), not clicks.
 
@@ -136,7 +136,7 @@ right command, and that a pushed update repaints. Review logic is the protocol s
 | Review | `test_review.py` | drafting per highlight and at MR level, editing one, the counts, batch submit and what landed, approve, the discussion list and its filter, jump to line, reply, resolve, and the review-pass control in all three of its states |
 | Consent | `test_consent.py` | what a cross-repo ask shows, allowing, refusing, an already-decided ask, and each repository answered on its own |
 | Full view | `test_full_view.py` | the panel taking the window, reading width, the toggle both ways, and what survives the diff view mode |
-| Rail zones | `test_rail_zones.py` | the pin outside the scroller, its cap, and the index still reachable past a run of insights |
+| Annotation zones | `test_annotation_zones.py` | the pin outside the scroller, its cap, and the index still reachable past a run of insights |
 | Addressed | `test_addressed.py` | a subject the agent changed the code over reading as addressed rather than stale, and the drifted case still warning |
 | Insight labels | `test_insight_labels.py` | worst-first ordering, unclassified sorting last rather than lowest, the free line, narrowing to one theme, and the reviewer overriding a label without losing the finding |
 | Readability | `test_readable.py` | that an active toggle or filter is still legible — its text not the colour of its own background — in both themes |

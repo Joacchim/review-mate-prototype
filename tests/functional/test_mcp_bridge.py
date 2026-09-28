@@ -18,10 +18,10 @@ async def setup(tmp_path):
     from review_mate.view.access import AccessScope
     from review_mate.view.agent import AgentView
     from review_mate.view.chat import ChatScopes
-    from review_mate.view.rail import RailScope
+    from review_mate.view.annotations import AnnotationsScope
     from review_mate.view.threads import ThreadsScope
     manager = SessionManager(root=tmp_path / "sessions")
-    view = AgentView(manager, rail=RailScope(manager), chat=ChatScopes(manager),
+    view = AgentView(manager, annotations=AnnotationsScope(manager), chat=ChatScopes(manager),
                      threads=ThreadsScope(manager), access=AccessScope(manager))
     bridge = AgentBridge(manager, view=view)
     sid = await manager.create()
@@ -198,7 +198,7 @@ async def test_the_real_app_gives_the_agent_the_folded_view(tmp_path):
         await writer.submit(SaveDraft(highlight_id=hid, body="a candid unsent note"), Origin.BROWSER)
 
         built = await app.state.bridge.view(sid)
-        assert "rail" in built and "chat" in built and "access" in built
+        assert "annotations" in built and "chat" in built and "access" in built
         assert "a candid unsent note" not in repr(built)
         assert "files" not in built
 
@@ -219,7 +219,7 @@ async def test_the_tool_the_agent_actually_calls_returns_the_folded_view(setup):
     text = "".join(part.text for part in (returned[0] if isinstance(returned, tuple) else returned))
     payload = json.loads(text)
 
-    assert "rail" in payload and "chat" in payload
+    assert "annotations" in payload and "chat" in payload
     assert "asks" in payload["chat"]["agent"], "the backlog, so the worker stops deriving it"
     assert "a candid unsent note" not in repr(payload)
     assert "files" not in payload, "the diff has its own tool"

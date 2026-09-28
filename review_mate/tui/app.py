@@ -408,14 +408,14 @@ class Shell:
             spawn(self.resync(previous))
 
         def _moved(delta: int) -> None:
-            # the rail cursor picks the subject, so moving it changes which chat is watched
+            # the annotation cursor picks the subject, so moving it changes which chat is watched
             previous = self.diff.wanted() if self.diff is not None else []
             self.screen.move(delta)
             if self.diff is None:
                 return
-            # the rail and the discussions pick a subject, so moving either changes which
+            # the annotations and the discussions pick a subject, so moving either changes which
             # chat is watched; the file list picks what the body reads
-            if self.diff.focus in ("rail", "threads") or (self.diff.focus == "files"
+            if self.diff.focus in ("annotations", "threads") or (self.diff.focus == "files"
                                                           and self.diff.browsing):
                 if self.diff.focus == "files":
                     self.diff.open_current()
@@ -498,8 +498,8 @@ class Shell:
         @kb.add("L")
         def _relabel(event) -> None:
             """Disagree with how Claude classified the finding under the cursor."""
-            row = self.diff.rail_row() if self.diff is not None else None
-            if row is None or row["kind"] != "insight" or self.diff.focus != "rail":
+            row = self.diff.annotation_row() if self.diff is not None else None
+            if row is None or row["kind"] != "insight" or self.diff.focus != "annotations":
                 return
             self.labelling = {"card_id": row["data"]["id"], "theme": None}
             self.invalidate()
@@ -592,7 +592,7 @@ class Shell:
 
         @kb.add("d")
         def _draft(event) -> None:
-            """Write the review comment for whatever the rail points at, or for the MR itself."""
+            """Write the review comment for whatever the annotations point at, or for the MR itself."""
             if self.diff is not None:
                 self.start_compose("draft")
 

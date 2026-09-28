@@ -60,7 +60,7 @@ with one, that file's hunks, lines and token spans.
 **blob** — the scope family carrying a whole file at a resolved sha, which is what a client splices
 from when a reader unfolds the context between hunks.
 
-**rail** — the scope family carrying a session's highlights with their cards and their host
+**annotations** — the scope family carrying a session's highlights with their cards and their host
 context, plus the MR-level insights. One scope per session rather than per file: the numbering
 is session-wide, and a card arriving would otherwise republish a whole tokenized file.
 

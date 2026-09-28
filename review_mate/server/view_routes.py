@@ -141,7 +141,7 @@ def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
         """Every thread verb answers the same way: do it, then republish what it changed.
 
         A verb touches the discussions and, through them, whether a highlight's posted comment has
-        a thread to show — so the rail and the review are republished with them.
+        a thread to show — so the annotations and the review are republished with them.
         """
         sid = _session_arg(args)
         if sid is None or threads is None:
@@ -153,7 +153,7 @@ def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
         if "error" in result:
             return JSONResponse({"ok": False, "reason": result["error"]},
                                 status_code=404 if result["error"] == "unknown session" else 400)
-        for scope in (f"threads:{sid}", f"rail:{sid}", f"review:{sid}"):
+        for scope in (f"threads:{sid}", f"annotations:{sid}", f"review:{sid}"):
             await bus.publish(scope)
         await _publish_hub()
         return JSONResponse({"ok": True, **result})
@@ -198,7 +198,7 @@ def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
             browse.forget_commits(sid)
         for scope in bus.watched(f"diff:{sid}:") | bus.watched(f"blob:{sid}:"):
             await bus.publish(scope)
-        for scope in (f"threads:{sid}", f"rail:{sid}", f"review:{sid}", f"commits:{sid}"):
+        for scope in (f"threads:{sid}", f"annotations:{sid}", f"review:{sid}", f"commits:{sid}"):
             await bus.publish(scope)
         await _publish_hub()
         return JSONResponse({"ok": True, **result})

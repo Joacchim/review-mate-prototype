@@ -11,12 +11,12 @@ class ConsentPage:
     @property
     def requests(self):
         """One block per repository asked about, answered or not."""
-        return self.page.locator(".rail .req")
+        return self.page.locator(".ann .req")
 
     @property
     def waiting(self):
         """The ones still owed an answer — the only ones that offer the two buttons."""
-        return self.page.locator(".rail .req:not(.decided)")
+        return self.page.locator(".ann .req:not(.decided)")
 
     def outcome(self, repo: str):
         """What the answer produced: refused, being fetched, ready at a path, or failed."""

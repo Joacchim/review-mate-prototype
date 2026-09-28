@@ -77,28 +77,28 @@
   .files{overflow:auto;background:var(--panel);border-right:1px solid var(--line)}
   /* two zones: the one that stays within reach whatever is being read, and the one that scrolls
      under it. The first is capped so its growth cannot bury the second. */
-  .rail{background:var(--panel);border-left:1px solid var(--line);padding:12px;
+  .ann{background:var(--panel);border-left:1px solid var(--line);padding:12px;
         display:flex;flex-direction:column;min-height:0;overflow:hidden}
-  .railpin{position:relative;flex:none;display:flex;flex-direction:column;min-height:0;
+  .annpin{position:relative;flex:none;display:flex;flex-direction:column;min-height:0;
            max-height:46%;background:var(--pinbg);border:1px solid var(--pinline);
            border-radius:10px;padding:9px 9px 5px;margin-bottom:2px}
-  .railpin h3{margin:0 0 8px;padding:0 2px}
+  .annpin h3{margin:0 0 8px;padding:0 2px}
   /* the zone's own edge, so a clipped row reads as more-below rather than a broken one */
-  .railpin::after{content:"";position:absolute;left:1px;right:1px;bottom:1px;height:18px;
+  .annpin::after{content:"";position:absolute;left:1px;right:1px;bottom:1px;height:18px;
                   border-radius:0 0 9px 9px;pointer-events:none;
                   background:linear-gradient(to top,var(--panel),transparent)}
   /* asking for a pass over the whole change, above the insights it produces */
   .passrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px}
   .passrow .btn:disabled{opacity:.55;cursor:default;border-color:var(--line2);color:var(--fg2)}
   .passrow .passnote{font-size:11px;color:var(--warnfg)}
-  .railinsights{flex:1;min-height:0;overflow:auto;padding-right:2px}
-  .railinsights .hrow:last-child{margin-bottom:4px}
-  .raillist{flex:1;min-height:0;overflow:auto;padding-right:2px}
-  .railsplit{display:flex;align-items:center;gap:8px;margin:12px 0 9px;font-size:11px;
+  .anninsights{flex:1;min-height:0;overflow:auto;padding-right:2px}
+  .anninsights .hrow:last-child{margin-bottom:4px}
+  .annlist{flex:1;min-height:0;overflow:auto;padding-right:2px}
+  .annsplit{display:flex;align-items:center;gap:8px;margin:12px 0 9px;font-size:11px;
              letter-spacing:.08em;text-transform:uppercase;color:var(--fg2)}
-  .railsplit::after{content:"";flex:1;height:1px;background:var(--line2)}
+  .annsplit::after{content:"";flex:1;height:1px;background:var(--line2)}
   /* collapse in place — never display:none (that drops the panel from the grid and shifts the diff) */
-  .shell.hl .files,.shell.hr .rail{overflow:hidden;border:0;padding:0}
+  .shell.hl .files,.shell.hr .ann{overflow:hidden;border:0;padding:0}
   .diff{overflow:auto;padding:0 0 60px}
   /* file tree */
   .treehdr{display:flex;align-items:center;gap:6px;padding:7px 10px;font-size:11px;color:var(--fg2);border-bottom:1px solid var(--line);cursor:pointer;user-select:none}
@@ -147,13 +147,13 @@
   td.code.delc{background:var(--del);color:var(--delfg)} td.ln.delln{background:var(--delln)}
   td.code.addc{background:var(--add);color:var(--addfg)} td.ln.addln{background:var(--addln)}
   td.code.hlc{box-shadow:inset 3px 0 0 var(--accent)}
-  /* rail — a compact, filterable index of highlights */
-  .rail h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg2);margin:6px 0 8px}
-  .railtools{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
-  .railtools .seg{display:flex;gap:4px;flex-wrap:wrap}
-  .railtools .seg button.btn{font-size:11px;padding:3px 7px}
-  .railtools input{flex:1;min-width:100px;background:var(--bg);border:1px solid var(--line2);color:var(--fg);border-radius:6px;padding:5px 8px;font:inherit;font-size:12px}
-  .railtools input::placeholder{color:var(--fg2)}
+  /* annotations — a compact, filterable index of highlights */
+  .ann h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg2);margin:6px 0 8px}
+  .anntools{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .anntools .seg{display:flex;gap:4px;flex-wrap:wrap}
+  .anntools .seg button.btn{font-size:11px;padding:3px 7px}
+  .anntools input{flex:1;min-width:100px;background:var(--bg);border:1px solid var(--line2);color:var(--fg);border-radius:6px;padding:5px 8px;font:inherit;font-size:12px}
+  .anntools input::placeholder{color:var(--fg2)}
   .hrow{position:relative;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 26px 8px 10px;margin-bottom:7px;cursor:pointer}
   .hrow:hover{border-color:var(--line2)}
   .hrow.active{border-color:var(--accent);box-shadow:inset 2px 0 0 var(--accent)}
@@ -179,7 +179,7 @@
   .reviewbar .approve-tog input{cursor:pointer}
   .reviewbar .chip.you-approved{margin-left:auto;font-size:10px;padding:2px 7px}   /* right-aligned status marker */
   button.btn.primary{border-color:var(--accent);color:var(--accent)}
-  /* detail overlay — non-blocking: floats over the diff, leaves the rail clickable */
+  /* detail overlay — non-blocking: floats over the diff, leaves the annotations clickable */
   .detail{position:fixed;top:60px;right:384px;width:clamp(380px,46vw,640px);max-height:calc(100vh - 84px);overflow-y:auto;overflow-x:hidden;
     background:var(--panel);border:1px solid var(--line2);border-radius:10px;box-shadow:0 16px 48px var(--shadow);padding:14px 16px;z-index:40}
   .detail[hidden]{display:none}
@@ -383,7 +383,7 @@
 <div class="shell" id="shell">
   <div class="files" id="files"></div>
   <div class="diff" id="diff"></div>
-  <div class="rail" id="rail"></div>
+  <div class="ann" id="ann"></div>
 </div>
 <div class="detail" id="detail" hidden></div>
 <script src="diffrows.js"></script>

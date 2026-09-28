@@ -166,7 +166,7 @@ async def test_the_forge_is_not_asked_about_a_branch_it_has_never_seen(tmp_path,
     """A scope holds one provider for every session. Sending a local directory name to a remote API
     gets the reviewer an error where the honest answer is "this host knows nothing about that"."""
     from review_mate.session.manager import SessionManager
-    from review_mate.view.rail import RailScope
+    from review_mate.view.annotations import AnnotationsScope
 
     class Forge:
         host = "gitlab"
@@ -184,7 +184,7 @@ async def test_the_forge_is_not_asked_about_a_branch_it_has_never_seen(tmp_path,
     await writer.submit(AddHighlight(file="queue.py", side=Side.NEW,
                                     line_range=LineRange(start=1, end=1)), Origin.BROWSER)
 
-    view = await RailScope(manager, provider=Forge()).build(sid)
+    view = await AnnotationsScope(manager, provider=Forge()).build(sid)
     assert view["highlights"][0]["context"]["state"] == "unavailable"
     assert Forge.asked == 0
     await manager.shutdown()

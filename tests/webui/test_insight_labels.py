@@ -12,7 +12,7 @@ from review_mate.session.state import Card, Criticality, Label, Theme
 from webui.fixtures.scenarios import two_file_review
 from webui.pages.detail import DetailPage
 from webui.pages.diff import DiffPage
-from webui.pages.rail import RailPage
+from webui.pages.annotations import AnnotationsPage
 
 
 @pytest.fixture
@@ -21,8 +21,8 @@ def diff(page, base_url) -> DiffPage:
 
 
 @pytest.fixture
-def rail(page) -> RailPage:
-    return RailPage(page)
+def annotations(page) -> AnnotationsPage:
+    return AnnotationsPage(page)
 
 
 @pytest.fixture
@@ -44,76 +44,76 @@ def _with_insights(*specs):
     return state
 
 
-def test_the_worst_thing_is_first(diff, rail, staged):
+def test_the_worst_thing_is_first(diff, annotations, staged):
     staged.put(_with_insights(
         ("a naming preference", _label("naming", "low")),
         ("an unbounded retry", _label("bug", "high")),
         ("a slow path", _label("performance", "medium")),
     ))
     diff.load("s1")
-    expect(rail.insight_labels).to_have_text(
+    expect(annotations.insight_labels).to_have_text(
         ["bug · high", "performance · medium", "naming · low"])
 
 
-def test_an_unclassified_finding_sorts_last_not_lowest(diff, rail, staged):
+def test_an_unclassified_finding_sorts_last_not_lowest(diff, annotations, staged):
     """Nobody classified it. Burying it under the lows would make that decision for them."""
     staged.put(_with_insights(
         ("nobody looked at this one", None),
         ("a naming preference", _label("naming", "low")),
     ))
     diff.load("s1")
-    expect(rail.pinned_insights.first).to_contain_text("a naming preference")
-    expect(rail.pinned_insights.last).to_contain_text("nobody looked at this one")
-    expect(rail.insight_labels).to_have_count(1)
+    expect(annotations.pinned_insights.first).to_contain_text("a naming preference")
+    expect(annotations.pinned_insights.last).to_contain_text("nobody looked at this one")
+    expect(annotations.insight_labels).to_have_count(1)
 
 
-def test_the_line_that_two_words_cannot_carry_is_shown(diff, rail, staged):
+def test_the_line_that_two_words_cannot_carry_is_shown(diff, annotations, staged):
     staged.put(_with_insights(("x", _label("bug", "high", about="only on cold start"))))
     diff.load("s1")
-    expect(rail.insight_abouts).to_have_text(["only on cold start"])
+    expect(annotations.insight_abouts).to_have_text(["only on cold start"])
 
 
-def test_the_findings_can_be_narrowed_to_one_kind(diff, rail, staged):
+def test_the_findings_can_be_narrowed_to_one_kind(diff, annotations, staged):
     staged.put(_with_insights(
         ("an unbounded retry", _label("bug", "high")),
         ("a naming preference", _label("naming", "low")),
     ))
     diff.load("s1")
-    expect(rail.pinned_insights).to_have_count(2)
-    rail.narrow_to("naming")
-    expect(rail.pinned_insights).to_have_count(1)
-    expect(rail.pinned_insights.first).to_contain_text("a naming preference")
+    expect(annotations.pinned_insights).to_have_count(2)
+    annotations.narrow_to("naming")
+    expect(annotations.pinned_insights).to_have_count(1)
+    expect(annotations.pinned_insights.first).to_contain_text("a naming preference")
 
 
-def test_one_kind_of_finding_offers_no_filter(diff, rail, staged):
+def test_one_kind_of_finding_offers_no_filter(diff, annotations, staged):
     """A filter with a single option is a control that cannot do anything."""
     staged.put(_with_insights(("an unbounded retry", _label("bug", "high"))))
     diff.load("s1")
-    expect(rail.theme_filter).to_have_count(0)
+    expect(annotations.theme_filter).to_have_count(0)
 
 
-def test_the_reviewer_can_disagree_without_losing_the_finding(diff, rail, detail, staged):
+def test_the_reviewer_can_disagree_without_losing_the_finding(diff, annotations, detail, staged):
     staged.put(_with_insights(("this name is confusing", _label("bug", "high"))))
     diff.load("s1")
-    rail.pinned_insights.first.click()
+    annotations.pinned_insights.first.click()
     expect(detail.panel).to_be_visible()
 
     detail.relabel(theme="naming", criticality="low")
-    expect(rail.insight_labels.first).to_contain_text("naming")
-    expect(rail.pinned_insights.first).to_contain_text("this name is confusing")
+    expect(annotations.insight_labels.first).to_contain_text("naming")
+    expect(annotations.pinned_insights.first).to_contain_text("this name is confusing")
 
 
-def test_a_label_the_reviewer_set_says_so(diff, rail, detail, staged):
-    """Their word replaces Claude's, and the rail shows which it is looking at."""
+def test_a_label_the_reviewer_set_says_so(diff, annotations, detail, staged):
+    """Their word replaces Claude's, and the annotations shows which it is looking at."""
     staged.put(_with_insights(("x", _label("bug", "high"))))
     diff.load("s1")
-    rail.pinned_insights.first.click()
+    annotations.pinned_insights.first.click()
     detail.relabel(criticality="low")
     expect(detail.label_note).to_have_text("your label")
-    expect(rail.insight_labels.first).to_contain_text("✓")
+    expect(annotations.insight_labels.first).to_contain_text("✓")
 
 
-def test_a_half_made_choice_survives_a_frame_arriving(diff, rail, detail, staged, as_agent, page):
+def test_a_half_made_choice_survives_a_frame_arriving(diff, annotations, detail, staged, as_agent, page):
     """A label is two choices sent as one command, so the second reads the first off the page. A
     frame landing in between used to rebuild these controls from the stored label and quietly put
     the first choice back — leaving a reviewer who picked both with a card that has neither."""
@@ -121,7 +121,7 @@ def test_a_half_made_choice_survives_a_frame_arriving(diff, rail, detail, staged
 
     staged.put(_with_insights(("nobody classified this", None)))
     diff.load("s1")
-    rail.pinned_insights.first.click()
+    annotations.pinned_insights.first.click()
     expect(detail.panel).to_be_visible()
 
     detail.relabel(theme="security")                 # half a label: nothing is sent yet
@@ -129,4 +129,4 @@ def test_a_half_made_choice_survives_a_frame_arriving(diff, rail, detail, staged
     expect(detail.label_theme).to_have_value("security")   # the frame must not have undone it
 
     detail.relabel(criticality="high")
-    expect(rail.insight_labels.first).to_contain_text("security · high")
+    expect(annotations.insight_labels.first).to_contain_text("security · high")

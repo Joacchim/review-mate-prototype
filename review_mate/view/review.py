@@ -5,9 +5,11 @@ the version they reviewed, and whether they have approved it. Three facts that a
 single bar and were three separate reads before this — so a client painted it in three stages, and a
 second client would have had to reproduce the same assembly.
 
-Drafts live here rather than on the rail because the rail answers "what did I ask about" and this
+Drafts live here rather than with the annotations because those answer "what did I ask about"
+and this
 answers "what am I about to send". A row appears in both, and each carries what its own surface
-renders: the rail shows a comment's *state* to colour a chip, this carries its text and its fate.
+renders: an annotation shows a comment's *state* to colour a chip, this carries its text and
+its fate.
 
 Approval is a host fact, so it follows the shape the hub established rather than being read on
 every build: `refresh` asks once and caches, `build` reports what it knows. An unasked approval is

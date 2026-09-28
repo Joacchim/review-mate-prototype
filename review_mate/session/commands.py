@@ -244,7 +244,7 @@ AUTHORITY: dict[str, set[Origin]] = {
 def _absent_subject(state, anchor: "Subject | None") -> str | None:
     """Why a chat cannot be held about this subject, or None if it can.
 
-    A message anchored to something that does not exist would be unreachable: no rail row carries
+    A message anchored to something that does not exist would be unreachable: no annotation row carries
     it, so nothing would ever render it.
     """
     if anchor is None:

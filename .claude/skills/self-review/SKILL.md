@@ -111,11 +111,11 @@ Two calls, in this order, every time you change code:
 
 1. `record_addressed(session_id, subject_kind, subject_id, sha, summary)` — `sha` is the **branch
    head after the change has landed**, read *after* any rebase. It is what the reviewer's diff now
-   shows, and it is what stops their rail reading your fix as their highlight going stale.
+   shows, and it is what stops their annotations reading your fix as their highlight going stale.
 2. `session.resync` — `POST /api/cmd {"cmd": "session.resync", "args": {"session": "<id>"}}`.
    Committing changes the branch; nothing tells the review until it is asked to look again.
 
-Then **say something in the chat as well**. The record is what the rail draws; it is not a
+Then **say something in the chat as well**. The record is what the annotations draw; it is not a
 reply, and a fix that arrives with nothing said reads as being ignored.
 
 ## 7. Stop
