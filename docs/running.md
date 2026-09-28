@@ -94,8 +94,15 @@ else. Register it once for yourself instead:
 claude mcp add --scope user --transport http review-mate http://127.0.0.1:8765/mcp/
 ```
 
-**Upgrading.** Re-run the install with `--force`, then
-`systemctl --user restart review-mate`.
+**Upgrading.**
+
+```bash
+uv tool install --force 'review-mate[tui] @ git+https://github.com/Joacchim/review-mate-prototype'
+systemctl --user restart review-mate
+```
+
+`--force` is what makes it replace the installed version; without it an existing install is audited
+and left alone, which looks like success and changes nothing.
 Your reviews survive it — they are event-sourced under `~/.review-mate` and restored at startup.
 
 Three things worth knowing:
@@ -170,6 +177,10 @@ is the main reason to run it as a unit rather than starting it by hand.
 
 ## Troubleshooting
 
+- **An install did not bring the change you were expecting** — `uv tool install` from a `git+` URL
+  resolves the repository's **default branch**. A fix that has not landed there yet is not in what
+  you installed, however recently you ran it. Install from a checkout of the branch you want
+  (`uv tool install --force '.[tui]'` inside it) to get that one instead.
 - **The service exits immediately with `No module named 'mcp.server.fastmcp'`** — an installed
   build resolved a newer major of the `mcp` package than it was written against. Reinstall with
   `--force` from a version that caps it; `systemctl --user status review-mate` and

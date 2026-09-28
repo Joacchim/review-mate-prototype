@@ -6,14 +6,18 @@
 > surprising. It is shared in that state on purpose. **Feedback and merge/pull requests are very
 > welcome**, especially on the parts that get in your way.
 
-A code-review companion. Browse a change in a local browser, highlight the code you have questions
-about, and get context back — cheap deterministic context from the host for free, and a deeper
-answer from Claude when you ask for it. The comments you write flow back to the host from the same
-place you read the code.
+Code review where the agent works for you, not instead of you.
 
-It reads a merge request from a forge, or a branch that has never left your machine — the second so
-you can read what an agent just wrote, with the agent answering your comments and fixing what you
-ask, before anyone else is shown it.
+You read the change; Claude answers. Mark lines you have a question about and it tells you what it
+found there. Ask for a pass over the whole change and it comes back with findings you can sort,
+argue with and relabel. What it cannot do is act in your place: it never writes in your name,
+nothing reaches the merge request until you send it, and it asks before reading a repository you
+have not opened. The entire review works with no agent attached — that is a line the design holds,
+not a setting you switch.
+
+It reads a merge request from a forge, or a branch that has never left your machine. The second is
+for work an agent has just written: you review it, and the agent that wrote it answers your comments
+and makes the changes you ask for, before anyone else is shown it.
 
 **GitLab is the only forge implemented** — self-hosted or gitlab.com. **GitHub is intended and not
 built yet.** The review model is host-neutral and a forge sits behind a seam, so adding one is a
@@ -51,13 +55,19 @@ You need `git`, [uv](https://docs.astral.sh/uv/), and — for reviewing merge re
 [`glab`](https://gitlab.com/gitlab-org/cli) CLI already authenticated or a GitLab API token.
 Reviewing a local branch needs neither.
 [Claude Code](https://claude.com/claude-code) is optional — the whole review works without an agent,
-which is the point of the cheap context tier.
+and marking lines still tells you who last touched them and what they are linked to.
 
 ```bash
 uv tool install 'review-mate[tui] @ git+https://github.com/Joacchim/review-mate-prototype'
 glab auth login          # if you have not already
 review-mate              # http://127.0.0.1:8765
 ```
+
+Upgrade with the same command and `--force`. Without it an existing install is audited and left
+alone, which looks like success and changes nothing.
+
+Working on review-mate rather than using it? [Contributing](CONTRIBUTING.md) has the setup for
+that — it runs from a checkout, so an edit is one restart away.
 
 Open <http://127.0.0.1:8765>. With no credentials at all it still starts — there is just no queue
 and no merge request to load, which is enough to review a local branch.
@@ -72,9 +82,10 @@ troubleshooting: **[running it →](docs/running.md)**.
    triaging. You can also paste an MR URL or `group/project!iid` into the toolbar box.
 2. **Read the diff.** Toggle the file tree (◧), the context panel (◨), unified/side-by-side (⇄), and
    per-commit review (⑃) from the header. Click the bands between hunks to unfold context.
-3. **Highlight what you want to know about.** Drag across the lines. The highlight appears in the
-   right-hand rail with the cheap context tier already filled in.
-4. **Escalate if that is not enough.** Open the highlight and use **✦ Ask Claude for context**,
+3. **Mark what you want to know about.** Hold the left mouse button and drag across the lines. It
+   appears in the panel on the right, already carrying what the host knows about those lines — who
+   last touched them, and any issue that references them.
+4. **Ask Claude if that is not enough.** Open it and use **✦ Ask Claude for context**,
    optionally with a specific question. The answer arrives as a card on that highlight. The header
    light tells you whether an agent is actually listening.
 5. **Write your review.** Draft a comment on a highlight, or an MR-level one. Drafts stay local.

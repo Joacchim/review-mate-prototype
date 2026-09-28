@@ -3,52 +3,98 @@
 What the pieces are and how they fit. [The README](../README.md) says what the tool does;
 [the glossary](glossary.md) defines the terms used here.
 
-## Layers
+## The pieces
+
+One local server. Clients talk to it over HTTP and a websocket; it talks to a forge, to git, and to
+a little store of what you have already read. Each client uses a different part of the surface,
+which is what the boxes inside the server are.
 
 ```mermaid
-flowchart TD
+flowchart TB
     subgraph clients["Clients"]
-        W["review_mate/web/<br/>browser"]
-        T["review_mate/tui/<br/>terminal"]
-        A["review_mate/mcp/<br/>agent seam"]
-    end
-    subgraph transport["Transport · review_mate/server/"]
-        V["view_routes.py<br/>/api/stream · /api/cmd"]
-        H["routes.py<br/>/api/sessions/…"]
-    end
-    subgraph view["View · review_mate/view/"]
-        BUS["bus.py"]
-        SC["hub.py · diffscope.py<br/>diffdoc.py · tokens.py"]
-    end
-    subgraph core["Core · review_mate/session/"]
-        AC["actor · commands · events<br/>reducer · state · eventlog"]
-    end
-    subgraph edges["Edges"]
-        HO["host/<br/>GitLab"]
-        WS["workspace/<br/>mirrors · worktrees"]
-        KB["kb/<br/>watermarks"]
+        direction LR
+        W["Browser<br/>(review-mate Web UI)"]
+        T["Terminal<br/>(review-mate TUI)"]
+        A["Agent<br/>(Claude Code, over MCP)"]
     end
 
-    W --> V
-    T --> V
-    W --> H
-    A --> AC
-    V --> BUS --> SC --> AC
-    H --> AC
-    SC --> HO
-    SC --> WS
-    SC --> KB
-    AC --> HO
+    subgraph server["review-mate — one local server"]
+        direction LR
+        SCOPE["Scope stream<br/>hub · diff · files · rail<br/>chat · review · threads · consent"]
+        SESS["Session commands<br/>marked lines · cards<br/>drafts · messages"]
+        NAMED["Named commands<br/>open · close · re-sync<br/>submit · mark read"]
+        FIND["Discovery<br/>search, or ask<br/>by description"]
+        ASKS["Outstanding work<br/>what the reviewer<br/>is waiting on"]
+        SEAM["Agent seam<br/>tools, served over the<br/>surfaces above"]
+    end
+
+    subgraph out["What it reads and writes"]
+        direction LR
+        G["Forge<br/>the change, the discussions,<br/>the review sent back"]
+        R["Git<br/>working repository,<br/>mirrors and worktrees"]
+        M["Review memory<br/>what you have already read"]
+    end
+
+    W --> SCOPE
+    T --> SCOPE
+    W --> SESS
+    T --> SESS
+    W --> NAMED
+    T --> NAMED
+    W --> FIND
+    A --> ASKS
+    A --> SEAM
+
+    server --> G
+    server --> R
+    server --> M
 ```
+
+A client reaches only for what it renders. The browser and the terminal use the same three — the
+stream they read from and the two ways to write — and the browser adds discovery, because that is
+where you go looking for a change.
+
+The agent is handed tools instead, and behind them those tools are the surfaces to their left: it
+reads the same folded scopes the two clients read and writes the same session commands, in the same
+process. It also watches outstanding work, which nothing else does — a reviewer can see what they
+are waiting on, and an agent needs to be told.
+
+## Layers
+
+The same pieces again, arranged by what may know about what. An arrow points at what a layer is
+allowed to depend on, and nothing points back up.
+
+```mermaid
+flowchart TB
+    CL["Rendering clients<br/>browser · terminal"]
+    TR["Transport<br/>HTTP and the websocket"]
+    VW["View<br/>folding state into scopes"]
+    ED["Edges<br/>the change's source · git · review memory"]
+    CO["Core<br/>the event-sourced review"]
+    AG["Agent seam<br/>in the same process"]
+
+    CL --> TR
+    TR --> VW
+    VW --> ED
+    VW --> CO
+    ED --> CO
+    AG --> CO
+
+    classDef bottom fill:#eef3ee,stroke:#6a8f6a
+    class CO bottom
+```
+
+The diagram names roles. This is where each one lives, and what it is allowed to know:
 
 | layer | holds | knows about |
 |---|---|---|
 | `session/` | the event-sourced review model | nothing below it |
 | `seams.py` | the Protocols the core is written against | nothing below it |
-| `host/`, `workspace/`, `kb/` | the forge, the clone area, the reviewer's watermarks | the core |
+| `host/`, `workspace/`, `kb/` | where a change comes from, the clone area, what you have already read | the core |
 | `view/` | folding state into scopes | the core and the edges |
 | `server/` | HTTP and websocket transport | everything above |
-| `web/`, `tui/`, `mcp/` | clients | the transport only |
+| `web/`, `tui/` | the rendering clients | the transport only |
+| `mcp/` | the agent seam | the core directly — it runs in the same process, not over the transport |
 
 The core carries no host, transport or UI knowledge. `tests/boundary/test_boundaries.py` enforces
 that by parsing imports: `session/*.py` and `seams.py` may not import `review_mate.view` or
@@ -190,10 +236,10 @@ the agent's debt.
 
 ```mermaid
 sequenceDiagram
-    participant C as Client
-    participant B as ViewBus
-    participant D as DiffScopes
-    participant G as GitLab
+    participant C as Reader
+    participant B as View bus
+    participant D as Diff scope
+    participant G as Source of the change
 
     C->>B: subscribe diff:s1:full
     B->>D: build
@@ -211,7 +257,7 @@ sequenceDiagram
     B-->>C: scope state=loading
     D->>G: mr_versions
     G-->>D: version bases
-    D->>D: workspace resolves the diff
+    D->>D: resolve it against the local clone
     D->>B: publish
     B-->>C: scope state=ready
 ```

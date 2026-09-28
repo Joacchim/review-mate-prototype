@@ -9,9 +9,17 @@ uv sync
 uv run review-mate            # http://127.0.0.1:8765
 ```
 
-`uv run` is the development path — it runs from the checkout, so an edit is one restart away. For
-using it rather than working on it, install it properly and run it as a service: see
-[running it](docs/running.md).
+`uv run` is the development path — it runs from the checkout, so an edit is one restart away.
+
+To try the packaged form — what a user gets, executables and all — install from the checkout rather
+than from the URL in the README, which resolves the repository's default branch:
+
+```bash
+uv tool install --force '.[tui]'
+```
+
+That is also how to test a change to packaging, or a fix that has not landed on the default branch
+yet. For running it as a service, see [running it](docs/running.md).
 
 The UI is served uncached, so a reload picks up `app.js` / `index.html` edits immediately. Python is
 frozen at launch — **restart the server after backend changes**. Sessions are restored on startup,
