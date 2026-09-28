@@ -274,3 +274,24 @@ def test_asking_records_the_request(diff, annotations, staged):
     diff.load("s1")
     annotations.review_pass.click()
     expect(annotations.review_pass).to_be_disabled()      # the server answered, and the control followed
+
+
+def test_a_comment_box_keeps_a_height_the_reviewer_set(diff, annotations, detail, staged, as_agent):
+    """Dragging the box taller writes an inline height on that element, and the next frame to
+    arrive rebuilds the element. The text and the focus already survived a rebuild — the height did
+    not, so a box made taller collapsed back mid-sentence, with nothing the reviewer did to cause it.
+
+    The frame here is an agent card landing, which is what arrives unbidden while someone types.
+    """
+    from review_mate.session.commands import EmitCard
+
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    annotations.index_rows.first.click()
+    detail.tab("Review").click()
+    expect(detail.draft_box).to_be_visible()
+    detail.draft_box.evaluate("el => el.style.height = '300px'")      # what the resize handle does
+    expect(detail.draft_box).to_have_css("height", "300px")
+
+    as_agent("s1", EmitCard(highlight_id=None, body="something arrived while you were typing"))
+    expect(detail.draft_box).to_have_css("height", "300px")           # still the reviewer's height

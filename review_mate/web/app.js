@@ -2237,6 +2237,21 @@ function restoreDetailFocus(el, subject, tab) {
 
 // a reviewer's review-comment draft (their words; the card is never posted). `anchor` is the
 // highlight id, or null for the MR-level comment; `key` keys the local buffer + focus tracking.
+// A comment box the reviewer dragged taller keeps that height. Every one of these is rebuilt by
+// the next frame that arrives — which is why the text lives in `draftBuffers` and the focus in
+// `focusedDraft` rather than in the DOM. The height was the one thing left behind, so it collapsed
+// mid-sentence. The browser writes an inline height only when the resize handle is used, so that is
+// the signal: nothing is remembered until the reviewer sets one, and then it survives every rebuild.
+const draftHeights = {};
+
+function draftBox(key) {
+  const ta = document.createElement("textarea");
+  ta.className = "draftbox";
+  if (draftHeights[key]) ta.style.height = draftHeights[key];
+  new ResizeObserver(() => { if (ta.style.height) draftHeights[key] = ta.style.height; }).observe(ta);
+  return ta;
+}
+
 function draftEditor(key, anchor, draft) {
   const wrap = document.createElement("div");
   wrap.className = "draft";
@@ -2245,8 +2260,7 @@ function draftEditor(key, anchor, draft) {
       draft.url ? ` · <a href="${esc(draft.url)}" target="_blank" rel="noopener">view</a>` : ""}</div>`;
     return wrap;
   }
-  const ta = document.createElement("textarea");
-  ta.className = "draftbox";
+  const ta = draftBox(key);
   ta.placeholder = anchor === null
     ? "write an MR-level review comment — a summary posted as a general note on the MR"
     : "prepare a review comment — your words (Claude's card is context, not posted)";
@@ -2266,8 +2280,8 @@ function draftEditor(key, anchor, draft) {
                : (hl ? newSideLines(hl.file, hl.start, hl.end) : "");
     if (!(key in suggBuf)) suggBuf[key] = seed;
     const lbl = document.createElement("div"); lbl.className = "suglbl"; lbl.textContent = "suggested change — edit the lines";
-    sta = document.createElement("textarea");
-    sta.className = "draftbox suggbox"; sta.spellcheck = false;
+    sta = draftBox(key + "\u001fsuggestion");
+    sta.classList.add("suggbox"); sta.spellcheck = false;
     sta.value = suggBuf[key];
     sta.oninput = (e) => { suggBuf[key] = e.target.value; };
     wrap.appendChild(lbl); wrap.appendChild(sta);
@@ -2424,8 +2438,8 @@ function threadConversationBlock(t) {
     const d = document.createElement("div");
     d.className = "msg agent";
     if (noteEdit[c.id] !== undefined) {           // this note is being edited in place
-      const ta = document.createElement("textarea");
-      ta.className = "draftbox"; ta.value = noteEdit[c.id];
+      const ta = draftBox("note\u001f" + c.id);
+      ta.value = noteEdit[c.id];
       ta.oninput = (e) => { noteEdit[c.id] = e.target.value; };
       const row = document.createElement("div"); row.className = "draftbtns";
       row.appendChild(btn("Save", "btn", () => submitNoteEdit(t.id, c.id)));
@@ -2448,8 +2462,8 @@ function threadConversationBlock(t) {
   if (canThreads) {
     const rwrap = document.createElement("div");
     rwrap.className = "draft";
-    const ta = document.createElement("textarea");
-    ta.className = "draftbox"; ta.placeholder = "reply to this thread…";
+    const ta = draftBox("reply\u001f" + t.id);
+    ta.placeholder = "reply to this thread…";
     ta.value = threadReplyBuf[t.id] || "";
     ta.oninput = (e) => { threadReplyBuf[t.id] = e.target.value; };
     ta.onfocus = () => { threadReplyFocused = t.id; };
