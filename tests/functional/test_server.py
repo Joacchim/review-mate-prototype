@@ -189,3 +189,16 @@ def test_ws_stream_delivers_live_events(tmp_path):  # AC-3 over WS
             evt = json.loads(ws.receive_text())
             assert evt["type"] == "highlight_added"
             assert evt["highlight"]["file"] == "live.py"
+
+
+async def test_the_favicon_is_served(client):
+    """A browser asks for it unprompted, and the tab is how a reviewer finds the window again.
+
+    It lives under `review_mate/web/` rather than in `assets/` because that is what the wheel
+    ships: a copy outside the package would be missing from every install, which is a failure no
+    developer running from a checkout would ever see.
+    """
+    r = await client.get("/favicon.ico")
+    assert r.status_code == 200
+    assert r.headers["content-type"].endswith(("icon", "ico"))
+    assert r.content[:4] == b"\x00\x00\x01\x00"      # the ICO magic, not an HTML error page
