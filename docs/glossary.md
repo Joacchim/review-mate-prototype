@@ -44,8 +44,10 @@ partial updates, which is why a client needs no merge logic.
 the rest is its argument, so `diff:<sid>:<mode>:<path>` needs no registration per file. A scope with
 no argument — `hub` — is a singleton.
 
-**Mode** — which version of a change is being read: `full`, `since`, or `commit@<sha>`. Part of a
-scope's name rather than server state, because it is a property of the reader.
+**Diff view mode** — which version of a change is being read: `full`, `since`, or
+`commit@<sha>`. Part of a scope's name rather than server state, because it is a property of the
+reader. Always said in full: the browser has a split mode and a light/dark mode too, and they are
+different axes.
 
 **hub** — the scope shown before a review is open: open reviews with their verdicts, and the host
 review queue.

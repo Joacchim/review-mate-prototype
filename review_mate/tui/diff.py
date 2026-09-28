@@ -265,9 +265,9 @@ class DiffScreen:
     def _row_of_line(self, line: int) -> int:
         """The rendered row standing for a new-side line, or the top when none does.
 
-        A discussion can be anchored to a line this mode does not render — an older version, or a
-        line inside a gap nobody has unfolded — and landing at the top of the file is a better
-        answer there than landing somewhere arbitrary.
+        A discussion can be anchored to a line this diff view mode does not render — an
+        older version, or a line inside a gap nobody has unfolded — and landing at the top
+        of the file is a better answer there than landing somewhere arbitrary.
         """
         for index, row in enumerate(self.body_rows()):
             if row.get("line") == line:
@@ -378,7 +378,7 @@ class DiffScreen:
         mr = view.get("mr") or {}
         title = f"{mr.get('label', '')}  {mr.get('title', '')}"
         out.append(("class:header", f" {title}\n"))
-        out.append(("class:muted", f"  mode {self.mode}   [{self.client.status}]"))
+        out.append(("class:muted", f"  diff view {self.mode}   [{self.client.status}]"))
         out.extend(self._agent_badge())
         out.extend(self._review_badge())
         out.extend(self._pass_badge())
@@ -390,8 +390,9 @@ class DiffScreen:
         out.append(("", "\n"))
         state = view.get("state", "ready")
         if state != "ready":
-            note = {"loading": "resolving\u2026", "unavailable": "this host cannot serve that mode",
-                    "error": view.get("error", ""), "unsupported-mode": "mode not supported",
+            note = {"loading": "resolving\u2026", "error": view.get("error", ""),
+                    "unavailable": "this host cannot serve that diff view",
+                    "unsupported-mode": "diff view not supported",
                     "malformed-name": "bad scope name", "unknown-session": "this review is not open",
                     }.get(state, state)
             out.append(("class:error" if state == "error" else "class:muted", f"\n  {note}\n"))
@@ -708,7 +709,7 @@ class DiffScreen:
         if self.anchor is not None:
             return "\n j/k extend   v ask about the selection   esc cancel\n"
         if self.focus == "body":
-            return "\n tab pane   j/k line   v select   n/p file   m mode   b back   q quit\n"
+            return "\n tab pane   j/k line   v select   n/p file   m diff view   b back   q quit\n"
         if self.focus == "rail":
             return ("\n tab pane   j/k move   a ask Claude   D double-check   L label   c write"
                     "   d comment   S send   b back   q quit\n")
@@ -765,8 +766,8 @@ class DiffScreen:
         self.focus = order[(order.index(self.focus) + 1) % len(order)]
 
     def cycle_mode(self) -> str:
-        """Switching mode is a subscription, not a command \u2014 the name changes and the server
-        answers for the new one."""
+        """Switching the diff view mode is a subscription, not a command \u2014 the name changes and
+        the server answers for the new one."""
         self.mode = MODES[(MODES.index(self.mode) + 1) % len(MODES)] if self.mode in MODES else "full"
         self.scroll = self.body_cursor = 0
         self.anchor = None

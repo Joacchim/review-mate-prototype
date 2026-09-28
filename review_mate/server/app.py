@@ -236,9 +236,9 @@ def create_app(manager: SessionManager | None = None,
     hub = HubScope(manager, provider=provider, kb=kb,
                    user=getattr(provider, "username", "") or "", watcher=watcher)
     bus.register(HUB, hub.build)
-    async def publish_mode(session_id: str, mode: str) -> None:
-        """Republish the scopes of one session-and-mode — the list and whatever files are open —
-        once a resolution that serves all of them lands."""
+    async def publish_diff_mode(session_id: str, mode: str) -> None:
+        """Republish the scopes of one session and diff view mode — the list and whatever files
+        are open — once a resolution that serves all of them lands."""
         listing = f"diff:{session_id}:{mode}"
         for scope in bus.watched(f"diff:{session_id}:"):
             if scope == listing or scope.startswith(listing + ":"):
@@ -246,7 +246,7 @@ def create_app(manager: SessionManager | None = None,
 
     diff_scopes = DiffScopes(manager, provider=provider,
                              workspace=getattr(manager, "_workspace", None), kb=kb,
-                             publish=publish_mode)
+                             publish=publish_diff_mode)
     bus.register_family("diff", diff_scopes.build)
     blob_scopes = BlobScopes(manager, provider=provider, publish=bus.publish)
     bus.register_family("blob", blob_scopes.build)

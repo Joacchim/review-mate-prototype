@@ -13,8 +13,8 @@ file and not the other thirty-nine.
 **Mode is part of the name rather than state.** Which version of the change a reviewer is reading —
 the whole thing, only what arrived since they last looked, a single commit — is a property of the
 reader, not of the session. Putting it in the name means two clients can read the same review at
-different modes without contending over one field, and switching mode is a subscription rather than
-a command.
+different diff view modes without contending over one field, and switching is a subscription
+rather than a command.
 
 Unfolding the context between hunks is served by a second family:
 
@@ -25,8 +25,9 @@ reader state is how much of it they chose to reveal, and that is presentation, s
 the lines it wants out of a blob it already holds. Line numbers are the diff's new-side numbers,
 so a client splices revealed lines straight into a gap without translating anything.
 
-Names are validated rather than trusted. A path may contain colons and a session id or mode may
-not, so a malformed name would otherwise mis-split into a plausible-looking path and be answered
+Names are validated rather than trusted. A path may contain colons and a session id or diff view
+mode may not, so a malformed name would otherwise mis-split into a plausible-looking path and be
+answered
 with a confident "no such file".
 """
 from __future__ import annotations
@@ -54,8 +55,8 @@ COMMIT_PREFIX = "commit@"
 # not the reason for a bound — outliving the review that produced them is.
 _FAILED_KEPT = 256
 
-# A session id is opaque but must not carry the separator; a mode is a closed set, with the commit
-# form using "@" precisely so that a sha needs no second colon.
+# A session id is opaque but must not carry the separator; a diff view mode is a closed set,
+# with the commit form using "@" precisely so that a sha needs no second colon.
 _SESSION = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _MODE = re.compile(r"^(?:full|since|commit@[0-9a-fA-F]{7,40})$")
 
@@ -205,16 +206,16 @@ class DiffScopes:
                         head_aligned=self._aligned.get((session_id, mode, self._head(snapshot)), True),
                         hunks=[hunk.model_dump(mode="json") for hunk in hunks]).model_dump(mode="json")
 
-    # --- resolving a mode to files ------------------------------------------
+    # --- resolving a diff view mode to files ------------------------------------------
 
     @staticmethod
     def _head(snapshot) -> str:
         return snapshot.mr.sha if snapshot.mr else ""
 
     def _files_for(self, session_id: str, mode: str, snapshot):
-        """`(state, files, error)` for a mode.
+        """`(state, files, error)` for a diff view mode.
 
-        The full mode is session state and answers immediately. The others resolve through the host
+        `full` is session state and answers immediately. The others resolve through the host
         or the workspace, so they follow the loading shape: report `loading`, fetch once, republish.
         A resolution is keyed on the MR head it was computed against, so a re-synced head asks again
         instead of serving a stale answer.
@@ -234,14 +235,15 @@ class DiffScopes:
         return "loading", [], ""
 
     def _can_resolve(self, mode: str, snapshot) -> bool:
-        """Whether this mode can be answered at all.
+        """Whether this diff view mode can be answered at all.
 
         The host has to implement it, and the MR has to advertise it: a forge that cannot list an
         MR's versions or its commits says so through the capabilities on the metadata, and asking
-        anyway produces an error where the honest answer is that the mode is unavailable here.
+        anyway produces an error where the honest answer is that this diff view mode is unavailable
+        here.
         """
         if not serves(self._provider, snapshot):
-            return False        # this host did not load this review and cannot resolve its modes
+            return False    # this host did not load this review and cannot resolve diff view modes
         capabilities = (snapshot.mr.capabilities or {}) if snapshot.mr else {}
         if mode.startswith(COMMIT_PREFIX):
             return (bool(capabilities.get("commits"))
@@ -357,7 +359,7 @@ class DiffScopes:
                 del store[key]
 
     def reset(self) -> None:
-        """Drop every resolved mode, so the next build resolves again."""
+        """Drop every resolved diff view mode, so the next build resolves again."""
         self._resolved.clear()
         self._failed.clear()
         self._aligned.clear()
@@ -392,7 +394,7 @@ class BlobView(BaseModel):
 
 
 class BlobScopes:
-    """Whole-file content for unfolding, keyed by the sha a mode resolves to.
+    """Whole-file content for unfolding, keyed by the sha a diff view mode resolves to.
 
     Reading a blob is a host call, so `build` never performs one: it reports `loading` and starts a
     one-shot fetch that republishes when it lands — the same shape the hub's queue uses. Content at
@@ -499,9 +501,9 @@ class BlobScopes:
         return view.model_dump(mode="json")
 
     def _sha_for(self, mode: str, snapshot) -> str | None:
-        """The commit a mode reads its content at.
+        """The commit a diff view mode reads its content at.
 
-        `since` shares the full mode's sha deliberately: since_diff keeps the MR head as its new
+        `since` shares `full`'s sha deliberately: since_diff keeps the MR head as its new
         side, so its line numbers are head coordinates and the content to unfold into is the head's.
         """
         if mode in (FULL, SINCE):

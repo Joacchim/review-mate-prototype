@@ -169,8 +169,9 @@ looking or not. Until the answer lands the view says `loading`, so a client show
 waiting on it.
 
 A file's scope name is the list's name with a path appended, so a client concatenates rather than
-assembling a second name. Names are validated: a path may contain a colon, a session id and a mode
-may not, and a malformed name reports `malformed-name` instead of being read as a plausible path.
+assembling a second name. Names are validated: a path may contain a colon, a session id and a diff
+view mode may not, and a malformed name reports `malformed-name` instead of being read as a
+plausible path.
 
 ### Conversations
 
@@ -262,8 +263,8 @@ sequenceDiagram
     B-->>C: scope state=ready
 ```
 
-Switching mode is a subscription, not a command — which is why no mode command exists to fall out of
-step with what a client is showing.
+Switching the diff view mode is a subscription, not a command — which is why no such command
+exists to fall out of step with what a client is showing.
 
 ## Session documents
 
@@ -298,8 +299,9 @@ No filter enforces that; the review scope is simply not part of the agent's view
 
 ### The agent does not know what the reviewer is looking at
 
-Which file is open, and which mode — the whole change, since the last review, one commit — is a
-client fact. It lives in the scope a client subscribes to and is deliberately not recorded on the
+Which file is open, and which diff view mode — the whole change, since the last review, one commit
+— is a client fact. It lives in the scope a client subscribes to and is deliberately not recorded
+on the
 session, so the agent cannot read it and is not meant to.
 
 The agent is not reading over the reviewer's shoulder. It is an assistant with the whole repository
