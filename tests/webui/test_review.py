@@ -295,3 +295,36 @@ def test_a_comment_box_keeps_a_height_the_reviewer_set(diff, annotations, detail
 
     as_agent("s1", EmitCard(highlight_id=None, body="something arrived while you were typing"))
     expect(detail.draft_box).to_have_css("height", "300px")           # still the reviewer's height
+
+
+def test_a_comment_box_keeps_the_cursor_where_it_was(diff, annotations, detail, staged, as_agent):
+    """Restoring focus is not enough: focusing a box drops the caret at the end of its text. In a
+    one-line composer that is invisible; in a long comment it means a frame arriving mid-sentence
+    sends you to the bottom of what you had written, and the rest of the word lands there.
+
+    The element is stamped first, so the assertion cannot pass on a rebuild that never happened —
+    the stamp is gone only if the box was genuinely rebuilt underneath the reviewer.
+    """
+    from review_mate.session.commands import EmitCard
+
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    annotations.index_rows.first.click()
+    detail.tab("Review").click()
+    expect(detail.draft_box).to_be_visible()
+
+    detail.draft_box.click()
+    detail.draft_box.fill("the first half and the second half")
+    detail.draft_box.evaluate("el => { el.setSelectionRange(9, 9); el.dataset.gen = 'before'; }")
+    detail.draft_box.dispatch_event("keyup")          # what records the caret in production
+
+    as_agent("s1", EmitCard(highlight_id=None, body="a card lands while you are typing"))
+    detail.page.wait_for_function(
+        "() => { const e = document.querySelector('#detail textarea.draftbox');"
+        "        return e && e.dataset.gen === undefined; }")   # the box really was rebuilt
+
+    # focus itself was being dropped too: emptying the panel blurred the box and cleared the flag
+    # the restore depended on, so nothing was put back at all
+    assert "draftbox" in detail.page.evaluate("() => document.activeElement.className")
+    assert detail.draft_box.evaluate("el => el.selectionStart") == 9
+    assert detail.draft_box.input_value() == "the first half and the second half"

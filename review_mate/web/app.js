@@ -1636,7 +1636,7 @@ function renderAnnotations() {
 
   if (annotationSearchFocused) {  // a WS-driven re-render shouldn't steal the search box you're typing in
     const s = $("annsearch");
-    if (s) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
+    if (s) refocus(s, "annsearch");
   }
 }
 
@@ -1714,6 +1714,7 @@ function renderAnnotationTools(el) {
   wrap.appendChild(seg);
   const inp = document.createElement("input");
   inp.id = "annsearch"; inp.placeholder = "filter…"; inp.value = annotationQuery;
+  watchCaret(inp, "annsearch");
   inp.oninput = (e) => { annotationQuery = e.target.value; renderHlist(); };  // list-only → input keeps focus
   inp.onfocus = () => { annotationSearchFocused = true; };
   inp.onblur = () => { annotationSearchFocused = false; };
@@ -1880,7 +1881,9 @@ function renderDetail() {
     el.hidden = true; el.innerHTML = "";
     return;
   }
-  el.hidden = false; el.innerHTML = "";
+  el.hidden = false;
+  const held = captureBox(el);      // before the panel goes: who had the caret, and where
+  el.innerHTML = "";
   el.classList.toggle("max", detailMax);
   el.classList.toggle("reading", detailReading);
   const tab = detailTab || defaultDetailTab(subject);
@@ -1890,7 +1893,7 @@ function renderDetail() {
   body.appendChild(detailHead(subject, close));
   body.appendChild(detailTabs(subject, tab));
   body.appendChild(tab === "host" ? hostChannel(subject) : claudeChannel(subject));
-  restoreDetailFocus(el, subject, tab);
+  if (!resumeBox(el, held)) restoreDetailFocus(el, subject, tab);
 }
 
 // resolve the selection against live state: a row can vanish under the panel — a removed highlight,
@@ -2167,6 +2170,7 @@ function conversationBlock(subject) {
   inp.oninput = (e) => { msgDraft[topic] = e.target.value; };
   inp.onfocus = () => { msgFocused = topic; };
   inp.onblur = () => { if (msgFocused === topic) msgFocused = null; };
+  watchCaret(inp, topic);
   const send = () => {
     const body = inp.value.trim();
     if (!body) return;
@@ -2220,18 +2224,18 @@ function restoreDetailFocus(el, subject, tab) {
   if (tab === "claude") {
     if (msgFocused === chatTopic(selected)) {
       const inp = el.querySelector(".chatbox input");
-      if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+      if (inp) refocus(inp, chatTopic(selected));
     }
     if (subject.kind === "hl" && askFocused === subject.hl.id) {
       const ai = el.querySelector("input.askinp");
-      if (ai) { ai.focus(); ai.setSelectionRange(ai.value.length, ai.value.length); }
+      if (ai) refocus(ai, "ask\u001f" + subject.hl.id);
     }
     return;
   }
   const key = subject.kind === "mr" ? MR_KEY : subject.kind === "hl" ? subject.hl.id : null;
   if (key !== null && focusedDraft === key) {
     const ta = el.querySelector("textarea.draftbox");
-    if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    if (ta) refocus(ta, key);
   }
 }
 
@@ -2244,11 +2248,58 @@ function restoreDetailFocus(el, subject, tab) {
 // the signal: nothing is remembered until the reviewer sets one, and then it survives every rebuild.
 const draftHeights = {};
 
+// Where the reviewer's cursor was, per box. Restoring focus alone is not enough: focusing a box
+// leaves the caret at the end of its text, which is invisible in a one-line composer and ruins a
+// long comment — a frame arriving mid-sentence sends you to the bottom of what you had written and
+// you type the rest of the word there. Same shape as the height: the reviewer's state, living only
+// in an element something rebuilds.
+const caretPos = {};
+
+// Name a box so it can be found again in the panel that replaces this one.
+function watchCaret(el, key) {
+  el.dataset.box = key;
+  const remember = () => { caretPos[key] = [el.selectionStart, el.selectionEnd]; };
+  // not "focus": refocus() reads the remembered pair and focusing would overwrite it first
+  for (const ev of ["input", "keyup", "click", "select", "mouseup"]) el.addEventListener(ev, remember);
+}
+
+// Put focus back where it was, caret and all. Read before focusing, and only honour a position the
+// current text can still hold — the body may have been edited elsewhere since.
+function refocus(el, key) {
+  const at = caretPos[key];
+  el.focus();
+  if (at && at[0] <= el.value.length && at[1] <= el.value.length) el.setSelectionRange(at[0], at[1]);
+  else el.setSelectionRange(el.value.length, el.value.length);
+}
+
+// Which box the reviewer was typing in, read from the DOM rather than from a flag.
+//
+// The flags cannot answer this. A rebuild empties the panel first, which blurs the box and runs the
+// handler that clears the flag — so by the time anything asks "was a draft focused?", nothing was.
+// Focus was being dropped on every frame, and the caret with it. Taking it from `activeElement`
+// before the panel is emptied is the only reading that is still true.
+function captureBox(root) {
+  const live = document.activeElement;
+  if (!live || !root.contains(live) || live.dataset.box === undefined) return null;
+  return { box: live.dataset.box, start: live.selectionStart, end: live.selectionEnd };
+}
+
+function resumeBox(root, held) {
+  if (!held) return false;
+  const el = root.querySelector(`[data-box="${CSS.escape(held.box)}"]`);
+  if (!el) return false;
+  el.focus();
+  const end = el.value.length;                 // the text can have changed under a stale position
+  el.setSelectionRange(Math.min(held.start, end), Math.min(held.end, end));
+  return true;
+}
+
 function draftBox(key) {
   const ta = document.createElement("textarea");
   ta.className = "draftbox";
   if (draftHeights[key]) ta.style.height = draftHeights[key];
   new ResizeObserver(() => { if (ta.style.height) draftHeights[key] = ta.style.height; }).observe(ta);
+  watchCaret(ta, key);
   return ta;
 }
 
@@ -2478,7 +2529,7 @@ function threadConversationBlock(t) {
     wrap.appendChild(rwrap);
     if (threadReplyFocused === t.id) setTimeout(() => {
       const el2 = rwrap.querySelector("textarea");
-      if (el2) { el2.focus(); el2.setSelectionRange(el2.value.length, el2.value.length); }
+      if (el2) refocus(el2, "reply\u001f" + t.id);
     }, 0);
   }
   return wrap;
@@ -2582,6 +2633,7 @@ function askContextControl(hl) {
   wrap.className = "askctx";
   const inp = document.createElement("input");
   inp.className = "askinp";
+  watchCaret(inp, "ask\u001f" + hl.id);
   inp.placeholder = "ask Claude something specific (optional)";
   inp.value = askBuf[hl.id] || "";
   inp.oninput = (e) => { askBuf[hl.id] = e.target.value; };
