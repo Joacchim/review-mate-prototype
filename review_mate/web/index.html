@@ -170,6 +170,8 @@
   .hrow .x{position:absolute;right:6px;top:6px;color:var(--fg2);cursor:pointer;border:none;background:none;font-size:15px;line-height:1;padding:2px}
   .hrow .x:hover{color:var(--delfg)}
   .chip{flex:none;font-size:9px;letter-spacing:.04em;text-transform:uppercase;border-radius:5px;padding:1px 5px;border:1px solid var(--line2);color:var(--fg2)}
+  /* a row already in Open reviews: a state, not an action — it sits where Track would be */
+  .chip.tracked{align-self:center;border-color:var(--ok);color:var(--ok)}
   .chip.comment{color:var(--accent);border-color:var(--accentline)} .chip.posted{color:var(--addfg);border-color:var(--postline)}
   .chip.insight{color:var(--accent);border-color:var(--accentline)}
   .hrow.mr{background:var(--panel);border-style:dashed} .hrow.mr.active{border-style:solid}

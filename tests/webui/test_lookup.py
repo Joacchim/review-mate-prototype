@@ -7,6 +7,7 @@ is theirs to write and rewrite without re-running the search or losing the answe
 import pytest
 from playwright.sync_api import expect
 
+from webui.fixtures.scenarios import review_with_highlights
 from webui.pages.hub import SearchPage
 
 HIT = {"project": "platform/virtu/control-plane", "iid": 137, "title": "rework the retry backoff",
@@ -115,3 +116,26 @@ def test_a_hub_frame_does_not_take_the_search_away(search, staged, stub_host, hu
     hub_republishes()
     expect(search.results).to_have_count(2)      # still the reviewer's answer, not the listing
     expect(search.ask_row).to_be_visible()
+
+
+def test_a_result_already_open_says_so(search, staged, stub_host):
+    """A hit you have already opened looks exactly like one you have never seen, unless the row
+    says otherwise — and the only way to find out was to click Track and be told."""
+    staged.put(review_with_highlights("s1"))       # an open review of HIT's merge request
+    stub_host.search_hits = [HIT, OTHER]
+    search.look_for("retry")
+    expect(search.results).to_have_count(2)
+    expect(search.tracked).to_have_count(1)        # HIT is the staged session's merge request
+    expect(search.track_buttons).to_have_count(1)  # OTHER is not open, so it is still offerable
+
+
+def test_tracking_one_result_keeps_the_rest_on_screen(search, staged, stub_host):
+    """Track repainted the landing page, which took the search with it — so a second merge request
+    could not be tracked without running the lookup again. The row it acted on says so instead."""
+    staged.put(review_with_highlights("s1"))       # an open review of HIT's merge request
+    stub_host.search_hits = [HIT, OTHER]
+    search.look_for("retry")
+    expect(search.track_buttons).to_have_count(1)
+    search.track_buttons.first.click()
+    expect(search.results).to_have_count(2)        # the list is still there to work through
+    expect(search.tracked).to_have_count(2)        # and the click is visible without a reload

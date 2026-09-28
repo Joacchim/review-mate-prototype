@@ -650,6 +650,13 @@ function hostLink(url, label) {
 // that review instead of opening a second one for the same MR
 async function findTracking(ref) {
   await hubReady;   // a cold ?ref= tab lands here before the first topic has arrived
+  return trackedSession(ref);
+}
+
+// the same answer without the wait, for a row being drawn: it has whatever the hub has sent, and a
+// row that renders before the first frame simply offers Track — which resolves to the open review
+// anyway, because trackRef checks again before opening anything.
+function trackedSession(ref) {
   const sessions = (topicViews["hub"] && topicViews["hub"].sessions) || [];
   return sessions.find((s) => s.mr && `${s.mr.project}!${s.mr.iid}` === ref) || null;
 }
@@ -660,7 +667,9 @@ async function findTracking(ref) {
 async function trackRef(ref, button) {
   button.disabled = true; button.textContent = "tracking…";
   setStatus("tracking " + ref + "…");
-  if (await findTracking(ref)) { setStatus(ref + " is already in your open reviews"); showLanding(); return; }
+  // already open: say so and mark the row, but leave the list alone. Repainting the landing here
+  // would throw away the search or queue the reviewer is still working through.
+  if (await findTracking(ref)) { setStatus(ref + " is already in your open reviews"); markTracked(button); return; }
   const res = await cmd("session.open", { ref });
   if (!res.ok) {
     setStatus("✕ " + res.reason);
@@ -668,7 +677,21 @@ async function trackRef(ref, button) {
     return;
   }
   setStatus("tracking " + ref + " — it's in your open reviews");
-  // the entry moves from the queue into "Open reviews" when the republished topic arrives
+  markTracked(button);   // the row says so now; the queue entry moves on the next hub frame
+}
+
+// swap a row's Track button for the state it just reached, in place — the list this row belongs to
+// is not rebuilt on a hub frame, so nothing else would show that the click landed.
+function markTracked(button) {
+  button.replaceWith(trackedChip());
+}
+
+function trackedChip() {
+  const chip = document.createElement("span");
+  chip.className = "chip tracked";
+  chip.textContent = "tracked";
+  chip.title = "already in your open reviews — the title link resumes it";
+  return chip;
 }
 
 // the ?ref= landing: open the review a queue link points at, resuming the existing session when the
@@ -697,6 +720,12 @@ function mrItem(it) {
   row.innerHTML =
     `<div class="t"><a class="rowlink" href="?ref=${encodeURIComponent(ref)}">${esc(it.title)}</a></div>` +
     `<div class="m">${hostLink(it.url, `${esc(it.project)} !${it.iid}`)}</div>`;
+  if (trackedSession(ref)) {
+    // knowing this before clicking is the point: a search hit you already opened looks exactly
+    // like one you have never seen otherwise
+    row.appendChild(trackedChip());
+    return row;
+  }
   const b = btn("Track", "btn track", null);
   b.title = "flag this MR for review — adds it to your open reviews without opening it";
   b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); trackRef(ref, b); };

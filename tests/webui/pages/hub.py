@@ -106,6 +106,15 @@ class SearchPage:
         return self.page.locator(".searcherr")
 
     @property
+    def tracked(self):
+        """Result rows that say they are already an open review."""
+        return self.page.locator(".land .searchresults .qitem .chip.tracked")
+
+    @property
+    def track_buttons(self):
+        return self.page.locator(".land .searchresults .qitem button.track")
+
+    @property
     def ask_row(self):
         """Offered whatever the host search did — it can hit and still miss the right one."""
         return self.page.locator(".askrow")
