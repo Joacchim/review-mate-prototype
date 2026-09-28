@@ -1,4 +1,4 @@
-"""The view bus: scope building, subscription fan-out, coalescing and builder failure.
+"""The view bus: topic building, subscription fan-out, coalescing and builder failure.
 
 Pure logic — no transport, no manager. What a client is handed is decided here, so these are
 the guarantees a second client gets to rely on.
@@ -8,7 +8,7 @@ import asyncio
 import pytest
 
 from review_mate.view.bus import ViewBus
-from review_mate.view.protocol import ScopeError, ScopeUpdate
+from review_mate.view.protocol import TopicError, TopicUpdate
 
 
 async def _ready(value):
@@ -36,8 +36,8 @@ async def test_subscribe_delivers_the_current_view_without_advancing_seq():
         gen = sub.drain()
         await bus.subscribe(sub, ["demo"])
         msg = await take(gen)
-        assert isinstance(msg, ScopeUpdate)
-        assert msg.scope == "demo" and msg.seq == 0 and msg.view == {"n": 1}
+        assert isinstance(msg, TopicUpdate)
+        assert msg.topic == "demo" and msg.seq == 0 and msg.view == {"n": 1}
 
 
 async def test_publish_advances_seq_and_fans_out():
@@ -53,7 +53,7 @@ async def test_publish_advances_seq_and_fans_out():
         assert msg.seq == 1 and msg.view == {"n": 2}
 
 
-async def test_scope_nobody_watches_is_never_built_but_still_counts():
+async def test_topic_nobody_watches_is_never_built_but_still_counts():
     builds = []
 
     async def builder():
@@ -71,7 +71,7 @@ async def test_scope_nobody_watches_is_never_built_but_still_counts():
         assert msg.seq == 2                   # but the client learns how current its first view is
 
 
-async def test_undelivered_updates_for_one_scope_coalesce():
+async def test_undelivered_updates_for_one_topic_coalesce():
     state = {"n": 0}
     bus = bus_with(lambda: _ready(dict(state)))
     async with bus.connect() as sub:
@@ -97,14 +97,14 @@ async def test_unsubscribe_stops_delivery():
         await nothing_more(gen)
 
 
-async def test_unknown_scope_is_reported_not_raised():
+async def test_unknown_topic_is_reported_not_raised():
     bus = bus_with(lambda: _ready({}))
     async with bus.connect() as sub:
         gen = sub.drain()
         await bus.subscribe(sub, ["nope"])
         msg = await take(gen)
-        assert isinstance(msg, ScopeError) and msg.scope == "nope"
-        assert "nope" not in sub.scopes
+        assert isinstance(msg, TopicError) and msg.topic == "nope"
+        assert "nope" not in sub.topics
 
 
 async def test_a_failing_builder_reports_instead_of_killing_the_stream():
@@ -116,12 +116,12 @@ async def test_a_failing_builder_reports_instead_of_killing_the_stream():
         gen = sub.drain()
         await bus.subscribe(sub, ["demo"])
         msg = await take(gen)
-        assert isinstance(msg, ScopeError)
+        assert isinstance(msg, TopicError)
         assert "host is down" in msg.reason and "RuntimeError" in msg.reason
-        assert "demo" in sub.scopes           # still watching — a later publish can succeed
+        assert "demo" in sub.topics           # still watching — a later publish can succeed
 
 
-async def test_a_scope_error_does_not_supersede_a_pending_view():
+async def test_a_topic_error_does_not_supersede_a_pending_view():
     calls = []
 
     async def builder():
@@ -136,7 +136,7 @@ async def test_a_scope_error_does_not_supersede_a_pending_view():
         await bus.subscribe(sub, ["demo"])       # build 1 → view
         await bus.publish("demo")                # build 2 → error
         first, second = await take(gen), await take(gen)
-        assert isinstance(first, ScopeUpdate) and isinstance(second, ScopeError)
+        assert isinstance(first, TopicUpdate) and isinstance(second, TopicError)
 
 
 async def test_closing_a_connection_ends_its_drain():
@@ -148,7 +148,7 @@ async def test_closing_a_connection_ends_its_drain():
 
 
 
-# --- parameterised scope families -------------------------------------------
+# --- parameterised topic families -------------------------------------------
 
 def family_bus(builder):
     bus = ViewBus()
@@ -172,8 +172,8 @@ async def test_family_members_carry_independent_seq():
     edits = {"file:s1:a.py": 0, "file:s1:b.py": 0}
 
     async def builder(argument):
-        scope = f"file:{argument}"
-        return {"arg": argument, "edits": edits[scope]}
+        topic = f"file:{argument}"
+        return {"arg": argument, "edits": edits[topic]}
 
     bus = family_bus(builder)
     async with bus.connect() as sub:
@@ -183,17 +183,17 @@ async def test_family_members_carry_independent_seq():
         edits["file:s1:a.py"] += 1
         await bus.publish("file:s1:a.py")
         msg = await take(gen)
-        assert msg.scope == "file:s1:a.py" and msg.seq == 1
+        assert msg.topic == "file:s1:a.py" and msg.seq == 1
         await nothing_more(gen)              # b.py was not rebuilt, and did not advance
 
 
-async def test_an_unregistered_family_is_still_an_unknown_scope():
+async def test_an_unregistered_family_is_still_an_unknown_topic():
     bus = family_bus(lambda a: _ready({}))
     async with bus.connect() as sub:
         gen = sub.drain()
         await bus.subscribe(sub, ["diff:s1"])
         msg = await take(gen)
-        assert isinstance(msg, ScopeError) and msg.scope == "diff:s1"
+        assert isinstance(msg, TopicError) and msg.topic == "diff:s1"
 
 
 async def test_watched_finds_the_members_to_republish():
@@ -228,7 +228,7 @@ async def test_forget_resets_a_members_sequence():
 
 
 async def test_a_view_that_rebuilt_identically_is_not_pushed():
-    """The republish is coarse by design: a session rebuilds every scope it holds, and most of
+    """The republish is coarse by design: a session rebuilds every topic it holds, and most of
     them are unchanged. A watcher already holding the view learns nothing from receiving it."""
     state = {"n": 1}
     bus = bus_with(lambda: _ready(dict(state)))
@@ -241,7 +241,7 @@ async def test_a_view_that_rebuilt_identically_is_not_pushed():
 
 
 async def test_an_unchanged_rebuild_does_not_advance_seq():
-    """seq counts changes to a scope, so an identical rebuild leaves nothing to have missed."""
+    """seq counts changes to a topic, so an identical rebuild leaves nothing to have missed."""
     state = {"n": 1}
     bus = bus_with(lambda: _ready(dict(state)))
     async with bus.connect() as sub:
@@ -275,11 +275,11 @@ async def test_a_repeated_failure_is_reported_once():
     async with bus.connect() as sub:
         gen = sub.drain()
         await bus.subscribe(sub, ["demo"])
-        assert isinstance(await take(gen), ScopeError)
+        assert isinstance(await take(gen), TopicError)
         await bus.publish("demo")
         await bus.publish("demo")
         first = await take(gen)                 # the subscribe-time error is not what watchers hold
-        assert isinstance(first, ScopeError)
+        assert isinstance(first, TopicError)
         await nothing_more(gen)
 
 
@@ -298,15 +298,15 @@ async def test_a_view_after_an_error_is_pushed():
         await bus.subscribe(sub, ["demo"])
         await take(gen)
         await bus.publish("demo")
-        assert isinstance(await take(gen), ScopeError)
+        assert isinstance(await take(gen), TopicError)
         fail["now"] = False
         await bus.publish("demo")
         recovered = await take(gen)
-        assert isinstance(recovered, ScopeUpdate) and recovered.view == {"reason": "host is down"}
+        assert isinstance(recovered, TopicUpdate) and recovered.view == {"reason": "host is down"}
 
 
 async def test_an_unwatched_republish_leaves_nothing_held():
-    """Whether an unwatched scope changed is unknowable without building it, so the next watcher
+    """Whether an unwatched topic changed is unknowable without building it, so the next watcher
     is sent the view rather than compared against one nobody holds."""
     state = {"n": 1}
     bus = bus_with(lambda: _ready(dict(state)))

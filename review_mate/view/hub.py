@@ -1,4 +1,4 @@
-"""The `hub` scope: what a client shows before a review is open.
+"""The `hub` topic: what a client shows before a review is open.
 
 Composes what the browser used to assemble from five endpoints — the open reviews, the
 per-review verdict, and the host review queue — into one document a client renders as-is.
@@ -6,7 +6,7 @@ per-review verdict, and the host review queue — into one document a client ren
 The three pieces do not share a freshness model, and collapsing them would change behaviour:
 
 - **sessions** are local, and rebuilt on every publish.
-- **the queue** is a host read, fetched once when a client first watches the scope, and
+- **the queue** is a host read, fetched once when a client first watches the topic, and
   republished when it lands so a slow host never delays the local half.
 - **per-review host facts** (MR state, head, unresolved count) are a fan-out across every open
   review, and refresh only on an explicit `hub.refresh` — a manual check for updates, never a
@@ -91,11 +91,11 @@ class HubView(BaseModel):
     host_checked_at: str = ""          # last hub.refresh, empty until one runs
 
 
-class HubScope:
+class HubTopic:
     """Builds the hub view and owns the cache of host-derived facts.
 
     `build` never calls the host: it folds live local state over whatever the last refresh left
-    behind. Every host read is an explicit method, so a scope rebuild can never turn into a
+    behind. Every host read is an explicit method, so a topic rebuild can never turn into a
     fan-out of network calls.
     """
 
@@ -162,7 +162,7 @@ class HubScope:
         )
 
     def ensure_queue(self, publish) -> asyncio.Task | None:
-        """Start the one-shot queue read the first time a client watches the scope.
+        """Start the one-shot queue read the first time a client watches the topic.
 
         Returns the in-flight task so a caller that needs the result — a test, or a command
         that must not answer before the queue is current — can await it.
@@ -182,7 +182,7 @@ class HubScope:
             task.exception()   # retrieve it, so a failure never surfaces as an unhandled task
 
     async def aclose(self) -> None:
-        """Cancel an in-flight queue read. The scope outlives no server: a read still running at
+        """Cancel an in-flight queue read. The topic outlives no server: a read still running at
         shutdown is abandoned deliberately here rather than cancelled out from under itself."""
         task = self._queue_task
         if task is None:

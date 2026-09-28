@@ -1,8 +1,8 @@
 """Transport for the view protocol: one stream out, one command endpoint in.
 
 These routes carry no domain logic. The stream hands a client whatever the bus built for the
-scopes it named, and the command endpoint translates a named command into a manager call and
-republishes the scopes it invalidated. Everything a client renders is decided server-side, so a
+topics it named, and the command endpoint translates a named command into a manager call and
+republishes the topics it invalidated. Everything a client renders is decided server-side, so a
 second client is a renderer, not a second implementation of the review model.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from review_mate.contracts import MRRef
-from review_mate.view.protocol import HUB, ScopeError, Subscribe, parse_client_message
+from review_mate.view.protocol import HUB, TopicError, Subscribe, parse_client_message
 
 
 def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
@@ -153,8 +153,8 @@ def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
         if "error" in result:
             return JSONResponse({"ok": False, "reason": result["error"]},
                                 status_code=404 if result["error"] == "unknown session" else 400)
-        for scope in (f"threads:{sid}", f"annotations:{sid}", f"review:{sid}"):
-            await bus.publish(scope)
+        for topic in (f"threads:{sid}", f"annotations:{sid}", f"review:{sid}"):
+            await bus.publish(topic)
         await _publish_hub()
         return JSONResponse({"ok": True, **result})
 
@@ -196,10 +196,10 @@ def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
         if browse is not None:
             # the commit list belongs to a head, and this is where a head moves
             browse.forget_commits(sid)
-        for scope in bus.watched(f"diff:{sid}:") | bus.watched(f"blob:{sid}:"):
-            await bus.publish(scope)
-        for scope in (f"threads:{sid}", f"annotations:{sid}", f"review:{sid}", f"commits:{sid}"):
-            await bus.publish(scope)
+        for topic in bus.watched(f"diff:{sid}:") | bus.watched(f"blob:{sid}:"):
+            await bus.publish(topic)
+        for topic in (f"threads:{sid}", f"annotations:{sid}", f"review:{sid}", f"commits:{sid}"):
+            await bus.publish(topic)
         await _publish_hub()
         return JSONResponse({"ok": True, **result})
 
@@ -239,16 +239,16 @@ def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
                     try:
                         message = parse_client_message(raw)
                     except ValueError as exc:   # a client bug — answer it, keep the stream up
-                        sub.offer(ScopeError(reason=str(exc)))
+                        sub.offer(TopicError(reason=str(exc)))
                         continue
                     if isinstance(message, Subscribe):
-                        if HUB in message.scopes:
+                        if HUB in message.topics:
                             # start the queue read first, so the very first view a client sees
                             # already says the queue is in flight rather than idle
                             hub.ensure_queue(_publish_hub)
-                        await bus.subscribe(sub, message.scopes)
+                        await bus.subscribe(sub, message.topics)
                     else:
-                        bus.unsubscribe(sub, message.scopes)
+                        bus.unsubscribe(sub, message.topics)
             finally:
                 sender.cancel()
                 with suppress(asyncio.CancelledError):

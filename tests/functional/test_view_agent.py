@@ -1,7 +1,7 @@
 """The agent's read of a session: the same folded views the reviewer's clients get.
 
 What matters is not that fields arrive but that the right ones do. The agent was the only party
-reading raw session state, so it re-derived facts the scopes already publish and saw things nobody
+reading raw session state, so it re-derived facts the topics already publish and saw things nobody
 had ever decided to show it.
 """
 import pytest
@@ -13,12 +13,12 @@ from review_mate.session.commands import (
 )
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import ChangeType, FileEntry, LineRange, Origin, Side
-from review_mate.view.access import AccessScope
+from review_mate.view.access import AccessTopic
 from review_mate.view.agent import AgentView
-from review_mate.view.chat import ChatScopes
-from review_mate.view.diffscope import DiffScopes
-from review_mate.view.annotations import AnnotationsScope
-from review_mate.view.threads import ThreadsScope
+from review_mate.view.chat import ChatTopics
+from review_mate.view.difftopic import DiffTopics
+from review_mate.view.annotations import AnnotationsTopic
+from review_mate.view.threads import ThreadsTopic
 
 
 @pytest.fixture
@@ -29,9 +29,9 @@ async def agent(tmp_path):
         manager = SessionManager(root=tmp_path / "sessions", mr_source=HostStub())
         made.append(manager)
         sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
-        view = AgentView(manager, annotations=AnnotationsScope(manager), chat=ChatScopes(manager),
-                         threads=ThreadsScope(manager, user="reviewer"),
-                         access=AccessScope(manager), diffs=DiffScopes(manager))
+        view = AgentView(manager, annotations=AnnotationsTopic(manager), chat=ChatTopics(manager),
+                         threads=ThreadsTopic(manager, user="reviewer"),
+                         access=AccessTopic(manager), diffs=DiffTopics(manager))
         return manager, sid, view
     yield build
     for manager in made:
@@ -81,7 +81,7 @@ async def test_the_reviewers_unsent_comment_is_not_in_it(agent):
                        Origin.BROWSER)
     built = await view.build(sid)
     assert "sloppy" not in repr(built), "the agent must not read an unsent draft"
-    assert "review" not in built, "no review scope at all — there is no filter to get wrong"
+    assert "review" not in built, "no review topic at all — there is no filter to get wrong"
 
 
 async def test_the_diff_is_not_in_it(agent):
@@ -104,7 +104,7 @@ async def test_a_session_that_is_not_there_is_named_rather_than_raised(agent):
 
 # --- the consent list, on its own ---------------------------------------------
 
-async def test_the_consent_list_reads_off_the_scope_the_reviewer_sees(agent):
+async def test_the_consent_list_reads_off_the_topic_the_reviewer_sees(agent):
     manager, sid, view = await agent()
     writer = manager.get(sid)
     await writer.submit(RequestAccess(repo="g/sibling", reason="the contract"), Origin.AGENT)

@@ -35,11 +35,11 @@ from review_mate.writeback.service import Writeback
 
 _WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
-# How often a presence-bearing scope is rebuilt while watched. The watcher TTL is 90s, so
+# How often a presence-bearing topic is rebuilt while watched. The watcher TTL is 90s, so
 # this bounds how long a view can claim an agent is attached after it stopped listening.
 PRESENCE_TICK = 5.0
 
-# The scope families named after a session, rather than after the fleet. A review's lifetime is
+# The topic families named after a session, rather than after the fleet. A review's lifetime is
 # decided by whether any of these is being read, so a new one belongs here and nowhere else.
 SESSION_FAMILIES = ("diff", "blob", "annotations", "chat", "review", "threads", "access",
                     "tree", "commits")
@@ -95,38 +95,38 @@ def create_app(manager: SessionManager | None = None,
         from review_mate.kb.store import ReviewKB
         kb = ReviewKB()
 
-    # the view plane — server-folded state, one scope at a time. Clients subscribe to scopes and
+    # the view plane — server-folded state, one topic at a time. Clients subscribe to topics and
     # render what they carry; none of them re-derive review state.
     from review_mate.server.view_routes import build_view_routes
     from review_mate.view.bus import ViewBus
-    from review_mate.view.chat import ChatScopes
-    from review_mate.view.diffscope import BlobScopes, DiffScopes
-    from review_mate.view.annotations import AnnotationsScope
-    from review_mate.view.review import ReviewScope
-    from review_mate.view.access import AccessScope
-    from review_mate.view.browse import BrowseScopes
-    from review_mate.view.threads import ThreadsScope
+    from review_mate.view.chat import ChatTopics
+    from review_mate.view.difftopic import BlobTopics, DiffTopics
+    from review_mate.view.annotations import AnnotationsTopic
+    from review_mate.view.review import ReviewTopic
+    from review_mate.view.access import AccessTopic
+    from review_mate.view.browse import BrowseTopics
+    from review_mate.view.threads import ThreadsTopic
     from review_mate.writeback.submit import ReviewSubmitter
     from review_mate.writeback.threads import ThreadVerbs
-    from review_mate.view.hub import HubScope
+    from review_mate.view.hub import HubTopic
     from review_mate.view.protocol import HUB
-    # a session's reading scopes are rebuilt when its state changes, but only while a client is
-    # looking: the bus says when a scope gains its first watcher and loses its last, and the tail
+    # a session's reading topics are rebuilt when its state changes, but only while a client is
+    # looking: the bus says when a topic gains its first watcher and loses its last, and the tail
     # on that session's events runs exactly between those two moments.
     session_pumps: dict[str, asyncio.Task] = {}
-    # the consent watch on a session, running for as long as a client is reading its access scope
+    # the consent watch on a session, running for as long as a client is reading its access topic
     access_watches: dict[str, asyncio.Task] = {}
     presence_task: asyncio.Task | None = None
 
-    def _session_of(scope: str) -> str | None:
-        kind, sep, rest = scope.partition(":")
+    def _session_of(topic: str) -> str | None:
+        kind, sep, rest = topic.partition(":")
         return rest.partition(":")[0] if sep and kind in SESSION_FAMILIES else None
 
-    def _session_scopes(session_id: str) -> set[str]:
-        """Every scope a client can be holding for one session.
+    def _session_topics(session_id: str) -> set[str]:
+        """Every topic a client can be holding for one session.
 
         One list, because three callers ask the same question — is anyone still reading this
-        review, what must be rebuilt when it changes, and which session a scope belongs to — and a
+        review, what must be rebuilt when it changes, and which session a topic belongs to — and a
         family added to only two of them goes stale in a way nothing fails on.
         """
         held: set[str] = set()
@@ -136,10 +136,10 @@ def create_app(manager: SessionManager | None = None,
         return held
 
     def _still_watched(session_id: str) -> bool:
-        return bool(_session_scopes(session_id))
+        return bool(_session_topics(session_id))
 
     async def _tail(session_id: str) -> None:
-        """Republish a session's held scopes as its events arrive, while a client is watching.
+        """Republish a session's held topics as its events arrive, while a client is watching.
 
         The writer is captured once, which relies on the manager keeping one writer per session id
         for as long as the session exists — it does, and a manager that handed out a second would
@@ -152,9 +152,9 @@ def create_app(manager: SessionManager | None = None,
         async for _event in writer.subscribe(since=writer.snapshot().seq):
             await republish_session(session_id)
 
-    def _carries_presence(scope: str) -> bool:
-        """The scopes whose view can change with no event behind it — see `_presence_tick`."""
-        return scope == HUB or (scope.startswith("chat:") and scope.count(":") == 1)
+    def _carries_presence(topic: str) -> bool:
+        """The topics whose view can change with no event behind it — see `_presence_tick`."""
+        return topic == HUB or (topic.startswith("chat:") and topic.count(":") == 1)
 
     async def _presence_tick() -> None:
         """Republish what presence rides on, while someone is watching it.
@@ -166,9 +166,9 @@ def create_app(manager: SessionManager | None = None,
         """
         while True:
             await asyncio.sleep(PRESENCE_TICK)
-            for scope in bus.watched("chat:") | ({HUB} if bus.watchers(HUB) else set()):
-                if _carries_presence(scope):
-                    await bus.publish(scope)
+            for topic in bus.watched("chat:") | ({HUB} if bus.watchers(HUB) else set()):
+                if _carries_presence(topic):
+                    await bus.publish(topic)
 
     def _ensure_ticker() -> None:
         nonlocal presence_task
@@ -184,25 +184,25 @@ def create_app(manager: SessionManager | None = None,
         presence_task.cancel()
         presence_task = None
 
-    def _on_first_watch(scope: str) -> None:
-        if _carries_presence(scope):
+    def _on_first_watch(topic: str) -> None:
+        if _carries_presence(topic):
             _ensure_ticker()
-        # both browse scopes cost a host read, so they are asked for exactly while someone looks
-        if scope.startswith("tree:") and scope.count(":") == 1:
-            asyncio.create_task(_quietly(browse.fetch_tree(scope.partition(":")[2])))
-        if scope.startswith("commits:") and scope.count(":") == 1:
-            asyncio.create_task(_quietly(browse.fetch_commits(scope.partition(":")[2])))
-        if crossrepo is not None and scope.startswith("access:") and scope.count(":") == 1:
+        # both browse topics cost a host read, so they are asked for exactly while someone looks
+        if topic.startswith("tree:") and topic.count(":") == 1:
+            asyncio.create_task(_quietly(browse.fetch_tree(topic.partition(":")[2])))
+        if topic.startswith("commits:") and topic.count(":") == 1:
+            asyncio.create_task(_quietly(browse.fetch_commits(topic.partition(":")[2])))
+        if crossrepo is not None and topic.startswith("access:") and topic.count(":") == 1:
             # a decision can only come from a client that is reading this, so watching exactly then
             # misses nothing — and the watch sweeps for approvals a restart left unhonoured
-            sid = scope.partition(":")[2]
+            sid = topic.partition(":")[2]
             if sid not in access_watches:
                 access_watches[sid] = asyncio.create_task(_quietly(crossrepo.watch(sid)))
-        if scope.startswith("review:") and scope.count(":") == 1:
+        if topic.startswith("review:") and topic.count(":") == 1:
             # who approved is a host fact the bar shows, so it is worth asking for exactly while
             # someone is reading it — and once, rather than on every rebuild
-            asyncio.create_task(_warm_approval(scope.partition(":")[2]))
-        session_id = _session_of(scope)
+            asyncio.create_task(_warm_approval(topic.partition(":")[2]))
+        session_id = _session_of(topic)
         if session_id is None or session_id in session_pumps:
             return
         task = asyncio.create_task(_tail(session_id))
@@ -214,14 +214,14 @@ def create_app(manager: SessionManager | None = None,
         if not task.cancelled():
             task.exception()   # a dead tail must not darken the session silently
 
-    def _on_last_watch(scope: str) -> None:
-        if _carries_presence(scope):
+    def _on_last_watch(topic: str) -> None:
+        if _carries_presence(topic):
             _stop_ticker_if_idle()
-        if scope.startswith("access:") and scope.count(":") == 1:
-            watch = access_watches.pop(scope.partition(":")[2], None)
+        if topic.startswith("access:") and topic.count(":") == 1:
+            watch = access_watches.pop(topic.partition(":")[2], None)
             if watch is not None:
                 watch.cancel()      # a clone already under way is its own task and survives this
-        session_id = _session_of(scope)
+        session_id = _session_of(topic)
         if session_id is None or _still_watched(session_id):
             return
         task = session_pumps.pop(session_id, None)
@@ -230,39 +230,39 @@ def create_app(manager: SessionManager | None = None,
 
     bus = ViewBus(on_first_watch=_on_first_watch, on_last_watch=_on_last_watch)
     def watcher() -> dict:
-        """Who is listening, read when a scope is built rather than captured when it is wired."""
+        """Who is listening, read when a topic is built rather than captured when it is wired."""
         return activity_broker.watcher() if activity_broker is not None else {}
 
-    hub = HubScope(manager, provider=provider, kb=kb,
+    hub = HubTopic(manager, provider=provider, kb=kb,
                    user=getattr(provider, "username", "") or "", watcher=watcher)
     bus.register(HUB, hub.build)
     async def publish_diff_mode(session_id: str, mode: str) -> None:
-        """Republish the scopes of one session and diff view mode — the list and whatever files
+        """Republish the topics of one session and diff view mode — the list and whatever files
         are open — once a resolution that serves all of them lands."""
         listing = f"diff:{session_id}:{mode}"
-        for scope in bus.watched(f"diff:{session_id}:"):
-            if scope == listing or scope.startswith(listing + ":"):
-                await bus.publish(scope)
+        for topic in bus.watched(f"diff:{session_id}:"):
+            if topic == listing or topic.startswith(listing + ":"):
+                await bus.publish(topic)
 
-    diff_scopes = DiffScopes(manager, provider=provider,
+    diff_topics = DiffTopics(manager, provider=provider,
                              workspace=getattr(manager, "_workspace", None), kb=kb,
                              publish=publish_diff_mode)
-    bus.register_family("diff", diff_scopes.build)
-    blob_scopes = BlobScopes(manager, provider=provider, publish=bus.publish)
-    bus.register_family("blob", blob_scopes.build)
-    annotations_scope = AnnotationsScope(manager, provider=provider,
+    bus.register_family("diff", diff_topics.build)
+    blob_topics = BlobTopics(manager, provider=provider, publish=bus.publish)
+    bus.register_family("blob", blob_topics.build)
+    annotations_topic = AnnotationsTopic(manager, provider=provider,
                            publish=lambda session_id: bus.publish(f"annotations:{session_id}"))
-    bus.register_family("annotations", annotations_scope.build)
-    chat_scopes = ChatScopes(manager, watcher=watcher)
-    bus.register_family("chat", chat_scopes.build)
-    review_scope = ReviewScope(manager, provider=provider, kb=kb)
-    bus.register_family("review", review_scope.build)
-    threads_scope = ThreadsScope(manager, user=getattr(provider, "username", "") or "")
-    bus.register_family("threads", threads_scope.build)
-    access_scope = AccessScope(manager)
-    bus.register_family("access", access_scope.build)
+    bus.register_family("annotations", annotations_topic.build)
+    chat_topics = ChatTopics(manager, watcher=watcher)
+    bus.register_family("chat", chat_topics.build)
+    review_topic = ReviewTopic(manager, provider=provider, kb=kb)
+    bus.register_family("review", review_topic.build)
+    threads_topic = ThreadsTopic(manager, user=getattr(provider, "username", "") or "")
+    bus.register_family("threads", threads_topic.build)
+    access_topic = AccessTopic(manager)
+    bus.register_family("access", access_topic.build)
 
-    # Consent's other half. The scope shows what the agent asked for and what the reviewer answered;
+    # Consent's other half. The topic shows what the agent asked for and what the reviewer answered;
     # this is what makes an approval mean something — it materializes the repository and records
     # where it landed, so "approved" stops being a note nothing acts on.
     crossrepo = None
@@ -278,7 +278,7 @@ def create_app(manager: SessionManager | None = None,
                             clone_url=found["clone_url"]), found["ref"])
 
         crossrepo = CrossRepoBroker(manager, workspace, kb, _locate)
-    browse = BrowseScopes(manager, provider=provider, publish=bus.publish)
+    browse = BrowseTopics(manager, provider=provider, publish=bus.publish)
     bus.register_family("tree", browse.build_tree)
     bus.register_family("commits", browse.build_commits)
 
@@ -294,25 +294,25 @@ def create_app(manager: SessionManager | None = None,
         which is what it should read, rather than taking the review down with it.
         """
         with suppress(Exception):
-            await review_scope.refresh(session_id)
+            await review_topic.refresh(session_id)
             await bus.publish(f"review:{session_id}")
 
     async def republish_session(session_id: str) -> None:
-        """Rebuild the reading scopes a client currently holds for one session.
+        """Rebuild the reading topics a client currently holds for one session.
 
         Called where a session's files actually change — a host re-sync — rather than on every
-        event, and only for scopes someone is watching, so a review nobody has open costs nothing.
+        event, and only for topics someone is watching, so a review nobody has open costs nothing.
         A client watching only the hub sees a session's counts move on the presence tick instead,
         since no tail runs for a review nobody has open.
         Blobs are included: a re-sync can move the head, and a blob reads at whatever sha its mode
         resolves to.
         """
-        held = _session_scopes(session_id)
+        held = _session_topics(session_id)
         if bus.watchers(HUB):
             # the hub folds per-session facts too — counts, and what each review is waiting on
             held = held | {HUB}
-        for scope in held:
-            await bus.publish(scope)
+        for topic in held:
+            await bus.publish(topic)
 
     async def _stop_pumps() -> None:
         for task in list(session_pumps.values()) + list(access_watches.values()):
@@ -330,18 +330,18 @@ def create_app(manager: SessionManager | None = None,
                           activity_broker=activity_broker)
     # registered before the static mount so `/api/stream` and `/api/cmd` are never shadowed by the UI
     routes.extend(build_view_routes(manager, bus, hub, resolve_ref=resolve_ref,
-                                    submitter=submitter, review=review_scope, kb=kb,
-                                    threads=thread_verbs, browse=browse, diffs=diff_scopes))
+                                    submitter=submitter, review=review_topic, kb=kb,
+                                    threads=thread_verbs, browse=browse, diffs=diff_topics))
 
     mcp_app = None
     if with_mcp:
         from review_mate.mcp.bridge import AgentBridge
         from review_mate.mcp.server import build_mcp_server
         from review_mate.view.agent import AgentView
-        # the agent reads the same folded scopes the clients do — the same instances, so it shares
+        # the agent reads the same folded topics the clients do — the same instances, so it shares
         # their caches and cannot drift from what the reviewer is looking at
-        agent_view = AgentView(manager, annotations=annotations_scope, chat=chat_scopes,
-                               threads=threads_scope, access=access_scope, diffs=diff_scopes)
+        agent_view = AgentView(manager, annotations=annotations_topic, chat=chat_topics,
+                               threads=threads_topic, access=access_topic, diffs=diff_topics)
         bridge = AgentBridge(manager, broker=broker, provider=provider, view=agent_view)
         mcp_app = build_mcp_server(bridge, mountable=True).streamable_http_app()
         routes.append(Mount("/mcp", app=mcp_app))  # the agent contract (shares this manager)
@@ -358,9 +358,9 @@ def create_app(manager: SessionManager | None = None,
         else:
             yield
         await hub.aclose()
-        await diff_scopes.aclose()
-        await blob_scopes.aclose()
-        await annotations_scope.aclose()
+        await diff_topics.aclose()
+        await blob_topics.aclose()
+        await annotations_topic.aclose()
         await _stop_pumps()
         await manager.shutdown()
 
@@ -372,10 +372,10 @@ def create_app(manager: SessionManager | None = None,
     app.state.bus = bus
     app.state.hub = hub
     app.state.bridge = bridge if with_mcp else None
-    app.state.diff_scopes = diff_scopes
-    app.state.blob_scopes = blob_scopes
-    app.state.annotations_scope = annotations_scope
-    app.state.chat_scopes = chat_scopes
+    app.state.diff_topics = diff_topics
+    app.state.blob_topics = blob_topics
+    app.state.annotations_topic = annotations_topic
+    app.state.chat_topics = chat_topics
     # whether the presence ticker is running — a test asserts it starts and stops with the
     # watching, which is otherwise invisible from outside
     app.state.presence_running = lambda: presence_task is not None and not presence_task.done()

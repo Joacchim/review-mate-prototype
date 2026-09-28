@@ -1,4 +1,4 @@
-"""The review screen renders the diff scopes and decides nothing about them."""
+"""The review screen renders the diff topics and decides nothing about them."""
 import pytest
 
 pytest.importorskip("prompt_toolkit")
@@ -15,11 +15,11 @@ class StubClient:
         self.watched = []
         self.unwatched = []
 
-    async def watch(self, scopes):
-        self.watched.append(list(scopes))
+    async def watch(self, topics):
+        self.watched.append(list(topics))
 
-    async def unwatch(self, scopes):
-        self.unwatched.append(list(scopes))
+    async def unwatch(self, topics):
+        self.unwatched.append(list(topics))
 
 
 def listing(files, **extra):
@@ -71,12 +71,12 @@ def test_a_span_past_the_end_of_the_line_is_clamped():
 
 # --- the screen --------------------------------------------------------------
 
-def test_the_file_scope_is_the_listing_plus_the_path():
+def test_the_file_topic_is_the_listing_plus_the_path():
     screen = DiffScreen(StubClient({"diff:s1:full": listing([row("a.py"), row("pkg/b.py")])}), "s1")
     assert screen.listing == "diff:s1:full"
-    assert screen.body_scope == "diff:s1:full:a.py"
+    assert screen.body_topic == "diff:s1:full:a.py"
     screen.next_file(1)
-    assert screen.body_scope == "diff:s1:full:pkg/b.py"
+    assert screen.body_topic == "diff:s1:full:pkg/b.py"
 
 
 def test_it_watches_everything_the_review_screen_shows():
@@ -120,7 +120,7 @@ def test_a_resolution_error_reaches_the_screen():
     assert "git exploded" in text_of(DiffScreen(client, "s1", mode="since"))
 
 
-def test_cycling_mode_changes_which_scope_is_wanted():
+def test_cycling_mode_changes_which_topic_is_wanted():
     screen = DiffScreen(StubClient({"diff:s1:full": listing([row("a.py")])}), "s1")
     before = screen.wanted()
     screen.cycle_mode()
@@ -467,7 +467,7 @@ def test_an_insight_is_not_something_to_escalate():
 def test_an_insights_conversation_is_the_one_the_screen_watches():
     screen = screen_with([hl(n=1)], [insight()])
     screen.focus = "annotations"
-    assert screen.chat_scope() == "chat:s1:insight:c1"
+    assert screen.chat_topic() == "chat:s1:insight:c1"
     assert "chat:s1:insight:c1" in screen.wanted()
 
 
@@ -566,7 +566,7 @@ def test_pointing_at_a_discussion_makes_it_the_subject():
     screen = screen_with_threads([disc()])
     screen.focus = "threads"
     assert screen.subject() == {"kind": "thread", "id": "t1"}
-    assert screen.chat_scope() == "chat:s1:thread:t1"
+    assert screen.chat_topic() == "chat:s1:thread:t1"
 
 
 def test_going_to_a_discussion_opens_its_line():
@@ -641,8 +641,8 @@ def test_opening_a_repository_file_reads_it_from_its_blob():
     screen.toggle_browse()
     screen.file_index = 1                      # README.md
     assert screen.open_current() is True
-    assert screen.blob_scope == "blob:s1:full:README.md"
-    assert screen.body_scope is None           # it is not part of the change, so it has no diff
+    assert screen.blob_topic == "blob:s1:full:README.md"
+    assert screen.body_topic is None           # it is not part of the change, so it has no diff
     rendered = "".join(t for _, t in screen.fragments())
     assert "# title" in rendered and "prose" in rendered
 
@@ -652,7 +652,7 @@ def test_opening_a_changed_file_stays_a_diff():
     screen.toggle_browse()
     screen.file_index = 0                      # a.py, which the change touched
     assert screen.open_current() is False
-    assert screen.viewing is None and screen.body_scope == "diff:s1:full:a.py"
+    assert screen.viewing is None and screen.body_topic == "diff:s1:full:a.py"
 
 
 def test_a_repository_still_being_read_says_so():

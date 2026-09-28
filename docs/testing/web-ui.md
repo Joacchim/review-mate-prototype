@@ -4,7 +4,7 @@ Every change to `review_mate/web/` ships browser tests. The UI is the half of th
 gate covers: the protocol tests prove what the server sends, and nothing else proves the browser
 does the right thing with it.
 
-Scopes, views, frames and modes are defined in [the glossary](../glossary.md); how the view protocol
+Topics, views, frames and modes are defined in [the glossary](../glossary.md); how the view protocol
 fits together is in [the architecture](../architecture.md).
 
 ## Stack
@@ -34,13 +34,13 @@ jobs for the same reason.
 ### Stub the host, never the protocol
 
 The fixture server is the production server with its data source replaced. `build_view_routes`,
-`ViewBus` and every scope builder are the real ones, so frames on the wire are produced by the same
+`ViewBus` and every topic builder are the real ones, so frames on the wire are produced by the same
 code as in production and validated by the same models. No test writes protocol JSON by hand.
 
 ```mermaid
 flowchart LR
     T["a test"] -->|stages state| F["FakeManager<br/>SessionState objects"]
-    F --> S["HubScope · DiffScopes · BlobScopes · AnnotationsScope<br/><i>production code</i>"]
+    F --> S["HubTopic · DiffTopics · BlobTopics · AnnotationsTopic<br/><i>production code</i>"]
     S --> B["ViewBus<br/><i>production code</i>"]
     B --> R["build_view_routes<br/><i>production code</i>"]
     R -->|"/api/stream · /api/cmd"| P["the page under test"]
@@ -51,7 +51,7 @@ flowchart LR
 
 Scenarios are built from the real state models — `MRMetadata`, `FileEntry`, `Highlight` — never
 from dicts, and commands run the production `handle()` and `reduce()`, so a click lands in staged
-state the way it lands in production and the session tail republishes the scopes that hold it.
+state the way it lands in production and the session tail republishes the topics that hold it.
 What `FakeManager` fakes is durability: there is no event log, and `seq` is counted in the fake.
 
 A test can also act as a plane the browser is not: `as_agent` submits a command on the fixture
@@ -61,7 +61,7 @@ server's own loop, which is how a card arrives on a view that is already open.
 
 | fixture | server | use for |
 |---|---|---|
-| `staged_app` | `FakeManager` + real view layer | the default. Any state, set directly: a queue that fails, a file still resolving, `head_aligned` false, a malformed scope name |
+| `staged_app` | `FakeManager` + real view layer | the default. Any state, set directly: a queue that fails, a file still resolving, `head_aligned` false, a malformed topic name |
 | `live_app` | real `create_app` + stub GitLab host | the anchor set. Proves the real server reaches the states `staged_app` stages |
 
 Most tests use `staged_app`, because staging a state beats choreographing a host into producing it.
@@ -69,7 +69,7 @@ The `live_app` set stays small and covers one path per surface, end to end.
 
 ### What can still drift
 
-Protocol conformance needs no test: `staged_app` *is* `create_app`, so the scope builders, the bus
+Protocol conformance needs no test: `staged_app` *is* `create_app`, so the topic builders, the bus
 and the routes are the production objects and a fixture cannot serve a different protocol from the
 application. What can drift is the manager beneath them — a method renamed on one side only, which
 would surface as a broken page rather than a failing test.
@@ -129,7 +129,7 @@ right command, and that a pushed update repaints. Review logic is the protocol s
 | surface | file | covered here |
 |---|---|---|
 | Hub | `test_hub.py` | open reviews and their state chips, the queue and its filter, track, close, unsubmitted drafts, check-for-updates, a failing queue read, a review as a real link |
-| Diff | `test_diff.py` | file tree and selection, side and line numbering, what is selectable, syntax colour, unfold from the blob scope, side-by-side, markdown toggle, since-last and per-commit modes, a conflicted replay warning, the read-only repo browser |
+| Diff | `test_diff.py` | file tree and selection, side and line numbering, what is selectable, syntax colour, unfold from the blob topic, side-by-side, markdown toggle, since-last and per-commit modes, a conflicted replay warning, the read-only repo browser |
 | Highlights | `test_highlights.py` | drag-selecting a range, the number the session gave a row, a stale highlight, marks in the diff, the host-context, escalation, a card arriving, dismissing an insight, a selection surviving a frame mid-drag |
 | Channels | `test_channels.py` | the two channels as tabs, that neither can leave by the other, the review as a subject like any other, one chat at a time, and doubting a claim — Claude's or your own |
 | Agent state | `test_agent_state.py` | what the server says is outstanding, and what it says once answered |
@@ -141,7 +141,7 @@ right command, and that a pushed update repaints. Review logic is the protocol s
 | Insight labels | `test_insight_labels.py` | worst-first ordering, unclassified sorting last rather than lowest, the free line, narrowing to one theme, and the reviewer overriding a label without losing the finding |
 | Readability | `test_readable.py` | that an active toggle or filter is still legible — its text not the colour of its own background — in both themes |
 | Lookup | `test_lookup.py` | host search hitting, missing and failing, that Claude is offered in all three, and that the description sent to Claude is separate from the term sent to the host |
-| Protocol edges | `test_protocol_edges.py` | a scope republished under an open view repaints it and nothing else |
+| Protocol edges | `test_protocol_edges.py` | a topic republished under an open view repaints it and nothing else |
 
 The edge states — `error`, `unknown-session`, `malformed-name` — and a dropped socket and its
 reconnect have **no browser test**. They are protocol-suite facts today; what a browser would add is
@@ -149,7 +149,7 @@ that the page renders each without blanking, which nothing yet asserts.
 
 Not tested here, because another gate already proves it:
 
-- what a scope contains, and every derivation in it → the protocol tests
+- what a topic contains, and every derivation in it → the protocol tests
 - diff parsing, token spans, line numbering → `tests/unit/test_view_diffdoc.py`
 - row HTML from hunks → `tests/web/diffrows.test.js` under node
 - anything the terminal client also does → its own tests

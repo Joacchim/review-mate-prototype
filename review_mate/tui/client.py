@@ -1,8 +1,8 @@
 """The view-protocol client: one websocket subscription, one command post.
 
-Holds no review logic of any kind. It keeps the latest view per scope and calls back when one
+Holds no review logic of any kind. It keeps the latest view per topic and calls back when one
 changes; every field it hands the renderer was decided server-side. A reconnect re-subscribes
-and is sent each scope's current view, so there is no local state to reconcile.
+and is sent each topic's current view, so there is no local state to reconcile.
 """
 from __future__ import annotations
 
@@ -25,22 +25,22 @@ class ViewClient:
         self.errors: dict[str, str] = {}
         self.status = "connecting"          # connecting | live | reconnecting | offline
         self.last_command_error = ""
-        self._scopes: list[str] = []
+        self._topics: list[str] = []
         self._on_change: Callable[[], None] = lambda: None
 
     @property
-    def scopes(self) -> list[str]:
+    def topics(self) -> list[str]:
         """What the client is subscribed to, across reconnects."""
-        return list(self._scopes)
+        return list(self._topics)
 
     @property
     def ws_url(self) -> str:
         scheme = "wss" if self.base_url.startswith("https") else "ws"
         return f"{scheme}://{self.base_url.split('://', 1)[1]}/api/stream"
 
-    async def run(self, scopes: list[str], on_change: Callable[[], None]) -> None:
-        """Stay subscribed to `scopes` for as long as the caller runs, reconnecting as needed."""
-        self._scopes = list(scopes)
+    async def run(self, topics: list[str], on_change: Callable[[], None]) -> None:
+        """Stay subscribed to `topics` for as long as the caller runs, reconnecting as needed."""
+        self._topics = list(topics)
         self._on_change = on_change
         attempt = 0
         while True:
@@ -49,9 +49,9 @@ class ViewClient:
                     attempt = 0
                     self._socket = ws
                     self.status = "live"
-                    # a reconnect re-subscribes to everything currently wanted, and each scope's
+                    # a reconnect re-subscribes to everything currently wanted, and each topic's
                     # present view arrives again — there is no local state to reconcile
-                    await ws.send(json.dumps({"action": "subscribe", "scopes": self._scopes}))
+                    await ws.send(json.dumps({"action": "subscribe", "topics": self._topics}))
                     on_change()
                     async for raw in ws:
                         self._absorb(raw)
@@ -67,29 +67,29 @@ class ViewClient:
             attempt += 1
             await asyncio.sleep(delay)
 
-    async def watch(self, scopes: list[str]) -> None:
-        """Add scopes to the subscription, now and across any later reconnect."""
-        fresh = [scope for scope in scopes if scope not in self._scopes]
+    async def watch(self, topics: list[str]) -> None:
+        """Add topics to the subscription, now and across any later reconnect."""
+        fresh = [topic for topic in topics if topic not in self._topics]
         if not fresh:
             return
-        self._scopes.extend(fresh)
+        self._topics.extend(fresh)
         if self._socket is not None:
             try:
-                await self._socket.send(json.dumps({"action": "subscribe", "scopes": fresh}))
+                await self._socket.send(json.dumps({"action": "subscribe", "topics": fresh}))
             except Exception:
                 pass          # the reconnect will re-subscribe the whole set
 
-    async def unwatch(self, scopes: list[str]) -> None:
-        drop = [scope for scope in scopes if scope in self._scopes]
+    async def unwatch(self, topics: list[str]) -> None:
+        drop = [topic for topic in topics if topic in self._topics]
         if not drop:
             return
-        self._scopes = [scope for scope in self._scopes if scope not in drop]
-        for scope in drop:
-            self.views.pop(scope, None)
-            self.errors.pop(scope, None)
+        self._topics = [topic for topic in self._topics if topic not in drop]
+        for topic in drop:
+            self.views.pop(topic, None)
+            self.errors.pop(topic, None)
         if self._socket is not None:
             try:
-                await self._socket.send(json.dumps({"action": "unsubscribe", "scopes": drop}))
+                await self._socket.send(json.dumps({"action": "unsubscribe", "topics": drop}))
             except Exception:
                 pass
 
@@ -99,13 +99,13 @@ class ViewClient:
         except ValueError:
             return                       # a frame we cannot read is not a reason to drop the stream
         kind = message.get("type")
-        scope = message.get("scope")
-        if kind == "scope" and isinstance(scope, str):
-            self.views[scope] = message.get("view") or {}
-            self.seqs[scope] = message.get("seq", 0)
-            self.errors.pop(scope, None)
+        topic = message.get("topic")
+        if kind == "topic" and isinstance(topic, str):
+            self.views[topic] = message.get("view") or {}
+            self.seqs[topic] = message.get("seq", 0)
+            self.errors.pop(topic, None)
         elif kind == "error":
-            self.errors[scope or ""] = message.get("reason", "unknown error")
+            self.errors[topic or ""] = message.get("reason", "unknown error")
 
     async def session_command(self, session: str, command: dict) -> bool:
         """A command about the contents of one review — a highlight, a draft, a message.

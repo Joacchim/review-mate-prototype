@@ -15,14 +15,14 @@ from review_mate.session.state import Grant, LineRange, Origin, Side
 
 @pytest.fixture
 async def setup(tmp_path):
-    from review_mate.view.access import AccessScope
+    from review_mate.view.access import AccessTopic
     from review_mate.view.agent import AgentView
-    from review_mate.view.chat import ChatScopes
-    from review_mate.view.annotations import AnnotationsScope
-    from review_mate.view.threads import ThreadsScope
+    from review_mate.view.chat import ChatTopics
+    from review_mate.view.annotations import AnnotationsTopic
+    from review_mate.view.threads import ThreadsTopic
     manager = SessionManager(root=tmp_path / "sessions")
-    view = AgentView(manager, annotations=AnnotationsScope(manager), chat=ChatScopes(manager),
-                     threads=ThreadsScope(manager), access=AccessScope(manager))
+    view = AgentView(manager, annotations=AnnotationsTopic(manager), chat=ChatTopics(manager),
+                     threads=ThreadsTopic(manager), access=AccessTopic(manager))
     bridge = AgentBridge(manager, view=view)
     sid = await manager.create()
     yield manager, bridge, sid

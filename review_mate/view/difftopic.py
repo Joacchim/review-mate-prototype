@@ -1,4 +1,4 @@
-"""The `diff` and `blob` scopes: reading a change.
+"""The `diff` and `blob` topics: reading a change.
 
 One family, addressed by how much of the change is being asked for:
 
@@ -7,7 +7,7 @@ One family, addressed by how much of the change is being asked for:
 
 A file's name is the list's name with a path appended, so a client that holds one can address the
 other by concatenation rather than by assembling a second name and keeping it consistent. They stay
-separate scopes because the unit of change is the unit of transfer: re-reading one file moves that
+separate topics because the unit of change is the unit of transfer: re-reading one file moves that
 file and not the other thirty-nine.
 
 **Mode is part of the name rather than state.** Which version of the change a reviewer is reading —
@@ -62,7 +62,7 @@ _MODE = re.compile(r"^(?:full|since|commit@[0-9a-fA-F]{7,40})$")
 
 
 class Address:
-    """A parsed `diff` scope name. `path` is None for the file list."""
+    """A parsed `diff` topic name. `path` is None for the file list."""
 
     __slots__ = ("session", "mode", "path")
 
@@ -71,7 +71,7 @@ class Address:
 
 
 def parse_address(argument: str) -> Address | None:
-    """The address a `diff:` scope name carries, or None when the name is not well formed."""
+    """The address a `diff:` topic name carries, or None when the name is not well formed."""
     session, separator, rest = argument.partition(":")
     if not separator:
         return None
@@ -136,8 +136,8 @@ def _diff_text(entry) -> str:
     return "\n".join(hunk.get("diff", "") for hunk in (entry.hunks or []))
 
 
-class DiffScopes:
-    """Builders for both scopes. Reads session state only — no host call, no git."""
+class DiffTopics:
+    """Builders for both topics. Reads session state only — no host call, no git."""
 
     def __init__(self, manager, provider=None, workspace=None, kb=None, publish=None) -> None:
         self._manager = manager
@@ -393,7 +393,7 @@ class BlobView(BaseModel):
     lines: list[BlobLine] = Field(default_factory=list)
 
 
-class BlobScopes:
+class BlobTopics:
     """Whole-file content for unfolding, keyed by the sha a diff view mode resolves to.
 
     Reading a blob is a host call, so `build` never performs one: it reports `loading` and starts a
@@ -512,10 +512,10 @@ class BlobScopes:
             return mode[len(COMMIT_PREFIX):]
         return None
 
-    def _start(self, key: tuple[str, str], project: str, scope: str) -> None:
+    def _start(self, key: tuple[str, str], project: str, topic: str) -> None:
         if key in self._tasks:
             return
-        task = asyncio.create_task(self._fetch(key, project, scope))
+        task = asyncio.create_task(self._fetch(key, project, topic))
         self._tasks[key] = task
         task.add_done_callback(lambda finished: self._done(key, finished))
 
@@ -524,7 +524,7 @@ class BlobScopes:
         if not task.cancelled():
             task.exception()      # retrieve it; failures are already recorded in the view
 
-    async def _fetch(self, key: tuple[str, str], project: str, scope: str) -> None:
+    async def _fetch(self, key: tuple[str, str], project: str, topic: str) -> None:
         sha, path = key
         try:
             self._remember(key, await self._provider.get_file(project, path, sha))
@@ -535,7 +535,7 @@ class BlobScopes:
             while len(self._failed) > _FAILED_KEPT:      # small, but not a place to grow for ever
                 self._failed.popitem(last=False)
         if self._publish is not None:
-            await self._publish(scope)
+            await self._publish(topic)
 
     async def aclose(self) -> None:
         for task in list(self._tasks.values()):

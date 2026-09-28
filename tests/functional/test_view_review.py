@@ -1,12 +1,12 @@
-"""The `review` scope: what the reviewer has prepared, and what it would take to send it.
+"""The `review` topic: what the reviewer has prepared, and what it would take to send it.
 
 Three facts a reviewer reads as one bar — the drafts, whether the change has moved past the version
 they reviewed, and whether they have approved — were three separate reads before this. Folding them
-into one scope is only worth it if the fold is the server's, so most of what is pinned here is the
+into one topic is only worth it if the fold is the server's, so most of what is pinned here is the
 shape of the answer rather than the plumbing that delivers it.
 
 The invariant the rest rests on: `build` never calls the host. Approval is the one host fact here,
-and it arrives through `refresh`, so a scope rebuilt on every draft keystroke costs nothing remote.
+and it arrives through `refresh`, so a topic rebuilt on every draft keystroke costs nothing remote.
 """
 import pytest
 
@@ -17,7 +17,7 @@ from review_mate.session.commands import (
 )
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import LineRange, Origin, Side
-from review_mate.view.review import ReviewScope
+from review_mate.view.review import ReviewTopic
 
 
 class ApprovingHost(HostStub):
@@ -43,7 +43,7 @@ class ApprovingHost(HostStub):
 
 
 class Watermarks:
-    """The slice of the KB this scope reads."""
+    """The slice of the KB this topic reads."""
 
     def __init__(self, mark=None):
         self.mark = mark
@@ -57,7 +57,7 @@ async def review(tmp_path):
     async def build(host=None, kb=None):
         manager = SessionManager(root=tmp_path / "sessions", mr_source=host or HostStub())
         sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
-        return manager, sid, ReviewScope(manager, provider=host, kb=kb)
+        return manager, sid, ReviewTopic(manager, provider=host, kb=kb)
     yield build
 
 
@@ -76,19 +76,19 @@ async def save(manager, sid, body, highlight_id=None):
 # --- what the reviewer has written ------------------------------------------
 
 async def test_a_review_with_nothing_prepared_says_so(review):
-    manager, sid, scope = await review()
-    view = await scope.build(sid)
+    manager, sid, topic = await review()
+    view = await topic.build(sid)
     assert view["state"] == "ready"
     assert view["drafts"] == [] and view["pending"] == 0 and view["posted"] == 0
     await manager.shutdown()
 
 
 async def test_a_draft_carries_its_text_and_its_anchor(review):
-    manager, sid, scope = await review()
+    manager, sid, topic = await review()
     hid = await mark(manager, sid)
     await save(manager, sid, "this needs a test", highlight_id=hid)
     await save(manager, sid, "reads well overall")          # MR-level: anchored to nothing
-    view = await scope.build(sid)
+    view = await topic.build(sid)
 
     anchored = [d for d in view["drafts"] if d["highlight_id"] == hid]
     summary = [d for d in view["drafts"] if d["highlight_id"] is None]
@@ -99,12 +99,12 @@ async def test_a_draft_carries_its_text_and_its_anchor(review):
 
 
 async def test_posting_a_draft_moves_it_between_the_counts(review):
-    manager, sid, scope = await review()
+    manager, sid, topic = await review()
     hid = await mark(manager, sid)
     await save(manager, sid, "this needs a test", highlight_id=hid)
     await manager.get(sid).submit(
         MarkDraftPosted(highlight_id=hid, url="http://note/1", thread_id="t9"), Origin.BROWSER)
-    view = await scope.build(sid)
+    view = await topic.build(sid)
 
     posted = view["drafts"][0]
     assert posted["status"] == "posted"
@@ -114,11 +114,11 @@ async def test_posting_a_draft_moves_it_between_the_counts(review):
 
 
 async def test_a_discarded_draft_leaves_nothing_behind(review):
-    manager, sid, scope = await review()
+    manager, sid, topic = await review()
     hid = await mark(manager, sid)
     await save(manager, sid, "never mind", highlight_id=hid)
     await manager.get(sid).submit(RemoveDraft(highlight_id=hid), Origin.BROWSER)
-    view = await scope.build(sid)
+    view = await topic.build(sid)
     assert view["drafts"] == [] and view["pending"] == 0
     await manager.shutdown()
 
@@ -127,22 +127,22 @@ async def test_a_discarded_draft_leaves_nothing_behind(review):
 
 async def test_an_mr_that_cannot_be_approved_is_answered_not_unknown(review):
     """`available: false` is a settled answer. A client must not render it as "still asking"."""
-    manager, sid, scope = await review()          # the plain stub advertises no approvals
-    approval = (await scope.build(sid))["approval"]
+    manager, sid, topic = await review()          # the plain stub advertises no approvals
+    approval = (await topic.build(sid))["approval"]
     assert approval["available"] is False and approval["checked"] is True
     await manager.shutdown()
 
 
 async def test_an_approvable_mr_is_unknown_until_someone_asks(review):
     host = ApprovingHost()
-    manager, sid, scope = await review(host=host)
+    manager, sid, topic = await review(host=host)
 
-    before = (await scope.build(sid))["approval"]
+    before = (await topic.build(sid))["approval"]
     assert before["available"] is True and before["checked"] is False
     assert host.approval_calls == 0, "building must not reach the host"
 
-    await scope.refresh(sid)
-    after = (await scope.build(sid))["approval"]
+    await topic.refresh(sid)
+    after = (await topic.build(sid))["approval"]
     assert after["checked"] is True and after["you_approved"] is False
     assert host.approval_calls == 1
     await manager.shutdown()
@@ -150,9 +150,9 @@ async def test_an_approvable_mr_is_unknown_until_someone_asks(review):
 
 async def test_the_reviewers_own_approval_is_named(review):
     host = ApprovingHost(approved_by=["reviewer", "someone-else"])
-    manager, sid, scope = await review(host=host)
-    await scope.refresh(sid)
-    approval = (await scope.build(sid))["approval"]
+    manager, sid, topic = await review(host=host)
+    await topic.refresh(sid)
+    approval = (await topic.build(sid))["approval"]
     assert approval["you_approved"] is True
     assert approval["approved_by"] == ["reviewer", "someone-else"]
     await manager.shutdown()
@@ -161,37 +161,37 @@ async def test_the_reviewers_own_approval_is_named(review):
 async def test_a_failed_refresh_leaves_the_last_answer_standing(review):
     """A bar showing "you approved" must not blink to unknown because one refresh did not land."""
     host = ApprovingHost(approved_by=["reviewer"])
-    manager, sid, scope = await review(host=host)
-    await scope.refresh(sid)
-    assert (await scope.build(sid))["approval"]["you_approved"] is True
+    manager, sid, topic = await review(host=host)
+    await topic.refresh(sid)
+    assert (await topic.build(sid))["approval"]["you_approved"] is True
 
     host.fail = True
     with pytest.raises(RuntimeError):      # it propagates; the caller decides what to say
-        await scope.refresh(sid)
-    assert (await scope.build(sid))["approval"]["you_approved"] is True
+        await topic.refresh(sid)
+    assert (await topic.build(sid))["approval"]["you_approved"] is True
     await manager.shutdown()
 
 
 # --- whether the change has moved past them ---------------------------------
 
 async def test_a_review_at_the_head_is_not_behind(review):
-    manager, sid, scope = await review(kb=Watermarks(mark="abc"))     # the stub's head is `abc`
-    version = (await scope.build(sid))["version"]
+    manager, sid, topic = await review(kb=Watermarks(mark="abc"))     # the stub's head is `abc`
+    version = (await topic.build(sid))["version"]
     assert version["head"] == "abc" and version["watermark"] == "abc"
     assert version["behind"] is False
     await manager.shutdown()
 
 
 async def test_a_change_that_moved_past_the_watermark_reads_behind(review):
-    manager, sid, scope = await review(kb=Watermarks(mark="older"))
-    version = (await scope.build(sid))["version"]
+    manager, sid, topic = await review(kb=Watermarks(mark="older"))
+    version = (await topic.build(sid))["version"]
     assert version["behind"] is True and version["watermark"] == "older"
     await manager.shutdown()
 
 
 async def test_a_review_never_marked_has_no_watermark(review):
-    manager, sid, scope = await review(kb=Watermarks(mark=None))
-    version = (await scope.build(sid))["version"]
+    manager, sid, topic = await review(kb=Watermarks(mark=None))
+    version = (await topic.build(sid))["version"]
     assert version["watermark"] is None and version["behind"] is False
     await manager.shutdown()
 
@@ -199,18 +199,18 @@ async def test_a_review_never_marked_has_no_watermark(review):
 # --- the edges ---------------------------------------------------------------
 
 async def test_a_session_that_is_not_there_says_unknown_session(review):
-    manager, _sid, scope = await review()
-    assert (await scope.build("no-such-session"))["state"] == "unknown-session"
+    manager, _sid, topic = await review()
+    assert (await topic.build("no-such-session"))["state"] == "unknown-session"
     await manager.shutdown()
 
 
 async def test_building_never_reaches_the_host(review):
-    """The scope rebuilds on every draft keystroke, so a host call here would be a call per letter."""
+    """The topic rebuilds on every draft keystroke, so a host call here would be a call per letter."""
     host = ApprovingHost()
-    manager, sid, scope = await review(host=host)
+    manager, sid, topic = await review(host=host)
     before = host.calls["summary"] + host.approval_calls
     for n in range(5):
         await save(manager, sid, f"draft {n}", highlight_id=await mark(manager, sid, line=n + 1))
-        await scope.build(sid)
+        await topic.build(sid)
     assert host.calls["summary"] + host.approval_calls == before
     await manager.shutdown()

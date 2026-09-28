@@ -10,9 +10,9 @@ let splitMode = localStorage.getItem("rm-split") === "1";
 const draftBuffers = {};   // highlight_id -> in-progress review-comment text (survives re-render)
 let focusedDraft = null;   // highlight_id of the focused draft textarea, to restore after render
 let showAll = localStorage.getItem("rm-showall") === "1";
-const scopeViews = {};               // scope name -> the view the server folded, whole
+const topicViews = {};               // topic name -> the view the server folded, whole
 let viewSocket = null;
-let wantedScopes = [];               // what this page subscribes to, re-sent on reconnect
+let wantedTopics = [];               // what this page subscribes to, re-sent on reconnect
 let refreshing = false;              // a hub.refresh is in flight
 let markHubReady = null;
 const hubReady = new Promise((resolve) => { markHubReady = resolve; });
@@ -27,8 +27,8 @@ let selected = null;                 // {kind:"hl"|"insight"|"mr"|"thread", id} 
 let detailTab = null;                // "claude" | "host" for the open subject; null picks the default
 let detailMax = false;               // the panel given the whole window, for reading a long one
 let detailReading = false;           // and held to a measure within it, when the lines get long
-const msgDraft = {};                 // chat scope -> in-progress message (survives re-render)
-let msgFocused = null;               // scope of the focused composer, to restore after render
+const msgDraft = {};                 // chat topic -> in-progress message (survives re-render)
+let msgFocused = null;               // topic of the focused composer, to restore after render
 const MR_KEY = "__mr__";             // draftBuffers/focus key for the (anchorless) MR-level comment
 let approveToggle = false;           // "Approve MR" checkbox on the submit bar
 let threadFilter = "unresolved";     // discussions filter: unresolved | all
@@ -93,13 +93,13 @@ async function boot() {
   startAgentWatch();   // the header light runs everywhere, queue page included
   const params = new URLSearchParams(location.search);
   SID = params.get("s");
-  if (!SID) connectViews(["hub"]);   // the landing page and the ?ref= resolver read the hub scope
+  if (!SID) connectViews(["hub"]);   // the landing page and the ?ref= resolver read the hub topic
   // ?ref=<project!iid> — what a queue entry links to, so it can be middle-clicked into its own tab.
   // Resolving it here (rather than on click) is what makes the entry a real link instead of a button.
   if (!SID && params.get("ref")) return openRef(params.get("ref"));
   if (!SID) return showLanding();
   $("sid").textContent = SID.slice(0, 8);
-  connectViews(diffScopes());   // the change is read through the view protocol
+  connectViews(diffTopics());   // the change is read through the view protocol
   await load();          // paint fast from stored state
   connectWS();           // the session's own event stream, for highlights, cards and threads
   syncFromHost();        // then bring the session up to the live head, so an update the hub flagged
@@ -145,7 +145,7 @@ function setStatus(msg) { $("status").textContent = msg || ""; }
 // every file in the repository at this change's sha — subscribed only while the browser is open,
 // so a reviewer who never opens it never pays for the read
 function treeView() {
-  return scopeViews[`tree:${SID}`] || null;
+  return topicViews[`tree:${SID}`] || null;
 }
 
 function repoPaths() {
@@ -155,7 +155,7 @@ function repoPaths() {
 
 // the commits this change is made of, subscribed only while reviewing one at a time
 function commitsView() {
-  return scopeViews[`commits:${SID}`] || null;
+  return topicViews[`commits:${SID}`] || null;
 }
 
 function commitRows() {
@@ -165,7 +165,7 @@ function commitRows() {
 
 // what Claude has asked to read, and what was decided
 function accessView() {
-  const view = scopeViews[`access:${SID}`];
+  const view = topicViews[`access:${SID}`];
   return view && view.state === "ready" ? view : null;
 }
 
@@ -183,7 +183,7 @@ function accessRequests() {
 }
 
 // What became of an approval, in the reviewer's terms. The distinction that carries the weight is
-// the one between an approval being worked on and an approval nothing is working on: the scope
+// the one between an approval being worked on and an approval nothing is working on: the topic
 // leaves the grant absent for the second, and this must not paper over it.
 function grantLine(r) {
   if (r.status === "denied") return { text: "denied", cls: "no" };
@@ -197,7 +197,7 @@ function grantLine(r) {
 
 // the discussions on the merge request, as the host last reported them
 function threadsView() {
-  const view = scopeViews[`threads:${SID}`];
+  const view = topicViews[`threads:${SID}`];
   return view && view.state === "ready" ? view : null;
 }
 
@@ -212,7 +212,7 @@ function threadById(id) {
 
 // what this review has prepared to send, and what it would take to send it
 function reviewView() {
-  const view = scopeViews[`review:${SID}`];
+  const view = topicViews[`review:${SID}`];
   return view && view.state === "ready" ? view : null;
 }
 
@@ -230,7 +230,7 @@ function reviewVersion() {
 
 // this session's chats with the agent, and the agent state they add up to
 function chatIndex() {
-  return scopeViews[`chat:${SID}`] || null;
+  return topicViews[`chat:${SID}`] || null;
 }
 
 const AGENT_OFF = { state: "off", stale: false, since: null, asks: [] };
@@ -242,7 +242,7 @@ function agentState() {
     const view = chatIndex();
     return view && view.state === "ready" && view.agent ? view.agent : AGENT_OFF;
   }
-  const hub = scopeViews.hub;
+  const hub = topicViews.hub;
   const attached = !!(hub && hub.agent && hub.agent.attached);
   return { ...AGENT_OFF, state: attached ? "watching" : "off", attached };
 }
@@ -314,25 +314,25 @@ function startAgentWatch() {
   setInterval(tick, 1000);
 }
 
-// --- the hub scope ----------------------------------------------------------
+// --- the hub topic ----------------------------------------------------------
 // The landing page renders the `hub` view document and derives nothing from it: the per-review
 // verdict, the counts and the row order are all the server's. The terminal client reads the same
-// scope, so the two can never disagree about what a review's state is.
+// topic, so the two can never disagree about what a review's state is.
 
-function connectViews(scopes) {
-  wantedScopes = scopes.slice();
+function connectViews(topics) {
+  wantedTopics = topics.slice();
   const proto = location.protocol === "https:" ? "wss" : "ws";
   viewSocket = new WebSocket(`${proto}://${location.host}/api/stream`);
-  // a reconnect re-subscribes to everything wanted and is sent each scope's current view, so
+  // a reconnect re-subscribes to everything wanted and is sent each topic's current view, so
   // there is no local state to reconcile
-  viewSocket.onopen = () => viewSocket.send(JSON.stringify({ action: "subscribe", scopes: wantedScopes }));
+  viewSocket.onopen = () => viewSocket.send(JSON.stringify({ action: "subscribe", topics: wantedTopics }));
   viewSocket.onmessage = (ev) => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
-    if (msg.type === "scope") {
-      scopeViews[msg.scope] = msg.view;   // whole-scope replacement — nothing to merge
-      renderAgentLight();                 // the state rides a scope, so it repaints with one
-      if (msg.scope === "hub") {
+    if (msg.type === "topic") {
+      topicViews[msg.topic] = msg.view;   // whole-topic replacement — nothing to merge
+      renderAgentLight();                 // the state rides a topic, so it repaints with one
+      if (msg.topic === "hub") {
         markHubReady();
         if (!SID) showLanding();
       } else if (SID && state) {
@@ -344,26 +344,26 @@ function connectViews(scopes) {
       setStatus("✕ " + (msg.reason || "stream error"));
     }
   };
-  viewSocket.onclose = () => { viewSocket = null; setTimeout(() => connectViews(wantedScopes), 1000); };
+  viewSocket.onclose = () => { viewSocket = null; setTimeout(() => connectViews(wantedTopics), 1000); };
 }
 
-// subscribe to scopes this page now needs, and drop the ones it no longer shows
-function watchScopes(scopes) {
-  const fresh = scopes.filter((s) => !wantedScopes.includes(s));
-  const stale = wantedScopes.filter((s) => !scopes.includes(s) && s !== "hub");
+// subscribe to topics this page now needs, and drop the ones it no longer shows
+function watchTopics(topics) {
+  const fresh = topics.filter((s) => !wantedTopics.includes(s));
+  const stale = wantedTopics.filter((s) => !topics.includes(s) && s !== "hub");
   if (!fresh.length && !stale.length) return;
-  wantedScopes = wantedScopes.filter((s) => !stale.includes(s)).concat(fresh);
-  stale.forEach((s) => delete scopeViews[s]);
+  wantedTopics = wantedTopics.filter((s) => !stale.includes(s)).concat(fresh);
+  stale.forEach((s) => delete topicViews[s]);
   if (viewSocket && viewSocket.readyState === WebSocket.OPEN) {
-    if (stale.length) viewSocket.send(JSON.stringify({ action: "unsubscribe", scopes: stale }));
-    if (fresh.length) viewSocket.send(JSON.stringify({ action: "subscribe", scopes: fresh }));
+    if (stale.length) viewSocket.send(JSON.stringify({ action: "unsubscribe", topics: stale }));
+    if (fresh.length) viewSocket.send(JSON.stringify({ action: "subscribe", topics: fresh }));
   }
 }
 
-// which version of the change is being read. It lives in the scope name, so switching is a
+// which version of the change is being read. It lives in the topic name, so switching is a
 // subscription rather than a fetch — and there is no second place for it to be recorded.
-// which commit is being read. The list arrives on its own scope, so this derives rather than
-// waits: the moment the commits are known the mode names one, and the file scope follows in the
+// which commit is being read. The list arrives on its own topic, so this derives rather than
+// waits: the moment the commits are known the mode names one, and the file topic follows in the
 // same render instead of a frame later.
 function currentCommitSha() {
   const rows = commitRows();
@@ -377,20 +377,20 @@ function diffMode() {
   return sinceLast ? "since" : "full";
 }
 
-// the scopes the review page reads: the file list, the file being shown, any whole file it needs,
+// the topics the review page reads: the file list, the file being shown, any whole file it needs,
 // the annotations, the chat index that carries the agent's state, the review it is preparing, and the
 // discussions already on the merge request
-function diffScopes() {
+function diffTopics() {
   const mode = diffMode();
   const listing = `diff:${SID}:${mode}`;
-  const scopes = [listing, `annotations:${SID}`, `chat:${SID}`, `review:${SID}`, `threads:${SID}`,
+  const topics = [listing, `annotations:${SID}`, `chat:${SID}`, `review:${SID}`, `threads:${SID}`,
                   `access:${SID}`];
-  if (currentFile) scopes.push(`${listing}:${currentFile}`);
-  if (showAll) scopes.push(`tree:${SID}`);        // the file browser, only while it is open
-  if (commitsMode) scopes.push(`commits:${SID}`); // and the commit list, only while reviewing one
-  if (selected) scopes.push(chatScope(selected));   // only the chat on screen
-  blobWanted.forEach((path) => scopes.push(`blob:${SID}:${mode}:${path}`));
-  return scopes;
+  if (currentFile) topics.push(`${listing}:${currentFile}`);
+  if (showAll) topics.push(`tree:${SID}`);        // the file browser, only while it is open
+  if (commitsMode) topics.push(`commits:${SID}`); // and the commit list, only while reviewing one
+  if (selected) topics.push(chatTopic(selected));   // only the chat on screen
+  blobWanted.forEach((path) => topics.push(`blob:${SID}:${mode}:${path}`));
+  return topics;
 }
 
 // --- one subject, two channels ----------------------------------------------
@@ -404,13 +404,13 @@ function subjectAnchor(sel) {
   return { kind: SUBJECT_KIND[sel.kind], id: sel.id };
 }
 
-function chatScope(sel) {
+function chatTopic(sel) {
   const a = subjectAnchor(sel);
   return a ? `chat:${SID}:${a.kind}:${a.id}` : `chat:${SID}:review`;
 }
 
 function conversationMessages(sel) {
-  const view = scopeViews[chatScope(sel)];
+  const view = topicViews[chatTopic(sel)];
   return view && view.state === "ready" ? view.messages : [];
 }
 
@@ -448,18 +448,18 @@ function owedMarker(sel) {
 
 // the view behind the current mode's file list, or null until it arrives
 function listingView() {
-  return scopeViews[`diff:${SID}:${diffMode()}`] || null;
+  return topicViews[`diff:${SID}:${diffMode()}`] || null;
 }
 
-// the hunks for a path, as the server built them — null while the scope has not arrived
-function scopeHunks(path) {
-  const view = scopeViews[`diff:${SID}:${diffMode()}:${path}`];
+// the hunks for a path, as the server built them — null while the topic has not arrived
+function topicHunks(path) {
+  const view = topicViews[`diff:${SID}:${diffMode()}:${path}`];
   return view && view.state === "ready" ? view.hunks : null;
 }
 
 // what this review has asked about, as the server folded it: numbering, state, cards, host context
 function annotationsView() {
-  return scopeViews[`annotations:${SID}`] || null;
+  return topicViews[`annotations:${SID}`] || null;
 }
 
 function annotationHighlights() {
@@ -507,9 +507,9 @@ function annotationHighlight(id) {
   return annotationHighlights().find((h) => h.id === id) || null;
 }
 
-// a whole file at the MR head: [{n, text, tokens}], or null until its scope arrives
+// a whole file at the MR head: [{n, text, tokens}], or null until its topic arrives
 function blobLines(path) {
-  const view = scopeViews[`blob:${SID}:${diffMode()}:${path}`];
+  const view = topicViews[`blob:${SID}:${diffMode()}:${path}`];
   return view && view.state === "ready" ? view.lines : null;
 }
 
@@ -518,11 +518,11 @@ function blobText(path) {
   return lines === null ? undefined : lines.map((l) => l.text).join("\n");
 }
 
-// ask for a file's content — the scope arrives on the stream and the page re-renders
+// ask for a file's content — the topic arrives on the stream and the page re-renders
 function wantBlob(path) {
   if (blobWanted.has(path)) return;
   blobWanted.add(path);
-  watchScopes(diffScopes());
+  watchTopics(diffTopics());
 }
 
 // the single write path — every landing-page action is one named command. Reports the status
@@ -580,7 +580,7 @@ function renderOpenSessions(land, sessions) {
   hd.className = "hubhdr";
   hd.appendChild(h2("Open reviews"));
   hd.appendChild(btn(refreshing ? "checking…" : "↻ check for updates", "btn ghost", checkReviewStates));
-  const checkedAt = scopeViews["hub"] && scopeViews["hub"].host_checked_at ? Date.parse(scopeViews["hub"].host_checked_at) : 0;
+  const checkedAt = topicViews["hub"] && topicViews["hub"].host_checked_at ? Date.parse(topicViews["hub"].host_checked_at) : 0;
   if (checkedAt) {
     const note = document.createElement("span"); note.className = "hubago";
     note.textContent = `checked ${agoText(checkedAt)}`;
@@ -642,8 +642,8 @@ function hostLink(url, label) {
 // the session already reviewing this MR, if any — so a ?ref= link (or a stale Track button) resumes
 // that review instead of opening a second one for the same MR
 async function findTracking(ref) {
-  await hubReady;   // a cold ?ref= tab lands here before the first scope has arrived
-  const sessions = (scopeViews["hub"] && scopeViews["hub"].sessions) || [];
+  await hubReady;   // a cold ?ref= tab lands here before the first topic has arrived
+  const sessions = (topicViews["hub"] && topicViews["hub"].sessions) || [];
   return sessions.find((s) => s.mr && `${s.mr.project}!${s.mr.iid}` === ref) || null;
 }
 
@@ -661,7 +661,7 @@ async function trackRef(ref, button) {
     return;
   }
   setStatus("tracking " + ref + " — it's in your open reviews");
-  // the entry moves from the queue into "Open reviews" when the republished scope arrives
+  // the entry moves from the queue into "Open reviews" when the republished topic arrives
 }
 
 // the ?ref= landing: open the review a queue link points at, resuming the existing session when the
@@ -704,10 +704,10 @@ async function showLanding() {
   land.className = "land";
   const d = $("diff"); d.innerHTML = ""; d.appendChild(land);
 
-  if (!scopeViews["hub"]) { land.appendChild(empty("connecting to the review server…")); return; }
-  // open reviews are the local half of the scope and are already here; the queue half carries its
+  if (!topicViews["hub"]) { land.appendChild(empty("connecting to the review server…")); return; }
+  // open reviews are the local half of the topic and are already here; the queue half carries its
   // own loading state, so a slow host delays the queue block and nothing else
-  const active = scopeViews["hub"].sessions || [];
+  const active = topicViews["hub"].sessions || [];
   renderOpenSessions(land, active);
 
   const head = document.createElement("div");
@@ -716,7 +716,7 @@ async function showLanding() {
   land.appendChild(head);
   const queueBox = document.createElement("div");
   land.appendChild(queueBox);
-  renderQueue(queueBox, scopeViews["hub"], active);
+  renderQueue(queueBox, topicViews["hub"], active);
 }
 
 function renderQueue(box, view, openSessions) {
@@ -792,7 +792,7 @@ function toggleSinceLast() {
   viewingPath = null;   // both views are diff views — drop any non-diff repo file being shown
   if (sinceLast) { commitsMode = false; $("t-commits").classList.toggle("on", false); }  // one diff mode at a time
   currentFile = null;   // the mode has its own file list; pick its first
-  render();             // the new mode's scope is subscribed on render and arrives on the stream
+  render();             // the new mode's topic is subscribed on render and arrives on the stream
 }
 
 async function markReviewed() {
@@ -804,7 +804,7 @@ async function markReviewed() {
 let wsTimer = null;
 function connectWS() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  // state.seq is the event log's offset, not a scope's seq — this stream is the one you resume
+  // state.seq is the event log's offset, not a topic's seq — this stream is the one you resume
   const ws = new WebSocket(`${proto}://${location.host}/api/sessions/${SID}/stream?since=${state.seq}`);
   ws.onmessage = () => { clearTimeout(wsTimer); wsTimer = setTimeout(load, 60); };
   ws.onclose = () => setTimeout(connectWS, 1000);
@@ -941,7 +941,7 @@ async function askClaude(query, panel) {
   panel.innerHTML = "";
   // the lookup channel has no session to hang a wait line on — say it plainly instead. Only once
   // the hub has arrived: an unknown watcher must not read as an absent one.
-  panel.appendChild(empty(scopeViews.hub && !agentState().attached
+  panel.appendChild(empty(topicViews.hub && !agentState().attached
     ? "asking Claude… — but no agent is watching, so this will go unanswered"
     : "asking Claude…"));
   let id = null;
@@ -1038,7 +1038,7 @@ function renderTree() {
       localStorage.setItem("rm-showall", showAll ? "1" : "0");
       // opening the browser is a subscription, and closing it drops one — the repository listing
       // is read while it is being looked at and not otherwise
-      watchScopes(diffScopes());
+      watchTopics(diffTopics());
       renderTree();
     };
     el.appendChild(hdr);
@@ -1167,7 +1167,7 @@ async function revealLine(path, line) {
 // rendered, or a deletion with no new-side row) — nothing to unfold.
 function gapContaining(file, line) {
   if (line == null) return null;
-  const hunks = scopeHunks(file.path) || [];
+  const hunks = topicHunks(file.path) || [];
   let cursor = 1;
   for (const h of hunks) {
     if (line < h.new_start) return line >= cursor ? cursor : null;
@@ -1186,12 +1186,12 @@ function highlightExact(path, lo, hi) {
 function activeFiles() {
   const view = listingView();
   if (!view || view.state !== "ready") return [];
-  // `diff` is the tree's "this file has changes" flag; the scope calls the same thing has_diff
+  // `diff` is the tree's "this file has changes" flag; the topic calls the same thing has_diff
   return view.files.map((f) => Object.assign({}, f, { diff: f.has_diff }));
 }
 
 function renderDiff() {
-  if (SID) watchScopes(diffScopes());   // the open file decides what this page watches
+  if (SID) watchTopics(diffTopics());   // the open file decides what this page watches
   const el = $("diff");
   el.innerHTML = "";
   if (commitsMode) { renderCommitView(el); return; }
@@ -1214,7 +1214,7 @@ async function toggleCommits() {
 
 function selectCommit(sha) {
   currentCommit = sha; currentFile = null;   // reset to the new commit's first file
-  render();   // a different commit is a different scope — subscribed on render, arrives on the stream
+  render();   // a different commit is a different topic — subscribed on render, arrives on the stream
 }
 
 function stepCommit(delta) {
@@ -1338,7 +1338,7 @@ function renderFileDiff(el, files, suffix, interactive) {
   el.appendChild(name);
   if (isMd && mdRendered.has(file.path)) { renderMarkdownDoc(el, file.path); return; }
   const hl = interactive ? highlightLines(file.path) : new Set();
-  const hunks = scopeHunks(file.path);
+  const hunks = topicHunks(file.path);
   if (hunks === null) { el.appendChild(empty("loading " + file.path + "…")); return; }
   const table = document.createElement("table");
   table.className = "hunk";
@@ -1377,7 +1377,7 @@ function renderUnifiedUnfoldable(table, hunks, path, hl) {
   let cursor = 1;   // next not-yet-shown new-side line number
   hunks.forEach((h) => {
     renderGap(table, path, cursor, h.new_start - 1, lines, exp, hl);
-    // the hunk's own rows are built from the scope — sides, numbers and spans are all fields
+    // the hunk's own rows are built from the topic — sides, numbers and spans are all fields
     const block = document.createElement("tbody");
     block.innerHTML = unifiedRowsHtml([h], hl);
     while (block.firstChild) table.appendChild(block.firstChild);
@@ -1411,7 +1411,7 @@ function renderGap(table, path, from, to, lines, exp, hl) {
   const size = to - from + 1;
   const g = exp.get(from) || { top: 0, bot: 0, all: false };
   const at = (n) => (lines && lines[n - 1] !== undefined ? lines[n - 1] : { text: "", tokens: [] });
-  // A revealed line comes from the blob scope already lexed. The server saw the whole file, so a
+  // A revealed line comes from the blob topic already lexed. The server saw the whole file, so a
   // docstring that opens above a collapsed run and closes inside it is coloured correctly here —
   // which is what the old carry-state was approximating without ever being able to see those lines.
   const ctxRow = (n) => {
@@ -1451,7 +1451,7 @@ function expandGap(path, from, kind) {
   else if (kind === "top") g.top += UNFOLD_CHUNK;
   else if (kind === "bot") g.bot += UNFOLD_CHUNK;
   m.set(from, g);
-  wantBlob(path);   // revealing needs the file — the scope arrives and re-renders
+  wantBlob(path);   // revealing needs the file — the topic arrives and re-renders
   renderDiff();
 }
 
@@ -1503,7 +1503,7 @@ function renderFileView(el, path) {
 // click a line = toggle its highlight (dedupe + discard-by-reclick); drag = select a block
 // The line a selection started on, kept outside the table it started in. A frame arriving between
 // the press and the release rebuilds the diff, and a start held on the old table would go with it —
-// the reviewer's drag silently doing nothing. Which scopes republish decides how often that
+// the reviewer's drag silently doing nothing. Which topics republish decides how often that
 // happens, so it must not be what decides whether a selection works.
 let dragStart = null;
 
@@ -1722,7 +1722,7 @@ function clearSubject() {
 // chat it has open and no other, the way the diff holds one file.
 function openSubject(sel) {
   if (sel) { selected = sel; detailTab = null; } else { clearSubject(); }
-  if (SID) watchScopes(diffScopes());
+  if (SID) watchTopics(diffTopics());
   renderAnnotations();
 }
 
@@ -1838,7 +1838,7 @@ function renderDetail() {
   const close = () => openSubject(null);
   const subject = detailSubject();
   if (!subject) {
-    if (selected) { clearSubject(); if (SID) watchScopes(diffScopes()); }
+    if (selected) { clearSubject(); if (SID) watchTopics(diffTopics()); }
     el.hidden = true; el.innerHTML = "";
     return;
   }
@@ -2007,7 +2007,7 @@ function doubtControl(claim, label) {
 // Whether Claude owes this chat a verification. Server-side fact, same list the agent
 // works from, so what is shown waiting and what is actually owed cannot disagree.
 function beingChecked(sel) {
-  const view = scopeViews[chatScope(sel)];
+  const view = topicViews[chatTopic(sel)];
   return !!(view && view.state === "ready" && view.checking);
 }
 
@@ -2077,7 +2077,7 @@ function labelControl(card) {
 
 // one subject's chat with Claude: the messages, and the box that adds to them
 function conversationBlock(subject) {
-  const scope = chatScope(selected);
+  const topic = chatTopic(selected);
   const wrap = document.createElement("div");
   wrap.className = "conv";
 
@@ -2125,15 +2125,15 @@ function conversationBlock(subject) {
   inp.placeholder = subject.kind === "mr"
     ? "message Claude about the change — reference a card by #N"
     : "ask Claude about this";
-  inp.value = msgDraft[scope] || "";
-  inp.oninput = (e) => { msgDraft[scope] = e.target.value; };
-  inp.onfocus = () => { msgFocused = scope; };
-  inp.onblur = () => { if (msgFocused === scope) msgFocused = null; };
+  inp.value = msgDraft[topic] || "";
+  inp.oninput = (e) => { msgDraft[topic] = e.target.value; };
+  inp.onfocus = () => { msgFocused = topic; };
+  inp.onblur = () => { if (msgFocused === topic) msgFocused = null; };
   const send = () => {
     const body = inp.value.trim();
     if (!body) return;
     post({ type: "post_message", body, anchor: subjectAnchor(selected) });
-    delete msgDraft[scope]; inp.value = "";
+    delete msgDraft[topic]; inp.value = "";
   };
   inp.onkeydown = (e) => { if (e.key === "Enter") send(); };
   box.appendChild(inp);
@@ -2180,7 +2180,7 @@ function hostChannel(subject) {
 // restore focus across a WS-driven re-render; never steal it
 function restoreDetailFocus(el, subject, tab) {
   if (tab === "claude") {
-    if (msgFocused === chatScope(selected)) {
+    if (msgFocused === chatTopic(selected)) {
       const inp = el.querySelector(".chatbox input");
       if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
     }
@@ -2334,7 +2334,7 @@ function matchingHighlight(t) {
 
 // Every thread verb is the same command shape and the same report. None of them reloads the
 // session afterwards: the server republishes the discussions it changed, so the panel repaints
-// from the scope rather than from whatever this guessed the host would say.
+// from the topic rather than from whatever this guessed the host would say.
 async function threadCmd(name, args, okMsg) {
   setStatus("…");
   const result = await cmd(name, { session: SID, ...args });
@@ -2345,7 +2345,7 @@ async function threadCmd(name, args, okMsg) {
 async function refreshThreads() {
   // a full re-read of the change, not just its discussions — an updated head is what lets the
   // "Since last review" banner appear at all. The session fetch still carries the file list, so
-  // that one is reloaded here until it has a scope of its own.
+  // that one is reloaded here until it has a topic of its own.
   if (await threadCmd("session.resync", {}, "re-synced with host")) await load();
 }
 
@@ -2471,7 +2471,7 @@ function renderVersionBanner(el) {
 
 function renderReviewBar(el) {
   const review = reviewView();
-  if (!review) return;                      // nothing to say until the scope arrives
+  if (!review) return;                      // nothing to say until the topic arrives
   const approval = reviewApproval();
   const { pending, posted } = review;
   const canApprove = (review.approval || {}).available;

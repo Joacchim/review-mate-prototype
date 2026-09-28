@@ -149,7 +149,7 @@ class RequestCheck(BaseModel):
 
     A comment is checked through the highlight it sits on, with its text as `note`: a comment is
     not something a chat can be about, and inventing a fourth subject kind for it would
-    put every client and every chat scope in step with a distinction only this needs.
+    put every client and every chat topic in step with a distinction only this needs.
     """
     type: Literal["request_check"] = "request_check"
     subject: Subject

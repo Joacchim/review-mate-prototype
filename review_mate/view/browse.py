@@ -1,4 +1,4 @@
-"""The `tree` and `commits` scopes: the repository around the change, and how it got here.
+"""The `tree` and `commits` topics: the repository around the change, and how it got here.
 
 Both answer a question a reviewer asks only sometimes — what else is in this repo, and what were
 the individual steps — and both cost a host read to answer. So both follow the shape the hub
@@ -44,7 +44,7 @@ class CommitsView(BaseModel):
     error: str = ""
 
 
-class BrowseScopes:
+class BrowseTopics:
     """Builds both, and owns what each has read.
 
     Neither `build` reaches the host. `fetch_tree` and `fetch_commits` do, once, and republish when
@@ -54,7 +54,7 @@ class BrowseScopes:
     def __init__(self, manager, provider=None, publish=None) -> None:
         self._manager = manager
         self._provider = provider
-        self._publish = publish              # publish(scope) -> awaitable
+        self._publish = publish              # publish(topic) -> awaitable
         self._trees: dict[str, list[str]] = {}     # sha -> paths
         self._tree_state: dict[str, str] = {}      # sha -> loading | ready | error
         self._tree_error: dict[str, str] = {}
@@ -148,9 +148,9 @@ class BrowseScopes:
     def _can(self, method: str) -> bool:
         return self._provider is not None and hasattr(self._provider, method)
 
-    async def _republish(self, scope: str) -> None:
+    async def _republish(self, topic: str) -> None:
         if self._publish is not None:
-            await self._publish(scope)
+            await self._publish(topic)
 
     def _snapshot(self, session_id: str):
         writer = self._manager.get(session_id)

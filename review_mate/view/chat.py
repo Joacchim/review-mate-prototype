@@ -1,4 +1,4 @@
-"""The `chat` scope family: the chats a review is holding with the agent.
+"""The `chat` topic family: the chats a review is holding with the agent.
 
 `chat:<sid>` is an index — one summary row per chat that has anything in it, plus the
 review's own, and the agent state this session is in. `chat:<sid>:review` and
@@ -10,7 +10,7 @@ arrive on every turn. Measured against carrying every chat in one view, or carry
 the annotations, on a review-sized load: 2.9 KB here for a message in the open subject and 1.0 KB for one
 elsewhere, against 8.6 KB and 14.7 KB.
 
-The agent state rides the index rather than a scope of its own because it is what the chat surface
+The agent state rides the index rather than a topic of its own because it is what the chat surface
 renders, and because presence alone does not answer the reviewer's question — see `view.asks`.
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ class ChatRow(BaseModel):
     """A chat, as the index lists it."""
     kind: str                      # review | highlight | insight | thread
     id: str = ""                   # the subject's id; empty for the review's own
-    scope: str                     # the name to subscribe to for its messages
+    topic: str                     # the name to subscribe to for its messages
     count: int = 0
     last_role: str = ""
     last_at: str = ""
@@ -78,12 +78,12 @@ def _address(anchor: Subject | None) -> tuple[str, str]:
     return (REVIEW, "") if anchor is None else (anchor.kind.value, anchor.id)
 
 
-def scope_name(session_id: str, anchor: Subject | None) -> str:
+def topic_name(session_id: str, anchor: Subject | None) -> str:
     kind, ident = _address(anchor)
     return f"chat:{session_id}:{kind}" if ident == "" else f"chat:{session_id}:{kind}:{ident}"
 
 
-class ChatScopes:
+class ChatTopics:
     """Builds the index and each chat. Never reads the host; `watcher` is a local fact."""
 
     def __init__(self, manager, watcher=None) -> None:
@@ -119,7 +119,7 @@ class ChatScopes:
             last = messages[-1] if messages else None
             rows.append(ChatRow(
                 kind=kind, id=ident,
-                scope=(f"chat:{session_id}:{kind}" if ident == ""
+                topic=(f"chat:{session_id}:{kind}" if ident == ""
                        else f"chat:{session_id}:{kind}:{ident}"),
                 count=len(messages),
                 last_role=last.role if last else "",

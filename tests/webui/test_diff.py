@@ -1,6 +1,6 @@
 """The review surface in a browser.
 
-Written against the renderer as it stands, so that swapping it for the scope-driven one is proven
+Written against the renderer as it stands, so that swapping it for the topic-driven one is proven
 equivalent rather than asserted to be. What a hunk contains is the protocol suite's job; what the
 page does with it is this one's.
 """
@@ -100,7 +100,7 @@ def test_a_markdown_file_can_be_read_instead_of_diffed(diff, staged, stub_host):
 
 
 def test_revealed_context_arrives_already_coloured(diff, staged, stub_host):
-    """Unfolded lines come from the blob scope, lexed server-side against the whole file — so a
+    """Unfolded lines come from the blob topic, lexed server-side against the whole file — so a
     construct that opens above a collapsed run and closes inside it is still coloured correctly,
     which a client walking only the lines it can see could not do."""
     stub_host.files["scheduler/capacity.py"] = (
@@ -194,11 +194,11 @@ def test_the_file_browser_is_read_only_while_it_is_open(diff, page, staged, stub
     staged.put(two_file_review("s1"))
     stub_host.repo_tree = ["scheduler/capacity.py", "scheduler/config.py", "README.md"]
     diff.load("s1")
-    assert page.evaluate("Object.keys(scopeViews).filter(s => /^tree:/.test(s))") == []
+    assert page.evaluate("Object.keys(topicViews).filter(s => /^tree:/.test(s))") == []
 
     diff.show_all_repo_files()
-    page.wait_for_function("() => Object.keys(scopeViews).some(s => /^tree:/.test(s))")
+    page.wait_for_function("() => Object.keys(topicViews).some(s => /^tree:/.test(s))")
     expect(diff.files.filter(has_text="README.md")).to_have_count(1)
 
     diff.show_all_repo_files()                       # off again
-    page.wait_for_function("() => !wantedScopes.some(s => /^tree:/.test(s))")
+    page.wait_for_function("() => !wantedTopics.some(s => /^tree:/.test(s))")

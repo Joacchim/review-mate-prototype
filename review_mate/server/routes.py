@@ -78,7 +78,7 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
         The activity stream is deliberately ephemeral (see `ActivityBroker`): a restart drops
         in-flight notifications, and the safety argument for that rests on the agent re-deriving
         outstanding work from durable state rather than only reacting to events. This route is that
-        derivation, over the same predicate the chat scope publishes — `view.asks` owns it, so an
+        derivation, over the same predicate the chat topic publishes — `view.asks` owns it, so an
         agent re-finding its work and a reviewer watching for an answer cannot disagree.
 
         Snapshot reads only, no host I/O, so it stays cheap enough to poll — unlike the hub's

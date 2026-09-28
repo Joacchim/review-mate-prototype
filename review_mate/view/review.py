@@ -1,6 +1,6 @@
-"""The `review` scope: what the reviewer has prepared, and what it would take to send it.
+"""The `review` topic: what the reviewer has prepared, and what it would take to send it.
 
-One scope per session, carrying the drafts a reviewer is writing, whether the change has moved past
+One topic per session, carrying the drafts a reviewer is writing, whether the change has moved past
 the version they reviewed, and whether they have approved it. Three facts that arrive together in a
 single bar and were three separate reads before this — so a client painted it in three stages, and a
 second client would have had to reproduce the same assembly.
@@ -64,7 +64,7 @@ class ReviewView(BaseModel):
     version: VersionView = Field(default_factory=VersionView)
 
 
-class ReviewScope:
+class ReviewTopic:
     """Builds the review bar, and owns the approval cache.
 
     `build` never calls the host. The approval is fetched by `refresh`, which the command handler

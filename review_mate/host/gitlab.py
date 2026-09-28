@@ -106,7 +106,7 @@ class GitLabProvider:
         refs: list[MRRef] = []
         for key in ("reviewer_username", "assignee_username"):
             items = await self._get("/merge_requests",
-                                    params={"scope": "all", key: self.username, "state": "opened"})
+                                    params={"topic": "all", key: self.username, "state": "opened"})
             refs.extend(r for it in items if (r := parse_reference(it.get("web_url", ""), self.host)))
         seen, unique = set(), []
         for r in refs:
@@ -163,7 +163,7 @@ class GitLabProvider:
         seen, items = set(), []
         for key in ("reviewer_username", "assignee_username"):
             rows = await self._get("/merge_requests",
-                                   params={"scope": "all", key: self.username, "state": "opened"})
+                                   params={"topic": "all", key: self.username, "state": "opened"})
             for it in rows:
                 ref = parse_reference(it.get("web_url", ""), self.host)
                 if ref and (ref.project, ref.iid) not in seen:
@@ -211,7 +211,7 @@ class GitLabProvider:
         #    we already resolved the project the reviewer meant, so we skip it then.
         if not items:
             try:
-                rows = await self._get("/search", params={"scope": "merge_requests",
+                rows = await self._get("/search", params={"topic": "merge_requests",
                                                           "search": query, "state": "opened"})
                 for it in rows:
                     add(it)

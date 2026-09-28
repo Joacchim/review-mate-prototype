@@ -1,12 +1,12 @@
 """The client-facing view protocol.
 
-A client opens one stream, names the scopes it is showing, and receives whole-scope
-replacements. The scope — not the field — is the unit of change, so a client needs no patch
-algebra and holds no domain logic: it renders what a scope carries.
+A client opens one stream, names the topics it is showing, and receives whole-topic
+replacements. The topic — not the field — is the unit of change, so a client needs no patch
+algebra and holds no domain logic: it renders what a topic carries.
 
-`seq` is per-scope and monotonic. It orders replacements and exposes a gap; it is not a resume
+`seq` is per-topic and monotonic. It orders replacements and exposes a gap; it is not a resume
 token, because there is nothing to resume — a reconnecting client re-subscribes and is sent the
-current view of every scope it names. Not the event log's `seq`, which is an offset a client
+current view of every topic it names. Not the event log's `seq`, which is an offset a client
 genuinely does resume from: the two share a name and answer that question oppositely.
 """
 from __future__ import annotations
@@ -18,40 +18,40 @@ from pydantic import BaseModel, Field, ValidationError
 HUB = "hub"
 
 
-class ScopeUpdate(BaseModel):
-    """A whole-scope replacement — the only state-bearing message the server sends."""
-    type: Literal["scope"] = "scope"
-    scope: str
+class TopicUpdate(BaseModel):
+    """A whole-topic replacement — the only state-bearing message the server sends."""
+    type: Literal["topic"] = "topic"
+    topic: str
     seq: int
     view: dict[str, Any]
 
     @property
     def key(self) -> str:
-        return f"scope:{self.scope}"
+        return f"topic:{self.topic}"
 
 
-class ScopeError(BaseModel):
-    """A scope could not be built, or was not recognised. Never fatal to the connection."""
+class TopicError(BaseModel):
+    """A topic could not be built, or was not recognised. Never fatal to the connection."""
     type: Literal["error"] = "error"
-    scope: str | None = None
+    topic: str | None = None
     reason: str
 
     @property
     def key(self) -> str:
-        return f"error:{self.scope or ''}"
+        return f"error:{self.topic or ''}"
 
 
-Message = ScopeUpdate | ScopeError
+Message = TopicUpdate | TopicError
 
 
 class Subscribe(BaseModel):
     action: Literal["subscribe"]
-    scopes: list[str] = Field(default_factory=list)
+    topics: list[str] = Field(default_factory=list)
 
 
 class Unsubscribe(BaseModel):
     action: Literal["unsubscribe"]
-    scopes: list[str] = Field(default_factory=list)
+    topics: list[str] = Field(default_factory=list)
 
 
 ClientMessage = Subscribe | Unsubscribe
@@ -61,7 +61,7 @@ def parse_client_message(raw: Any) -> ClientMessage:
     """Parse one inbound client frame, or raise ValueError.
 
     Unknown actions are a client bug, not a transport failure — the caller answers with a
-    ScopeError and keeps the stream open.
+    TopicError and keeps the stream open.
     """
     if not isinstance(raw, dict):
         raise ValueError("expected an object")

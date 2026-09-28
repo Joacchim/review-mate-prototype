@@ -1,10 +1,10 @@
-"""The chat scopes: an index of a review's chats, and each chat's messages.
+"""The chat topics: an index of a review's chats, and each chat's messages.
 
 Split for the reason the diff is: a client subscribes to the chat it has open. The index is
 also where presence stops being a raw fact and becomes an answer — "is my ask being worked on" is
 the join of who is listening with what is outstanding, and no client performs it.
 
-Most of this drives ChatScopes directly; the ticker and the republish path go through the real
+Most of this drives ChatTopics directly; the ticker and the republish path go through the real
 stream, because the transport is the thing being checked there.
 """
 import json
@@ -23,7 +23,7 @@ from review_mate.session.commands import (
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import LineRange, Origin, Side, Subject, SubjectKind
 from review_mate.view.asks import STALE_AFTER, agent_state, outstanding
-from review_mate.view.chat import ChatScopes
+from review_mate.view.chat import ChatTopics
 
 ATTACHED = {"attached": True, "parked": True, "last_seen": "2026-01-01T00:00:00+00:00"}
 ALONE = {"attached": False, "parked": False, "last_seen": None}
@@ -38,7 +38,7 @@ async def session(tmp_path):
 
 
 def chat_for(manager, watcher=None):
-    return ChatScopes(manager, watcher=None if watcher is None else (lambda: watcher))
+    return ChatTopics(manager, watcher=None if watcher is None else (lambda: watcher))
 
 
 async def mark(writer, file="a.py", line=1):
@@ -58,7 +58,7 @@ async def test_a_review_with_nothing_said_still_has_its_own_conversation(session
     manager, sid = session
     view = await chat_for(manager).build(sid)
     assert [r["kind"] for r in view["chats"]] == ["review"]
-    assert view["chats"][0]["scope"] == f"chat:{sid}:review"
+    assert view["chats"][0]["topic"] == f"chat:{sid}:review"
     assert view["chats"][0]["count"] == 0
 
 
@@ -78,7 +78,7 @@ async def test_each_conversation_is_listed_with_where_to_read_it(session):
 
     listed = rows(await chat_for(manager).build(sid))
     assert set(listed) == {("review", ""), ("highlight", highlight.id), ("insight", insight.id)}
-    assert listed[("highlight", highlight.id)]["scope"] == f"chat:{sid}:highlight:{highlight.id}"
+    assert listed[("highlight", highlight.id)]["topic"] == f"chat:{sid}:highlight:{highlight.id}"
     assert listed[("insight", insight.id)]["preview"] == "about that finding"
 
 
@@ -294,7 +294,7 @@ def test_a_message_republishes_its_own_conversation_and_the_index(tmp_path):
                                             "args": {"ref": "g/p!1"}}).json()["session"]
         with client.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe",
-                          "scopes": [f"chat:{sid}", f"chat:{sid}:review"]})
+                          "topics": [f"chat:{sid}", f"chat:{sid}:review"]})
             for _ in range(2):
                 json.loads(ws.receive_text())
             client.post(f"/api/sessions/{sid}/commands",
@@ -302,7 +302,7 @@ def test_a_message_republishes_its_own_conversation_and_the_index(tmp_path):
             seen = {}
             for _ in range(2):
                 msg = json.loads(ws.receive_text())
-                seen[msg["scope"]] = msg["view"]
+                seen[msg["topic"]] = msg["view"]
             assert set(seen) == {f"chat:{sid}", f"chat:{sid}:review"}
             assert seen[f"chat:{sid}:review"]["messages"][0]["body"] == "what is this for?"
             assert seen[f"chat:{sid}"]["agent"]["state"] in {"stalled", "working"}
@@ -323,7 +323,7 @@ def test_presence_reaches_a_client_with_no_event_behind_it(tmp_path, monkeypatch
         client.post(f"/api/sessions/{sid}/commands",
                     json={"type": "post_message", "body": "look?"})
         with client.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": [f"chat:{sid}"]})
+            ws.send_json({"action": "subscribe", "topics": [f"chat:{sid}"]})
             first = json.loads(ws.receive_text())["view"]
             assert first["agent"]["state"] == "stalled"      # asked, and nobody is listening
 
@@ -345,10 +345,10 @@ def test_the_ticker_stops_with_the_last_watcher(tmp_path, monkeypatch):
         sid = client.post("/api/cmd", json={"cmd": "session.open",
                                             "args": {"ref": "g/p!1"}}).json()["session"]
         with client.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": [f"chat:{sid}"]})
+            ws.send_json({"action": "subscribe", "topics": [f"chat:{sid}"]})
             json.loads(ws.receive_text())
             assert app.state.presence_running() is True
-            ws.send_json({"action": "unsubscribe", "scopes": [f"chat:{sid}"]})
+            ws.send_json({"action": "unsubscribe", "topics": [f"chat:{sid}"]})
             deadline = time.time() + 2
             while app.state.presence_running() and time.time() < deadline:
                 time.sleep(0.05)

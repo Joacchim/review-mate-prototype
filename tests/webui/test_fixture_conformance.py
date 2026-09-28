@@ -1,7 +1,7 @@
 """The fixture must not drift from the application it stands in for.
 
 Conformance of the *protocol* needs no test: the fixture server is the production `create_app`, so
-every frame is built by the real scope builders. What can drift is the manager beneath it — a
+every frame is built by the real topic builders. What can drift is the manager beneath it — a
 method renamed on one side and not the other — and that would show up as a broken page rather than
 a failing test. These are browser-free by design, so they run once, not once per browser.
 """
@@ -22,7 +22,7 @@ def test_the_real_manager_still_has_that_surface():
 
 
 def test_the_fixture_app_is_the_production_app(staged_app):
-    """Not a copy of it: the scope families come from create_app, so they cannot be a subset."""
+    """Not a copy of it: the topic families come from create_app, so they cannot be a subset."""
     bus = staged_app.state.bus
-    assert bus.scopes == {"hub"}
+    assert bus.topics == {"hub"}
     assert bus.families == {"diff", "blob", "annotations", "chat", "review", "threads", "access", "tree", "commits"}

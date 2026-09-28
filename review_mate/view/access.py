@@ -1,4 +1,4 @@
-"""The `access` scope: repositories Claude has asked to read, and what was said about them.
+"""The `access` topic: repositories Claude has asked to read, and what was said about them.
 
 Cross-repo context is consent-gated and agent-initiated (D-crossrepo): the agent asks, the reviewer
 decides, and nothing is read until they do. So the interesting state is not "which repos are
@@ -56,7 +56,7 @@ def _grant(grant) -> GrantRow | None:
     return GrantRow(state=grant.state, path=grant.path, error=grant.error)
 
 
-class AccessScope:
+class AccessTopic:
     """Builds the consent list. Reads the session and nothing else — asking is the agent's move and
     deciding is the reviewer's, so there is no host here at all."""
 

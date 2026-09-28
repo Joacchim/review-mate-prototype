@@ -55,7 +55,7 @@ def test_the_claude_channel_never_writes_to_the_merge_request(diff, annotations,
     diff.load("s1")
     _open_first(annotations, detail)
     detail.ask("why is this the only writer?")
-    expect(detail.messages).to_have_count(1)     # the chat scope came back with it
+    expect(detail.messages).to_have_count(1)     # the chat topic came back with it
 
     sent = _commands(staged)
     names = [name for name, _ in sent]
@@ -73,7 +73,7 @@ def test_the_review_channel_writes_a_draft_not_a_message(diff, annotations, deta
     _open_first(annotations, detail)
     detail.tab("Review").click()
     detail.save_draft("this needs a test")
-    expect(annotations.index_rows.first.locator(".chip.comment")).to_have_count(1)   # the annotations scope agrees
+    expect(annotations.index_rows.first.locator(".chip.comment")).to_have_count(1)   # the annotations topic agrees
 
     names = [name for name, _ in _commands(staged)]
     assert "SaveDraft" in names, names
@@ -98,12 +98,12 @@ def test_the_panel_holds_one_conversation_at_a_time(diff, annotations, page, sta
     diff.load("s1")
     rows = annotations.index_rows
     rows.nth(0).click()
-    page.wait_for_function("() => Object.keys(scopeViews).some(s => /^chat:s1:/.test(s))")
-    first = page.evaluate("Object.keys(scopeViews).filter(s => /^chat:s1:/.test(s))")
+    page.wait_for_function("() => Object.keys(topicViews).some(s => /^chat:s1:/.test(s))")
+    first = page.evaluate("Object.keys(topicViews).filter(s => /^chat:s1:/.test(s))")
     rows.nth(1).click()
-    page.wait_for_function("(was) => {const now = Object.keys(scopeViews).filter(s => /^chat:s1:/.test(s));"
+    page.wait_for_function("(was) => {const now = Object.keys(topicViews).filter(s => /^chat:s1:/.test(s));"
                            "return now.length === 1 && now[0] !== was[0];}", arg=first)
-    second = page.evaluate("Object.keys(scopeViews).filter(s => /^chat:s1:/.test(s))")
+    second = page.evaluate("Object.keys(topicViews).filter(s => /^chat:s1:/.test(s))")
 
     assert len(first) == 1 and len(second) == 1, (first, second)
     assert first != second, (first, second)
@@ -115,12 +115,12 @@ def test_closing_the_panel_drops_the_conversation_it_was_watching(diff, annotati
     staged.put(review_with_highlights("s1"))
     diff.load("s1")
     annotations.index_rows.first.click()
-    page.wait_for_function("() => Object.keys(scopeViews).some(s => /^chat:s1:/.test(s))")
+    page.wait_for_function("() => Object.keys(topicViews).some(s => /^chat:s1:/.test(s))")
 
     detail.close()
-    page.wait_for_function("() => !Object.keys(scopeViews).some(s => /^chat:s1:/.test(s))")
-    assert page.evaluate("Object.keys(scopeViews).filter(s => /^chat:s1:/.test(s))") == []
-    assert page.evaluate("wantedScopes.filter(s => /^chat:s1:/.test(s))") == []
+    page.wait_for_function("() => !Object.keys(topicViews).some(s => /^chat:s1:/.test(s))")
+    assert page.evaluate("Object.keys(topicViews).filter(s => /^chat:s1:/.test(s))") == []
+    assert page.evaluate("wantedTopics.filter(s => /^chat:s1:/.test(s))") == []
 
 
 # --- doubting what was said ---------------------------------------------------
@@ -131,7 +131,7 @@ def test_doubting_claudes_answer_records_it_against_the_subject(diff, annotation
     diff.load("s1")
     _open_first(annotations, detail)
     detail.doubt_card()
-    expect(detail.checking).to_have_count(1)     # the scope came back, so the command landed
+    expect(detail.checking).to_have_count(1)     # the topic came back, so the command landed
 
     sent = _commands(staged)
     check = next(c for name, c in sent if name == "RequestCheck")

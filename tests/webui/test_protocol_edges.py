@@ -25,17 +25,17 @@ def annotations(page) -> AnnotationsPage:
     return AnnotationsPage(page)
 
 
-def scopes_since(recorder, mark: int) -> set[str]:
-    return {f.get("scope") for f in recorder.frames[mark:] if f.get("type") == "scope"}
+def topics_since(recorder, mark: int) -> set[str]:
+    return {f.get("topic") for f in recorder.frames[mark:] if f.get("type") == "topic"}
 
 
 def test_a_highlight_republishes_the_annotations_and_nothing_else(diff, annotations, staged, recorder):
-    """A session event rebuilds every scope the session holds, and the tokenized file is the
+    """A session event rebuilds every topic the session holds, and the tokenized file is the
     largest of them by an order of magnitude. Only what changed may reach the client."""
     staged.put(two_file_review("s1"))
     diff.load("s1")
     expect(diff.table).to_contain_text("pu.fleet == LEGACY")     # the file's frame has landed
-    assert OPEN_FILE in scopes_since(recorder, 0)                # ... and it came from the stream
+    assert OPEN_FILE in topics_since(recorder, 0)                # ... and it came from the stream
 
     mark = len(recorder.frames)
     diff.ask_about(45)
@@ -44,4 +44,4 @@ def test_a_highlight_republishes_the_annotations_and_nothing_else(diff, annotati
     deadline = time.time() + 2                                   # let any straggler frame arrive
     while time.time() < deadline:
         time.sleep(0.1)
-    assert scopes_since(recorder, mark) == {"annotations:s1"}
+    assert topics_since(recorder, mark) == {"annotations:s1"}

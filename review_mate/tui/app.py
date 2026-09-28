@@ -1,4 +1,4 @@
-"""The hub screen: a terminal renderer for the `hub` scope.
+"""The hub screen: a terminal renderer for the `hub` topic.
 
 Every value on screen comes from the view document — this module decides layout and key bindings
 and nothing else. There is no review state here to fall out of step with the server's, which is
@@ -180,7 +180,7 @@ class HubScreen:
 class Shell:
     """Holds the screens and the subscription set.
 
-    Navigating is subscribing: opening a review watches its scopes and leaving drops them, so the
+    Navigating is subscribing: opening a review watches its topics and leaving drops them, so the
     server only builds what someone is looking at. The shell owns that because it is the only part
     that knows which screen is in front.
     """
@@ -276,7 +276,7 @@ class Shell:
             self._app.invalidate()
 
     def on_change(self) -> None:
-        """Every view update: repaint, and pick up any scope the screen can only ask for now.
+        """Every view update: repaint, and pick up any topic the screen can only ask for now.
 
         A review screen cannot name the file it wants until the file list has arrived, so the
         subscription set is reconciled whenever a view lands rather than only when the reader
@@ -285,7 +285,7 @@ class Shell:
         self.invalidate()
         if self.diff is None:
             return
-        missing = [scope for scope in self.diff.wanted() if scope not in self.client.scopes]
+        missing = [topic for topic in self.diff.wanted() if topic not in self.client.topics]
         if missing:
             asyncio.create_task(self.run_command(self.client.watch(missing)))
 
@@ -308,7 +308,7 @@ class Shell:
         if self.diff is None:
             return
         wanted = self.diff.wanted()
-        stale = [scope for scope in previous if scope not in wanted]
+        stale = [topic for topic in previous if topic not in wanted]
         if stale:
             await self.client.unwatch(stale)
         await self.client.watch(wanted)

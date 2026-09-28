@@ -82,8 +82,8 @@ def test_an_mr_level_insight_stands_on_its_own(diff, annotations, staged):
     expect(annotations.insights).to_contain_text("single queue")
 
 
-def test_the_host_context_tier_lands_on_the_scope(diff, annotations, staged, stub_host):
-    """The host read is not the page's to make: the scope reports loading, fetches, republishes."""
+def test_the_host_context_tier_lands_on_the_topic(diff, annotations, staged, stub_host):
+    """The host read is not the page's to make: the topic reports loading, fetches, republishes."""
     stub_host.blame_lines = list(BLAME)
     stub_host.issues = list(ISSUES)
     staged.put(review_with_highlights("s1"))
@@ -162,9 +162,9 @@ def test_dismissing_an_insight_removes_it(diff, annotations, staged):
 
 
 def test_a_selection_survives_a_frame_arriving_mid_drag(diff, annotations, staged, as_agent):
-    """The diff is rebuilt whenever a scope it shows republishes, and a reviewer holding the mouse
+    """The diff is rebuilt whenever a topic it shows republishes, and a reviewer holding the mouse
     down has no say in when that happens. Losing the selection to it looks like the drag doing
-    nothing — silently, and more often the more scopes a review watches."""
+    nothing — silently, and more often the more topics a review watches."""
     from review_mate.session.commands import EmitCard
 
     staged.put(two_file_review("s1"))

@@ -1,9 +1,9 @@
-"""The annotations scope: what a reviewer asked about, and what came back.
+"""The annotations topic: what a reviewer asked about, and what came back.
 
-The cross-file view is why this is one scope rather than many — the numbering a reviewer references
+The cross-file view is why this is one topic rather than many — the numbering a reviewer references
 is session-wide, and no per-file view can assign it.
 
-Most of this drives AnnotationsScope directly. The scope's own logic needs no transport, and a sync
+Most of this drives AnnotationsTopic directly. The topic's own logic needs no transport, and a sync
 TestClient runs the application on another loop, so a writer reached from a test coroutine would be
 touching primitives that belong to a different one. The tail is the exception and is tested through
 the real stream, because that is the thing being checked.
@@ -23,7 +23,7 @@ from review_mate.session.manager import SessionManager
 from review_mate.session.state import (
     Criticality, Label, LineRange, Origin, Side, Subject, SubjectKind, Theme,
 )
-from review_mate.view.annotations import AnnotationsScope
+from review_mate.view.annotations import AnnotationsTopic
 
 
 class BlameHost(HostStub):
@@ -57,7 +57,7 @@ async def session(tmp_path):
 
 
 def annotations_for(manager, provider, published=None):
-    return AnnotationsScope(manager, provider=provider,
+    return AnnotationsTopic(manager, provider=provider,
                      publish=None if published is None else
                      (lambda session_id: published.append(session_id) or _done()))
 
@@ -73,7 +73,7 @@ async def test_highlights_carry_session_wide_numbering(session):
         await writer.submit(command, Origin.BROWSER)
     view = await annotations_for(manager, provider).build(sid)
     assert [h["n"] for h in view["highlights"]] == [1, 2, 3]
-    # the numbering spans files, which is why it cannot come from a per-file scope
+    # the numbering spans files, which is why it cannot come from a per-file topic
     assert [h["file"] for h in view["highlights"]] == ["a.py", "pkg/b.py", "a.py"]
 
 
@@ -151,7 +151,7 @@ async def test_a_failing_blame_does_not_cost_the_linked_issues(session):
 async def test_a_host_that_cannot_blame_says_unavailable(session):
     manager, sid, _ = session
     await manager.get(sid).submit(highlight(), Origin.BROWSER)
-    view = await AnnotationsScope(manager, provider=HostStub()).build(sid)
+    view = await AnnotationsTopic(manager, provider=HostStub()).build(sid)
     assert view["highlights"][0]["context"]["state"] == "unavailable"
 
 
@@ -172,7 +172,7 @@ def test_the_annotations_republish_when_the_session_changes(tmp_path):
         sid = tc.post("/api/cmd", json={"cmd": "session.open",
                                         "args": {"ref": "g/p!1"}}).json()["session"]
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": [f"annotations:{sid}"]})
+            ws.send_json({"action": "subscribe", "topics": [f"annotations:{sid}"]})
             assert json.loads(ws.receive_text())["view"]["highlights"] == []
             tc.post(f"/api/sessions/{sid}/commands",
                     json={"type": "add_highlight", "file": "a.py", "side": "new",
@@ -195,7 +195,7 @@ async def test_a_highlight_made_against_an_older_head_is_marked_stale(tmp_path):
     sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
     writer = manager.get(sid)
     await writer.submit(highlight(), Origin.BROWSER)
-    annotations = AnnotationsScope(manager, provider=provider)
+    annotations = AnnotationsTopic(manager, provider=provider)
     assert (await annotations.build(sid))["highlights"][0]["stale"] is False
 
     moved = writer.snapshot().mr.model_copy(update={"sha": "moved-on"})
@@ -277,11 +277,11 @@ async def test_numbering_survives_a_restart(tmp_path):
 
     restored = SessionManager(root=root, mr_source=provider)
     await restored.restore_all()
-    view = await AnnotationsScope(restored, provider=provider).build(sid)
+    view = await AnnotationsTopic(restored, provider=provider).build(sid)
     assert [h["n"] for h in view["highlights"]] == [1, 3]
     # and the next highlight continues past the gap rather than filling it
     await restored.get(sid).submit(highlight("new.py", 9, 9), Origin.BROWSER)
-    view = await AnnotationsScope(restored, provider=provider).build(sid)
+    view = await AnnotationsTopic(restored, provider=provider).build(sid)
     assert [h["n"] for h in view["highlights"]] == [1, 3, 4]
     await restored.shutdown()
 
@@ -316,29 +316,29 @@ async def test_the_annotations_say_who_asked_and_whether_it_was_escalated(sessio
 
 async def test_a_review_nobody_has_asked_about_can_be_asked_about(session):
     manager, sid, provider = session
-    scope = annotations_for(manager, provider)
-    passed = (await scope.build(sid))["review_pass"]
+    topic = annotations_for(manager, provider)
+    passed = (await topic.build(sid))["review_pass"]
     assert passed["requested"] is False and passed["available"] is True
 
 
 async def test_a_pass_in_flight_cannot_be_asked_for_again(session):
     manager, sid, provider = session
-    scope = annotations_for(manager, provider)
+    topic = annotations_for(manager, provider)
     await manager.get(sid).submit(RequestInsights(), Origin.BROWSER)
-    passed = (await scope.build(sid))["review_pass"]
+    passed = (await topic.build(sid))["review_pass"]
     assert passed["requested"] is True and passed["stale"] is False
     assert passed["available"] is False
 
 
 async def test_a_pass_the_change_moved_past_stays_visible_and_reads_stale(session):
     manager, sid, provider = session
-    scope = annotations_for(manager, provider)
+    topic = annotations_for(manager, provider)
     await manager.get(sid).submit(RequestInsights(), Origin.BROWSER)
     snapshot = manager.get(sid).snapshot()
     await manager.get(sid).submit(
         ApplyMRMetadata(mr=snapshot.mr.model_copy(update={"sha": "moved-on"})), Origin.SYSTEM)
 
-    passed = (await scope.build(sid))["review_pass"]
+    passed = (await topic.build(sid))["review_pass"]
     assert passed["requested"] is True, "it must not vanish — a cue that stops with nothing said"
     assert passed["stale"] is True
     assert passed["available"] is True, "the code in front of the reviewer has not been passed over"
@@ -346,14 +346,14 @@ async def test_a_pass_the_change_moved_past_stays_visible_and_reads_stale(sessio
 
 async def test_asking_again_about_the_new_code_is_no_longer_stale(session):
     manager, sid, provider = session
-    scope = annotations_for(manager, provider)
+    topic = annotations_for(manager, provider)
     await manager.get(sid).submit(RequestInsights(), Origin.BROWSER)
     snapshot = manager.get(sid).snapshot()
     await manager.get(sid).submit(
         ApplyMRMetadata(mr=snapshot.mr.model_copy(update={"sha": "moved-on"})), Origin.SYSTEM)
     await manager.get(sid).submit(RequestInsights(), Origin.BROWSER)
 
-    passed = (await scope.build(sid))["review_pass"]
+    passed = (await topic.build(sid))["review_pass"]
     assert passed["stale"] is False and passed["available"] is False
     assert passed["sha"] == "moved-on"
 
@@ -362,12 +362,12 @@ async def test_asking_again_about_the_new_code_is_no_longer_stale(session):
 
 async def test_an_insight_carries_its_label(session):
     manager, sid, provider = session
-    scope = annotations_for(manager, provider)
+    topic = annotations_for(manager, provider)
     await manager.get(sid).submit(EmitCard(
         highlight_id=None, body="the retry is unbounded",
         label=Label(theme=Theme.BUG, criticality=Criticality.HIGH, about="the retry path")),
         Origin.AGENT)
-    label = (await scope.build(sid))["insights"][0]["label"]
+    label = (await topic.build(sid))["insights"][0]["label"]
     assert label == {"theme": "bug", "criticality": "high", "about": "the retry path",
                      "by": "agent"}
 
@@ -375,22 +375,22 @@ async def test_an_insight_carries_its_label(session):
 async def test_an_unclassified_insight_says_nothing_rather_than_low(session):
     """Absent must not read as unimportant — it means nobody looked at it that way."""
     manager, sid, provider = session
-    scope = annotations_for(manager, provider)
+    topic = annotations_for(manager, provider)
     await manager.get(sid).submit(EmitCard(highlight_id=None, body="a note"), Origin.AGENT)
-    assert (await scope.build(sid))["insights"][0]["label"] is None
+    assert (await topic.build(sid))["insights"][0]["label"] is None
 
 
 async def test_a_corrected_label_says_whose_it_is_now(session):
     """A client shows a reviewer's correction differently from a claim nobody questioned."""
     manager, sid, provider = session
-    scope = annotations_for(manager, provider)
+    topic = annotations_for(manager, provider)
     writer = manager.get(sid)
     await writer.submit(EmitCard(highlight_id=None, body="x", label=Label(
         theme=Theme.BUG, criticality=Criticality.HIGH)), Origin.AGENT)
     cid = writer.snapshot().cards[0].id
     await writer.submit(LabelCard(card_id=cid, label=Label(
         theme=Theme.STYLE, criticality=Criticality.LOW)), Origin.BROWSER)
-    label = (await scope.build(sid))["insights"][0]["label"]
+    label = (await topic.build(sid))["insights"][0]["label"]
     assert label["theme"] == "style" and label["by"] == "browser"
 
 
@@ -398,7 +398,7 @@ async def test_a_corrected_label_says_whose_it_is_now(session):
 
 async def test_a_highlight_the_agent_fixed_says_what_it_became(session):
     manager, sid, provider = session
-    scope = annotations_for(manager, provider)
+    topic = annotations_for(manager, provider)
     writer = manager.get(sid)
     await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
                                     line_range=LineRange(start=1, end=1)), Origin.BROWSER)
@@ -406,7 +406,7 @@ async def test_a_highlight_the_agent_fixed_says_what_it_became(session):
     await writer.submit(RecordAddressed(subject=Subject(kind=SubjectKind.HIGHLIGHT, id=hid),
                                        sha="def456", summary="bounded the retry at five"),
                        Origin.AGENT)
-    row = (await scope.build(sid))["highlights"][0]
+    row = (await topic.build(sid))["highlights"][0]
     assert row["addressed"]["sha"] == "def456"
     assert row["addressed"]["summary"] == "bounded the retry at five"
 
@@ -414,32 +414,32 @@ async def test_a_highlight_the_agent_fixed_says_what_it_became(session):
 async def test_a_highlight_nobody_fixed_carries_nothing(session):
     """Absent, so a client cannot mistake "not yet" for "done"."""
     manager, sid, provider = session
-    scope = annotations_for(manager, provider)
+    topic = annotations_for(manager, provider)
     await manager.get(sid).submit(AddHighlight(file="a.py", side=Side.NEW,
                                                line_range=LineRange(start=1, end=1)),
                                   Origin.BROWSER)
-    assert (await scope.build(sid))["highlights"][0]["addressed"] is None
+    assert (await topic.build(sid))["highlights"][0]["addressed"] is None
 
 
 async def test_where_a_subject_stands_is_the_last_answer_not_the_first(session):
     """A subject answered twice was answered badly the first time."""
     manager, sid, provider = session
-    scope = annotations_for(manager, provider)
+    topic = annotations_for(manager, provider)
     writer = manager.get(sid)
     await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
                                     line_range=LineRange(start=1, end=1)), Origin.BROWSER)
     subject = Subject(kind=SubjectKind.HIGHLIGHT, id=writer.snapshot().highlights[0].id)
     for sha in ("aaa111", "bbb222"):
         await writer.submit(RecordAddressed(subject=subject, sha=sha), Origin.AGENT)
-    assert (await scope.build(sid))["highlights"][0]["addressed"]["sha"] == "bbb222"
+    assert (await topic.build(sid))["highlights"][0]["addressed"]["sha"] == "bbb222"
 
 
 async def test_the_agent_can_fix_its_own_finding(session):
     manager, sid, provider = session
-    scope = annotations_for(manager, provider)
+    topic = annotations_for(manager, provider)
     writer = manager.get(sid)
     await writer.submit(EmitCard(highlight_id=None, body="the retry is unbounded"), Origin.AGENT)
     cid = writer.snapshot().cards[0].id
     await writer.submit(RecordAddressed(subject=Subject(kind=SubjectKind.INSIGHT, id=cid),
                                        sha="ccc333"), Origin.AGENT)
-    assert (await scope.build(sid))["insights"][0]["addressed"]["sha"] == "ccc333"
+    assert (await topic.build(sid))["insights"][0]["addressed"]["sha"] == "ccc333"

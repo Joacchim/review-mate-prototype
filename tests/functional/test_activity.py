@@ -202,7 +202,7 @@ def test_outstanding_surfaces_a_trailing_user_message(tmp_path):
 
 def test_outstanding_ignores_a_bare_highlight_but_counts_an_escalation(tmp_path):
     """D21: a bare highlight is served by the host context and owes the agent nothing; only an explicit
-    request_context is an ask. One predicate serves this route and the chat scope, so the agent and
+    request_context is an ask. One predicate serves this route and the chat topic, so the agent and
     the reviewer cannot disagree about what is outstanding."""
     app = create_app(manager=SessionManager(root=tmp_path / "s"), with_mcp=False)
     with TestClient(app) as client:

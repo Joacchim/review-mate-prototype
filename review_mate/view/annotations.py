@@ -1,14 +1,14 @@
-"""The `annotations` scope: what a reviewer has asked about, and what came back.
+"""The `annotations` topic: what a reviewer has asked about, and what came back.
 
-One scope per session, carrying every highlight with its card, plus the MR-level insights. The diff
+One topic per session, carrying every highlight with its card, plus the MR-level insights. The diff
 overlay selects the open file's highlights out of it; the right-hand panel lists them all.
 
-They live together rather than inside each file's scope because the numbering is session-wide — a
+They live together rather than inside each file's topic because the numbering is session-wide — a
 reviewer references a card as "#2", which no per-file view can assign — and because a card arriving
 would otherwise republish a whole tokenized file to deliver a few hundred bytes.
 
 The host context rides here too. It is a host read per line range, so it follows the shape the
-hub's queue established: the view reports it as loading, a one-shot fetch lands, and the scope
+hub's queue established: the view reports it as loading, a one-shot fetch lands, and the topic
 republishes. A range at a fixed sha cannot change, so what it caches never needs invalidating.
 """
 from __future__ import annotations
@@ -116,7 +116,7 @@ def _addressed(snapshot, kind, ident) -> AnnotationAddressed | None:
     return None
 
 
-class AnnotationsScope:
+class AnnotationsTopic:
     """Builds the annotations, and owns the host context's cache.
 
     `build` never calls the host: the host context is fetched by a one-shot task per line

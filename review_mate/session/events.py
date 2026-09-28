@@ -3,7 +3,7 @@
 State is `fold(events)`. Each event is a discriminated model (tagged by `type`) carrying an
 envelope (seq, ts, origin) plus its payload. `seq` is assigned by the EventLog at append time and
 is the offset clients subscribe from — a durable position in this session's history, unlike a
-scope's `seq` on the view protocol, which counts changes and resumes nothing. Persisted
+topic's `seq` on the view protocol, which counts changes and resumes nothing. Persisted
 one-per-line as JSON (JSONL).
 """
 from __future__ import annotations

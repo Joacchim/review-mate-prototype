@@ -1,7 +1,7 @@
 """The hub surface in a browser.
 
 What is asserted here needs a browser: that a view renders, that an interaction sends the right
-command, and that a pushed update repaints. What a scope contains is the protocol suite's job.
+command, and that a pushed update repaints. What a topic contains is the protocol suite's job.
 """
 import pytest
 from playwright.sync_api import expect

@@ -1,4 +1,4 @@
-"""One folded view of a session for the agent — the same scopes the reviewer's clients read.
+"""One folded view of a session for the agent — the same topics the reviewer's clients read.
 
 The agent used to read the session's raw state: every event-sourced field, the whole diff again, and
 whatever else happened to be on the model. That made it the only party seeing an unfolded session,
@@ -17,7 +17,7 @@ Two things are deliberately absent. The **diff** has its own tool: it is large, 
 different clock, and sending it with every read of the session was most of the payload. And the
 **drafts** — the reviewer's prepared comments — are not here at any stage. A draft is private prose
 written expecting no reader; once posted it is a discussion, and the agent reads it there like
-everyone else. That is the whole rule, and it needs no filter: the review scope simply is not part
+everyone else. That is the whole rule, and it needs no filter: the review topic simply is not part
 of this view.
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ from review_mate.session.state import SessionStatus
 
 
 class AgentView:
-    """Builds the agent's read of a session. Owns no state — the scopes it composes own theirs."""
+    """Builds the agent's read of a session. Owns no state — the topics it composes own theirs."""
 
     def __init__(self, manager, annotations=None, chat=None, threads=None, access=None,
                  diffs=None) -> None:
@@ -67,21 +67,21 @@ class AgentView:
             "session": session_id,
             "state": "ready" if snapshot.status is SessionStatus.ACTIVE else "ended",
             "mr": snapshot.mr.model_dump(mode="json") if snapshot.mr else None,
-            # the on-disk worktree the agent reads code from — a session fact, not a scope's
+            # the on-disk worktree the agent reads code from — a session fact, not a topic's
             "checkout_path": snapshot.checkout_path,
         }
-        for name, scope, argument in (("annotations", self._annotations, session_id),
+        for name, topic, argument in (("annotations", self._annotations, session_id),
                                       ("chat", self._chat, session_id),
                                       ("threads", self._threads, session_id),
                                       ("access", self._access, session_id)):
-            if scope is not None:
-                view[name] = await scope.build(argument)
+            if topic is not None:
+                view[name] = await topic.build(argument)
         return view
 
     async def access(self, session_id: str) -> list[dict]:
         """Just the consent list, for an agent that only wants to know where it may read.
 
-        Off the same scope the reviewer's clients render, so what the agent believes it was granted
+        Off the same topic the reviewer's clients render, so what the agent believes it was granted
         and what they see themselves granting cannot come apart.
         """
         if self._access is None:

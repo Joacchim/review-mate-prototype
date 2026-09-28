@@ -1,12 +1,12 @@
 """A session manager the tests can set directly.
 
 The fixture server is the production `create_app`; only this sits underneath it. Every frame the
-browser receives is therefore built by the real scope builders and validated by the real models,
+browser receives is therefore built by the real topic builders and validated by the real models,
 so there is no second description of the protocol to drift from the first.
 
 Commands are real too: `submit` runs the production `handle()` and `reduce()`, so a click in the
 browser lands in staged state by the same path it takes in production, and the session tail
-republishes the scopes that hold it. What is faked is durability — there is no event log, seq is
+republishes the topics that hold it. What is faked is durability — there is no event log, seq is
 counted here — and the host beneath it.
 
 Scenarios are built from the real state models, never from dicts.

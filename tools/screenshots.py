@@ -461,7 +461,7 @@ def main() -> int:
                              "summary": "split the queue per fleet"}]
         HOST.issues = [{"iid": 402, "title": "scheduler starves the legacy fleet",
                         "url": "https://gitlab.example/issues/402"}]
-        app.state.annotations_scope.reset()
+        app.state.annotations_topic.reset()
         manager.put(state)
 
     written = []

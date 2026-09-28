@@ -35,14 +35,14 @@ class RecordingClient:
         self.commands.append((cmd, args))
         return True
 
-    async def watch(self, scopes):
-        self.watched.append(list(scopes))
+    async def watch(self, topics):
+        self.watched.append(list(topics))
 
-    async def unwatch(self, scopes):
+    async def unwatch(self, topics):
         return None
 
     @property
-    def scopes(self):
+    def topics(self):
         return [s for group in self.watched for s in group]
 
 
@@ -244,11 +244,11 @@ async def test_navigation_keys_are_text_while_writing():
 async def test_moving_the_annotation_cursor_moves_the_chat_watched():
     shell, client = shell_on_a_review()
     with_highlights(shell, client)
-    assert shell.diff.chat_scope() == "chat:s1:highlight:h0"
+    assert shell.diff.chat_topic() == "chat:s1:highlight:h0"
     press(shell, "j")
     await settle()
-    assert shell.diff.chat_scope() == "chat:s1:highlight:h1"
-    assert "chat:s1:highlight:h1" in client.scopes
+    assert shell.diff.chat_topic() == "chat:s1:highlight:h1"
+    assert "chat:s1:highlight:h1" in client.topics
 
 
 # --- writing a review comment ------------------------------------------------

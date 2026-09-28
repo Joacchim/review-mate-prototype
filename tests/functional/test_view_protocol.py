@@ -1,4 +1,4 @@
-"""The view protocol end to end: subscribe to a scope, act through /api/cmd, see the scope again.
+"""The view protocol end to end: subscribe to a topic, act through /api/cmd, see the topic again.
 
 The behavioural guarantee these pin down is the one a second client would otherwise break:
 building the hub is local, and the per-review host fan-out happens only on an explicit
@@ -13,7 +13,7 @@ from starlette.testclient import TestClient
 from review_mate.contracts import MRRef
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
-from review_mate.view.hub import HubScope
+from review_mate.view.hub import HubTopic
 
 from conftest import HostStub, next_frame
 
@@ -41,15 +41,15 @@ def read_until(ws, predicate, limit=6):
 
 
 def hub_view(ws, predicate=lambda view: True, limit=6):
-    msg = read_until(ws, lambda m: m["type"] == "scope" and m["scope"] == "hub"
+    msg = read_until(ws, lambda m: m["type"] == "topic" and m["topic"] == "hub"
                      and predicate(m["view"]), limit)
     return msg["view"]
 
 
-def test_subscribing_delivers_the_hub_scope(tmp_path):
+def test_subscribing_delivers_the_hub_topic(tmp_path):
     with TestClient(build(tmp_path, HostStub())) as tc:
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            ws.send_json({"action": "subscribe", "topics": ["hub"]})
             view = hub_view(ws)
             assert view["sessions"] == []
             assert view["user"] == "reviewer"
@@ -59,7 +59,7 @@ def test_subscribing_delivers_the_hub_scope(tmp_path):
 def test_the_queue_arrives_in_the_view(tmp_path):
     with TestClient(build(tmp_path, HostStub())) as tc:
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            ws.send_json({"action": "subscribe", "topics": ["hub"]})
             view = hub_view(ws, lambda v: v["queue_state"] == "ready")
             assert view["queue"] == [{"host": "gitlab", "project": "g/p", "iid": 7,
                                       "title": "queued", "url": "http://q"}]
@@ -69,7 +69,7 @@ def test_a_failing_queue_read_is_a_field_not_a_broken_view(tmp_path):
     provider = HostStub(queue_error=RuntimeError("gitlab 503"))
     with TestClient(build(tmp_path, provider)) as tc:
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            ws.send_json({"action": "subscribe", "topics": ["hub"]})
             view = hub_view(ws, lambda v: v["queue_state"] == "error")
             assert "gitlab 503" in view["queue_error"]
             assert view["sessions"] == []          # the local half is unaffected
@@ -86,7 +86,7 @@ async def test_the_queue_reads_as_loading_until_the_host_answers(tmp_path):
 
     provider.review_queue_items = gated_queue
     manager = SessionManager(root=tmp_path / "sessions")
-    hub = HubScope(manager, provider=provider)
+    hub = HubTopic(manager, provider=provider)
     published = []
 
     async def publish():
@@ -105,7 +105,7 @@ async def test_the_queue_reads_as_loading_until_the_host_answers(tmp_path):
 def test_opening_and_closing_a_review_republishes_the_hub(tmp_path):
     with TestClient(build(tmp_path, HostStub())) as tc:
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            ws.send_json({"action": "subscribe", "topics": ["hub"]})
             hub_view(ws)
 
             opened = tc.post("/api/cmd", json={"cmd": "session.open", "args": {"ref": "g/p!1"}})
@@ -124,7 +124,7 @@ def test_building_the_hub_never_fans_out_to_the_host(tmp_path):   # D19
     provider = HostStub()
     with TestClient(build(tmp_path, provider)) as tc:
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            ws.send_json({"action": "subscribe", "topics": ["hub"]})
             hub_view(ws)
             tc.post("/api/cmd", json={"cmd": "session.open", "args": {"ref": "g/p!1"}})
             view = hub_view(ws, lambda v: v["sessions"])
@@ -139,7 +139,7 @@ def test_refresh_is_what_prices_in_the_host(tmp_path):
     provider = HostStub(unresolved=3)
     with TestClient(build(tmp_path, provider)) as tc:
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            ws.send_json({"action": "subscribe", "topics": ["hub"]})
             hub_view(ws)
             tc.post("/api/cmd", json={"cmd": "session.open", "args": {"ref": "g/p!1"}})
             hub_view(ws, lambda v: v["sessions"])
@@ -152,13 +152,13 @@ def test_refresh_is_what_prices_in_the_host(tmp_path):
             assert view["host_checked_at"]
 
 
-def test_an_unknown_scope_is_reported_without_dropping_the_stream(tmp_path):
+def test_an_unknown_topic_is_reported_without_dropping_the_stream(tmp_path):
     with TestClient(build(tmp_path, HostStub())) as tc:
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": ["nope"]})
+            ws.send_json({"action": "subscribe", "topics": ["nope"]})
             err = read_until(ws, lambda m: m["type"] == "error")
-            assert err["scope"] == "nope"
-            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            assert err["topic"] == "nope"
+            ws.send_json({"action": "subscribe", "topics": ["hub"]})
             assert hub_view(ws)["user"] == "reviewer"
 
 
@@ -168,7 +168,7 @@ def test_a_malformed_frame_is_answered_and_the_stream_survives(tmp_path):
             ws.send_json({"action": "nonsense"})
             err = read_until(ws, lambda m: m["type"] == "error")
             assert "nonsense" in err["reason"]
-            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            ws.send_json({"action": "subscribe", "topics": ["hub"]})
             assert hub_view(ws)["sessions"] == []
 
 
@@ -190,7 +190,7 @@ def test_reviews_arrive_newest_first_and_carry_their_counts(tmp_path):
     """Row order and the per-review counts are the server's call, so every client agrees."""
     with TestClient(build(tmp_path, HostStub())) as tc:
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            ws.send_json({"action": "subscribe", "topics": ["hub"]})
             hub_view(ws)
 
             first = tc.post("/api/cmd", json={"cmd": "session.open",
@@ -215,7 +215,7 @@ def test_no_host_means_an_empty_queue_not_an_error(tmp_path):
     manager = SessionManager(root=tmp_path / "sessions")
     with TestClient(create_app(manager=manager, with_mcp=False)) as tc:
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            ws.send_json({"action": "subscribe", "topics": ["hub"]})
             view = hub_view(ws, lambda v: v["queue_state"] == "ready")
             assert view["queue"] == [] and view["queue_error"] == ""
 
@@ -243,7 +243,7 @@ def test_a_host_without_mr_summary_falls_back_to_versions(tmp_path):
                      resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
     with TestClient(app) as tc:
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            ws.send_json({"action": "subscribe", "topics": ["hub"]})
             hub_view(ws)
             tc.post("/api/cmd", json={"cmd": "session.open", "args": {"ref": "g/p!1"}})
             view = hub_view(ws, lambda v: v["sessions"])
@@ -258,7 +258,7 @@ def test_a_merged_mr_reads_as_merged(tmp_path):
     provider = HostStub(state="merged")
     with TestClient(build(tmp_path, provider)) as tc:
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            ws.send_json({"action": "subscribe", "topics": ["hub"]})
             hub_view(ws)
             tc.post("/api/cmd", json={"cmd": "session.open", "args": {"ref": "g/p!1"}})
             hub_view(ws, lambda v: v["sessions"])
@@ -270,20 +270,20 @@ def test_a_merged_mr_reads_as_merged(tmp_path):
 
 def test_the_hub_says_which_reviews_are_waiting_on_the_agent(tmp_path):
     """The review list is where a reviewer decides what to open next, so it carries the count —
-    the same predicate the chat scope publishes per session."""
+    the same predicate the chat topic publishes per session."""
     app = build(tmp_path, HostStub())
     with TestClient(app) as tc:
         sid = tc.post("/api/cmd", json={"cmd": "session.open",
                                         "args": {"ref": "g/p!1"}}).json()["session"]
         with tc.websocket_connect("/api/stream") as ws:
             # a reviewer with the review open: the tail on its events is what refreshes the hub
-            ws.send_json({"action": "subscribe", "scopes": ["hub", f"chat:{sid}"]})
+            ws.send_json({"action": "subscribe", "topics": ["hub", f"chat:{sid}"]})
             assert hub_view(ws, lambda v: bool(v["sessions"]))["sessions"][0]["asks"] == 0
             tc.post(f"/api/sessions/{sid}/commands",
                     json={"type": "post_message", "body": "what is this for?"})
             counts = []
             while (frame := next_frame(ws)) is not None:
-                if frame.get("scope") == "hub":
+                if frame.get("topic") == "hub":
                     counts.append(frame["view"]["sessions"][0]["asks"])
             assert counts and counts[-1] == 1
 
@@ -294,9 +294,9 @@ def test_the_hub_carries_whether_an_agent_is_listening_at_all(tmp_path):
     app = build(tmp_path, HostStub())
     with TestClient(app) as tc:
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            ws.send_json({"action": "subscribe", "topics": ["hub"]})
             assert hub_view(ws)["agent"]["attached"] is False
             # the hub does not tick on its own here: the subscribe below is what re-reads presence
             app.state.activity_broker._last_wait_at = datetime.now(timezone.utc)
-            ws.send_json({"action": "subscribe", "scopes": ["hub"]})
+            ws.send_json({"action": "subscribe", "topics": ["hub"]})
             assert hub_view(ws, lambda v: v["agent"]["attached"] is True)["agent"]["parked"] is False

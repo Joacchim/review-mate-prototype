@@ -36,32 +36,32 @@ an origin may not do.
 **View** — a document the server folds for clients to render. Holds no logic and no history: a
 client displays what a view carries and derives nothing from it.
 
-**Scope** — a named view, and the unit of both change and transfer. A client subscribes to scopes by
+**Topic** — a named view, and the unit of both change and transfer. A client subscribes to topics by
 name and is sent each one whole; when it changes, the whole thing is sent again. There are no
 partial updates, which is why a client needs no merge logic.
 
-**Frame** — one message on the stream. Either a scope update (`scope`, `seq`, `view`) or an error.
+**Frame** — one message on the stream. Either a topic update (`topic`, `seq`, `view`) or an error.
 
-**Scope family** — a parameterised scope. The kind before the first colon selects the builder and
-the rest is its argument, so `diff:<sid>:<mode>:<path>` needs no registration per file. A scope with
+**Topic family** — a parameterised topic. The kind before the first colon selects the builder and
+the rest is its argument, so `diff:<sid>:<mode>:<path>` needs no registration per file. A topic with
 no argument — `hub` — is a singleton.
 
 **Diff view mode** — which version of a change is being read: `full`, `since`, or
-`commit@<sha>`. Part of a scope's name rather than server state, because it is a property of the
+`commit@<sha>`. Part of a topic's name rather than server state, because it is a property of the
 reader. Always said in full: the browser has a split mode and a light/dark mode too, and they are
 different axes.
 
-**hub** — the scope shown before a review is open: open reviews with their verdicts, and the host
+**hub** — the topic shown before a review is open: open reviews with their verdicts, and the host
 review queue.
 
-**diff** — the scope family for reading a change. Without a path it is the file list and the MR;
+**diff** — the topic family for reading a change. Without a path it is the file list and the MR;
 with one, that file's hunks, lines and token spans.
 
-**blob** — the scope family carrying a whole file at a resolved sha, which is what a client splices
+**blob** — the topic family carrying a whole file at a resolved sha, which is what a client splices
 from when a reader unfolds the context between hunks.
 
-**annotations** — the scope family carrying a session's highlights with their cards and their host
-context, plus the MR-level insights. One scope per session rather than per file: the numbering
+**annotations** — the topic family carrying a session's highlights with their cards and their host
+context, plus the MR-level insights. One topic per session rather than per file: the numbering
 is session-wide, and a card arriving would otherwise republish a whole tokenized file.
 
 **chat** — an exchange between the reviewer and the agent about one **subject**, or about the
@@ -75,7 +75,7 @@ addressed by kind and id. The set is exactly what a client can open a detail pan
 **presence** — whether an agent is consuming the activity stream at all (`attached`, `parked`,
 `last_seen`). A property of the stream, so one fact for the whole fleet, and it decays by clock
 rather than by event. It says nothing about whether an answer is being worked on — that is the join
-with what is outstanding, which the chat scope publishes as the **agent state**.
+with what is outstanding, which the chat topic publishes as the **agent state**.
 
 **#N** — a highlight's number, fixed when it is created and never reassigned. It is a reference a
 reviewer uses in conversation and an agent cites in a card, so removing a highlight leaves a gap
@@ -116,5 +116,5 @@ knowledge.
 **Workspace** — the isolated clone area under `~/.review-mate/`: a bare **mirror** per repository,
 and **checkouts** (worktrees) materialised from it. A reviewer's own clones are never touched.
 
-**Client** — anything that renders scopes and sends commands. The browser and the terminal client
+**Client** — anything that renders topics and sends commands. The browser and the terminal client
 are two of them; the agent contract is a third, with a narrower command set.

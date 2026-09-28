@@ -1,5 +1,5 @@
 "use strict";
-// Building diff rows from the `diff` scope's hunks. Pure: hunks in, HTML out, no DOM and no
+// Building diff rows from the `diff` topic's hunks. Pure: hunks in, HTML out, no DOM and no
 // derivation — line numbers, sides and token spans are all fields the server decided.
 //
 // Kinds are mapped to CSS classes here because a browser palette is this client's business, the

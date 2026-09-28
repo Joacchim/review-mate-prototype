@@ -274,7 +274,7 @@ async def test_moving_between_files_moves_the_subscription(tmp_path):
             assert "new = 2" in rendered
 
 
-async def test_leaving_a_review_drops_its_scopes(tmp_path):
+async def test_leaving_a_review_drops_its_topics(tmp_path):
     from review_mate.tui.app import Shell
 
     async with serving(build(tmp_path, DiffHost())) as base:
@@ -287,7 +287,7 @@ async def test_leaving_a_review_drops_its_scopes(tmp_path):
             await shell.open_review(session)
             await wait_for(lambda: client.views.get(f"diff:{session}:full"))
             await shell.leave_review()
-            assert not [scope for scope in client.views if scope.startswith("diff:")]
+            assert not [topic for topic in client.views if topic.startswith("diff:")]
             assert shell.screen is shell.hub
 
 
@@ -355,7 +355,7 @@ async def test_escalating_a_highlight_is_accepted_by_the_session(tmp_path):
 
 async def test_writing_in_the_terminal_reaches_the_conversation(tmp_path):
     """The terminal holds a chat over the same protocol: the message it writes becomes a
-    command, the session changes, and the chat scope comes back carrying it."""
+    command, the session changes, and the chat topic comes back carrying it."""
     from review_mate.tui.app import Shell
 
     async with serving(build(tmp_path, DiffHost())) as base:
@@ -409,7 +409,7 @@ async def test_the_terminal_is_told_whether_anyone_is_listening(tmp_path):
 
 async def test_drafting_in_the_terminal_reaches_the_review(tmp_path):
     """The terminal prepares a review comment over the same protocol: what it writes becomes a
-    command, the session changes, and the review scope comes back carrying it."""
+    command, the session changes, and the review topic comes back carrying it."""
     from review_mate.tui.app import Shell
 
     async with serving(build(tmp_path, DiffHost())) as base:
@@ -473,7 +473,7 @@ async def test_sending_a_review_from_the_terminal_reaches_the_host(tmp_path):
 
 
 async def test_the_terminal_reads_the_merge_requests_discussions(tmp_path):
-    """The discussions arrive on their own scope, with the reviewer's own comments marked as such —
+    """The discussions arrive on their own topic, with the reviewer's own comments marked as such —
     the terminal never asks who it is and compares names."""
     from review_mate.tui.app import Shell
     from review_mate.session.commands import ReplaceThreads

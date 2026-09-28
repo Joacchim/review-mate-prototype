@@ -45,7 +45,7 @@ SessionRef = Union[MRRef, LocalRef]
 def ref_of(snapshot) -> "SessionRef | None":
     """The reference a session was opened with, rebuilt from what it applied.
 
-    Scopes reach for the provider with an address, and there is now more than one kind. The session
+    Topics reach for the provider with an address, and there is now more than one kind. The session
     does not store its reference, but the metadata carries everything either kind needs — which is
     why this can be rebuilt rather than kept: a second copy of the address would be one more thing
     to keep in step with a re-sync.
@@ -61,7 +61,7 @@ def ref_of(snapshot) -> "SessionRef | None":
 def serves(provider, snapshot) -> bool:
     """Whether `provider` is the source this session was loaded from.
 
-    A scope holds one provider for every session on the server, which was harmless while there was
+    A topic holds one provider for every session on the server, which was harmless while there was
     one kind of session. It is not any more: asking the forge to blame a file in a branch that has
     never left this machine sends a local directory name to a remote API, and the reviewer gets an
     error where the honest answer is that this host has nothing to say about that review.

@@ -1,7 +1,7 @@
 """Fixtures for the browser suite. See docs/testing/web-ui.md.
 
 The server under test is the production `create_app`; only the manager and the host beneath it are
-fakes. Frames on the wire are built by the real scope builders, so there is nothing here that can
+fakes. Frames on the wire are built by the real topic builders, so there is nothing here that can
 describe the protocol differently from the application.
 """
 from __future__ import annotations
@@ -151,7 +151,7 @@ def as_agent(_fixture_server, fake_manager):
     """Submit a command the browser is not allowed to send — an agent emitting a card, say.
 
     It runs on the server's own loop, so the event reaches the session tail that is already
-    subscribed and the scope republishes exactly as it would in production.
+    subscribed and the topic republishes exactly as it would in production.
     """
     def submit(session_id: str, command, origin=Origin.AGENT):
         writer = fake_manager.writer(session_id)
@@ -201,7 +201,7 @@ def as_claude_lookup(_fixture_server, staged_app):
 def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app, stub_host_writer):
     """Reset the staged state between tests, so a scenario is the only thing a test relies on.
 
-    Every scope caches what it read, for the life of the application — correctly, since content at
+    Every topic caches what it read, for the life of the application — correctly, since content at
     a sha cannot change and a verdict holds until the host is asked again. Tests reuse one sha with
     different content, so each cache is dropped here. Resetting the manager alone leaks one test's
     file into the next test's.
@@ -232,9 +232,9 @@ def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app, stub_
                      stub_host_writer.edited, stub_host_writer.deleted):
         recorded.clear()
     review_kb._data.watermarks = {}
-    for scope in (staged_app.state.hub, staged_app.state.diff_scopes, staged_app.state.blob_scopes,
-                  staged_app.state.annotations_scope):
-        scope.reset()
+    for topic in (staged_app.state.hub, staged_app.state.diff_topics, staged_app.state.blob_topics,
+                  staged_app.state.annotations_topic):
+        topic.reset()
     yield fake_manager
     fake_manager.reset()
 

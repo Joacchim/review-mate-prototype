@@ -70,10 +70,10 @@ async def submit(client, sid, approve=False):
 
 
 async def version_of(manager, sid):
-    """What the review scope says about where this reviewer got to."""
-    from review_mate.view.review import ReviewScope
-    scope = ReviewScope(manager, kb=manager._test_kb)
-    return (await scope.build(sid))["version"]
+    """What the review topic says about where this reviewer got to."""
+    from review_mate.view.review import ReviewTopic
+    topic = ReviewTopic(manager, kb=manager._test_kb)
+    return (await topic.build(sid))["version"]
 
 
 async def _app_client(tmp_path, host_writer, provider):
@@ -252,7 +252,7 @@ async def test_the_version_a_review_is_at_and_marking_it_read(tmp_path):
 
 async def test_refresh_resyncs_advanced_head(tmp_path):
     """Refresh re-pulls MR metadata, so a head that advanced since session creation is noticed:
-    the review scope flips to 'behind' the watermark from the earlier review (diff-versions). Without
+    the review topic flips to 'behind' the watermark from the earlier review (diff-versions). Without
     this, the session's head stayed frozen and 'Since last review' never engaged."""
     from review_mate.contracts import MRPayload
 
@@ -293,8 +293,8 @@ async def test_highlight_records_created_sha(tmp_path):
 
 
 async def test_commits_route_lists_the_mrs_commits(tmp_path):
-    """The commit *list* still comes from here — per-commit review reads the diff from its scope,
-    but the list of commits to step through has no scope of its own."""
+    """The commit *list* still comes from here — per-commit review reads the diff from its topic,
+    but the list of commits to step through has no topic of its own."""
 
     class CProvider(StubProvider):
         async def commits(self, ref):
@@ -306,21 +306,21 @@ async def test_commits_route_lists_the_mrs_commits(tmp_path):
     app = create_app(manager=manager, with_mcp=False, provider=CProvider())
     sid = await manager.create()
     await manager.get(sid).submit(ApplyMRMetadata(mr=mr), Origin.SYSTEM)
-    from review_mate.view.browse import BrowseScopes
-    scopes = BrowseScopes(manager, provider=CProvider())
-    await scopes.fetch_commits(sid)
-    listed = await scopes.build_commits(sid)
+    from review_mate.view.browse import BrowseTopics
+    topics = BrowseTopics(manager, provider=CProvider())
+    await topics.fetch_commits(sid)
+    listed = await topics.build_commits(sid)
     assert listed["state"] == "ready" and [x["sha"] for x in listed["commits"]] == ["s1"]
     await manager.shutdown()
 
 
 async def test_commits_unavailable_without_capability(tmp_path):
-    # the module MR fixture advertises no "commits" capability → the scope says so
-    from review_mate.view.browse import BrowseScopes
+    # the module MR fixture advertises no "commits" capability → the topic says so
+    from review_mate.view.browse import BrowseTopics
     manager, sid, client = await _app_client(tmp_path, StubHostWriter(), StubProvider())
     async with client:
-        scopes = BrowseScopes(manager, provider=StubProvider())
-        assert (await scopes.build_commits(sid))["state"] == "unavailable"
+        topics = BrowseTopics(manager, provider=StubProvider())
+        assert (await topics.build_commits(sid))["state"] == "unavailable"
     await manager.shutdown()
 
 
@@ -454,7 +454,7 @@ async def test_the_resync_command_reads_the_change_again(tmp_path):
 async def test_resyncing_drops_the_commit_list_it_read(tmp_path):
     """The list belongs to a head. Re-syncing is where a head moves, so what was read stops being
     an answer — and a reviewer must not be shown the old change's steps as this one's."""
-    from review_mate.view.browse import BrowseScopes
+    from review_mate.view.browse import BrowseTopics
 
     class Counting(StubProvider):
         def __init__(self):
@@ -472,10 +472,10 @@ async def test_resyncing_drops_the_commit_list_it_read(tmp_path):
         writer = manager.get(sid)
         await writer.submit(ApplyMRMetadata(
             mr=MR.model_copy(update={"capabilities": {"commits": True}})), Origin.SYSTEM)
-        scopes = BrowseScopes(manager, provider=provider)
-        await scopes.fetch_commits(sid)
-        assert (await scopes.build_commits(sid))["state"] == "ready" and provider.calls == 1
+        topics = BrowseTopics(manager, provider=provider)
+        await topics.fetch_commits(sid)
+        assert (await topics.build_commits(sid))["state"] == "ready" and provider.calls == 1
 
-        scopes.forget_commits(sid)
-        assert (await scopes.build_commits(sid))["state"] == "idle"
+        topics.forget_commits(sid)
+        assert (await topics.build_commits(sid))["state"] == "idle"
     await manager.shutdown()

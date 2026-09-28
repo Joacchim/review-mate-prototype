@@ -47,7 +47,7 @@ class AgentBridge:
         self._broker = broker      # LookupBroker (MR-discovery channel); None in the baseline
         self._provider = provider  # HostProvider, for search_mrs; None when no host configured
         self._view = view          # AgentView — the folded read; injected so it shares the clients'
-                                   # scope instances, and with them their caches
+                                   # topic instances, and with them their caches
         self._base_url = (base_url or _default_base_url()).rstrip("/")
 
     def _writer(self, session_id: str):
@@ -88,7 +88,7 @@ class AgentBridge:
         return self._writer(session_id).snapshot()
 
     async def view(self, session_id: str) -> dict:
-        """The session as the agent sees it: the same folded scopes the reviewer's clients read."""
+        """The session as the agent sees it: the same folded topics the reviewer's clients read."""
         if self._view is None:
             raise RuntimeError("this server was built without an agent view")
         return await self._view.build(session_id)
@@ -191,7 +191,7 @@ class AgentBridge:
         request becomes a guess: an agent that cannot see a refusal reads its own silence as a
         maybe, and one that cannot see a path has nothing to do with an approval.
 
-        Off the same scope the reviewer's clients render, so the two cannot come apart.
+        Off the same topic the reviewer's clients render, so the two cannot come apart.
         """
         if self._view is None:
             raise RuntimeError("this server was built without an agent view")

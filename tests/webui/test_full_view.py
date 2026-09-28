@@ -85,11 +85,11 @@ def test_the_channel_survives_the_mode(opened):
 
 def test_the_conversation_stays_subscribed_across_the_mode(opened):
     # the subscription is answered a frame later than the click, so wait for it to land first
-    opened.page.wait_for_function("() => Object.keys(scopeViews).some(s => /^chat:s1:/.test(s))")
-    before = opened.page.evaluate("Object.keys(scopeViews).filter(s => /^chat:s1:/.test(s))")
+    opened.page.wait_for_function("() => Object.keys(topicViews).some(s => /^chat:s1:/.test(s))")
+    before = opened.page.evaluate("Object.keys(topicViews).filter(s => /^chat:s1:/.test(s))")
     opened.full_view.click()
-    expect(opened.maximised).to_have_count(1)   # the mode has settled before the scopes are read
-    after = opened.page.evaluate("Object.keys(scopeViews).filter(s => /^chat:s1:/.test(s))")
+    expect(opened.maximised).to_have_count(1)   # the mode has settled before the topics are read
+    after = opened.page.evaluate("Object.keys(topicViews).filter(s => /^chat:s1:/.test(s))")
     assert before == after and len(after) == 1, (before, after)
 
 

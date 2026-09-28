@@ -63,7 +63,7 @@ for `mcp`, where this has already cost an afternoon.
 |---|---|
 | `review_mate/server/` | ASGI app, HTTP routes, websocket stream |
 | `review_mate/session/` | Event-sourced session model (commands → events → state) |
-| `review_mate/view/` | Server-folded client state — scopes, the view bus, the hub scope |
+| `review_mate/view/` | Server-folded client state — topics, the view bus, the hub topic |
 | `review_mate/host/` | Host providers — GitLab read/write, a local branch, credential resolution |
 | `review_mate/workspace/` | The isolated clone workspace (mirrors, worktrees, diffs) |
 | `review_mate/writeback/` | Posting a review, and the thread verbs |
@@ -77,8 +77,8 @@ for `mcp`, where this has already cost an afternoon.
 
 ## Reading the design first
 
-- [Architecture](docs/architecture.md) — the view protocol, the two planes, what each scope carries.
-  Read this before adding a scope or a command; both have one place they belong.
+- [Architecture](docs/architecture.md) — the view protocol, the two planes, what each topic carries.
+  Read this before adding a topic or a command; both have one place they belong.
 - [Glossary](docs/glossary.md) — the words, used precisely and consistently.
 - [Surprising behaviours](docs/surprising-behaviors.md) — behaviour that is correct by design and still catches
   people out. If you find yourself explaining something twice, it belongs there.

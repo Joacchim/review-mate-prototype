@@ -1,4 +1,4 @@
-"""The review screen: a file list and one file's diff, rendered from the `diff` scopes.
+"""The review screen: a file list and one file's diff, rendered from the `diff` topics.
 
 This is where the protocol earns the split. The screen subscribes to the file list and, separately,
 to whichever file is open — so moving between files changes what it watches rather than what it
@@ -131,11 +131,11 @@ class DiffScreen:
         return rows[self.file_index]
 
     @property
-    def body_scope(self) -> str | None:
+    def body_topic(self) -> str | None:
         row = self.current
         if row is None or not row.get("changed", True):
             return None        # a repository file is read from its blob, not from a diff
-        # a file's scope name is the list's name with the path appended — nothing to assemble
+        # a file's topic name is the list's name with the path appended — nothing to assemble
         return f"{self.listing}:{row['path']}"
 
     @property
@@ -172,10 +172,10 @@ class DiffScreen:
 
     @property
     def blob(self) -> dict:
-        return self.client.views.get(self.blob_scope) or {} if self.blob_scope else {}
+        return self.client.views.get(self.blob_topic) or {} if self.blob_topic else {}
 
     @property
-    def blob_scope(self) -> str | None:
+    def blob_topic(self) -> str | None:
         return f"blob:{self.session}:{self.mode}:{self.viewing}" if self.viewing else None
 
     @property
@@ -300,14 +300,14 @@ class DiffScreen:
         row = self.annotation_row() if self.focus == "annotations" else None
         return None if row is None else {"kind": row["kind"], "id": row["data"]["id"]}
 
-    def chat_scope(self) -> str:
+    def chat_topic(self) -> str:
         anchor = self.subject()
         return (f"chat:{self.session}:review" if anchor is None
                 else f"chat:{self.session}:{anchor['kind']}:{anchor['id']}")
 
     @property
     def chat(self) -> dict:
-        return self.client.views.get(self.chat_scope()) or {}
+        return self.client.views.get(self.chat_topic()) or {}
 
     @property
     def highlights(self) -> list[dict]:
@@ -355,18 +355,18 @@ class DiffScreen:
         return lines
 
     def wanted(self) -> list[str]:
-        scopes = [self.listing, f"annotations:{self.session}", f"chat:{self.session}",
+        topics = [self.listing, f"annotations:{self.session}", f"chat:{self.session}",
                   f"review:{self.session}", f"threads:{self.session}", f"access:{self.session}",
-                  self.chat_scope()]
+                  self.chat_topic()]
         if self.browsing:
-            scopes.append(f"tree:{self.session}")
-        blob = self.blob_scope
+            topics.append(f"tree:{self.session}")
+        blob = self.blob_topic
         if blob:
-            scopes.append(blob)       # a repository file is read from the blob, not from a diff
-        body = self.body_scope
+            topics.append(blob)       # a repository file is read from the blob, not from a diff
+        body = self.body_topic
         if body:
-            scopes.append(body)
-        return scopes
+            topics.append(body)
+        return topics
 
     # --- rendering ---------------------------------------------------------
 
@@ -393,7 +393,7 @@ class DiffScreen:
             note = {"loading": "resolving\u2026", "error": view.get("error", ""),
                     "unavailable": "this host cannot serve that diff view",
                     "unsupported-mode": "diff view not supported",
-                    "malformed-name": "bad scope name", "unknown-session": "this review is not open",
+                    "malformed-name": "bad topic name", "unknown-session": "this review is not open",
                     }.get(state, state)
             out.append(("class:error" if state == "error" else "class:muted", f"\n  {note}\n"))
             out.append(("class:footer", self._footer()))
@@ -464,8 +464,8 @@ class DiffScreen:
         """Every rendered body row, each carrying the new-side line it stands for (or None)."""
         if self.viewing:
             return self.blob_rows()
-        scope = self.body_scope
-        view = self.client.views.get(scope) if scope else None
+        topic = self.body_topic
+        view = self.client.views.get(topic) if topic else None
         if view is None or view.get("state") != "ready":
             return []
         marked = self.marked_lines()
@@ -494,10 +494,10 @@ class DiffScreen:
         # a repository file speaks for itself: `blob_rows` says what state it is in, so the
         # readiness checks below belong to the diff it is standing in place of
         if not self.viewing:
-            scope = self.body_scope
-            if scope is None:
+            topic = self.body_topic
+            if topic is None:
                 return []
-            view = self.client.views.get(scope)
+            view = self.client.views.get(topic)
             if view is None:
                 return [("class:muted", "  loading the file\u2026\n")]
             if view.get("state") != "ready":

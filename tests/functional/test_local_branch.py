@@ -163,10 +163,10 @@ async def test_a_local_session_borrows_the_repository_and_never_copies_it(tmp_pa
 
 
 async def test_the_forge_is_not_asked_about_a_branch_it_has_never_seen(tmp_path, repo):
-    """A scope holds one provider for every session. Sending a local directory name to a remote API
+    """A topic holds one provider for every session. Sending a local directory name to a remote API
     gets the reviewer an error where the honest answer is "this host knows nothing about that"."""
     from review_mate.session.manager import SessionManager
-    from review_mate.view.annotations import AnnotationsScope
+    from review_mate.view.annotations import AnnotationsTopic
 
     class Forge:
         host = "gitlab"
@@ -184,7 +184,7 @@ async def test_the_forge_is_not_asked_about_a_branch_it_has_never_seen(tmp_path,
     await writer.submit(AddHighlight(file="queue.py", side=Side.NEW,
                                     line_range=LineRange(start=1, end=1)), Origin.BROWSER)
 
-    view = await AnnotationsScope(manager, provider=Forge()).build(sid)
+    view = await AnnotationsTopic(manager, provider=Forge()).build(sid)
     assert view["highlights"][0]["context"]["state"] == "unavailable"
     assert Forge.asked == 0
     await manager.shutdown()
@@ -308,27 +308,27 @@ async def test_the_first_commit_of_a_history_is_readable(provider, tmp_path):
     assert "+hello" in files[0].hunks[0]["diff"]
 
 
-async def test_the_commit_list_reaches_the_scope_that_publishes_it(tmp_path, stacked):
-    """Through `ref_of`, which is what lets a scope address a session it did not open."""
+async def test_the_commit_list_reaches_the_topic_that_publishes_it(tmp_path, stacked):
+    """Through `ref_of`, which is what lets a topic address a session it did not open."""
     from review_mate.session.manager import SessionManager
-    from review_mate.view.browse import BrowseScopes
+    from review_mate.view.browse import BrowseTopics
 
     local = LocalBranchProvider()
     manager = SessionManager(root=tmp_path / "sessions", local_source=local)
     sid = await manager.create(ref=LocalRef(path=str(stacked), branch="feat/three", base="main"))
-    scopes = BrowseScopes(manager, provider=local)
-    assert (await scopes.build_commits(sid))["state"] == "idle"
-    await scopes.fetch_commits(sid)
-    view = await scopes.build_commits(sid)
+    topics = BrowseTopics(manager, provider=local)
+    assert (await topics.build_commits(sid))["state"] == "idle"
+    await topics.fetch_commits(sid)
+    view = await topics.build_commits(sid)
     assert view["state"] == "ready"
     assert [c["title"] for c in view["commits"]] == ["add three", "add b", "add two"]
     await manager.shutdown()
 
 
 async def test_a_commit_mode_resolves_for_a_local_branch(tmp_path, stacked):
-    """The whole path: the scope picks the mode, `ref_of` addresses the session, git answers."""
+    """The whole path: the topic picks the mode, `ref_of` addresses the session, git answers."""
     from review_mate.session.manager import SessionManager
-    from review_mate.view.diffscope import DiffScopes
+    from review_mate.view.difftopic import DiffTopics
 
     local = LocalBranchProvider()
     manager = SessionManager(root=tmp_path / "sessions", local_source=local)
@@ -336,17 +336,17 @@ async def test_a_commit_mode_resolves_for_a_local_branch(tmp_path, stacked):
     rows = await local.commits(LocalRef(path=str(stacked), branch="feat/three", base="main"))
     adding_b = next(r for r in rows if r["title"] == "add b")
 
-    scopes = DiffScopes(manager, provider=local)
-    scope = f"{sid}:commit@{adding_b['sha']}"
-    assert (await scopes.build(scope))["state"] == "loading"
+    topics = DiffTopics(manager, provider=local)
+    topic = f"{sid}:commit@{adding_b['sha']}"
+    assert (await topics.build(topic))["state"] == "loading"
     for _ in range(100):
-        view = await scopes.build(scope)
+        view = await topics.build(topic)
         if view["state"] != "loading":
             break
         await asyncio.sleep(0.02)
     assert view["state"] == "ready", view
     assert [f["path"] for f in view["files"]] == ["b.py"]
-    await scopes.aclose()
+    await topics.aclose()
     await manager.shutdown()
 
 
@@ -380,14 +380,14 @@ async def test_a_branch_is_never_behind_a_watermark_it_cannot_have(tmp_path, rep
     one on a branch would collide across repositories that happen to share a name."""
     from review_mate.kb.store import ReviewKB
     from review_mate.session.manager import SessionManager
-    from review_mate.view.hub import HubScope
+    from review_mate.view.hub import HubTopic
 
     kb = ReviewKB(root=tmp_path / "home")
     kb.set_watermark("local", repo.name, 0, "some-other-sha")   # a collision waiting to happen
     manager = SessionManager(root=tmp_path / "sessions", local_source=LocalBranchProvider())
     sid = await manager.create(ref=LocalRef(path=str(repo), branch="feat/retry", base="main"))
 
-    row = next(s for s in (await HubScope(manager, kb=kb).build())["sessions"] if s["id"] == sid)
+    row = next(s for s in (await HubTopic(manager, kb=kb).build())["sessions"] if s["id"] == sid)
     assert row["behind"] is False
     assert row["mr"]["label"] == "feat/retry → main"
     await manager.shutdown()

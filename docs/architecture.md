@@ -20,7 +20,7 @@ flowchart TB
 
     subgraph server["review-mate — one local server"]
         direction LR
-        SCOPE["Scope stream<br/>hub · diff · files · annotations<br/>chat · review · threads · consent"]
+        SCOPE["Topic stream<br/>hub · diff · files · annotations<br/>chat · review · threads · consent"]
         SESS["Session commands<br/>marked lines · cards<br/>drafts · messages"]
         NAMED["Named commands<br/>open · close · re-sync<br/>submit · mark read"]
         FIND["Discovery<br/>search, or ask<br/>by description"]
@@ -55,7 +55,7 @@ stream they read from and the two ways to write — and the browser adds discove
 where you go looking for a change.
 
 The agent is handed tools instead, and behind them those tools are the surfaces to their left: it
-reads the same folded scopes the two clients read and writes the same session commands, in the same
+reads the same folded topics the two clients read and writes the same session commands, in the same
 process. It also watches outstanding work, which nothing else does — a reviewer can see what they
 are waiting on, and an agent needs to be told.
 
@@ -68,7 +68,7 @@ allowed to depend on, and nothing points back up.
 flowchart TB
     CL["Rendering clients<br/>browser · terminal"]
     TR["Transport<br/>HTTP and the websocket"]
-    VW["View<br/>folding state into scopes"]
+    VW["View<br/>folding state into topics"]
     ED["Edges<br/>the change's source · git · review memory"]
     CO["Core<br/>the event-sourced review"]
     AG["Agent contract<br/>in the same process"]
@@ -91,7 +91,7 @@ The diagram names roles. This is where each one lives, and what it is allowed to
 | `session/` | the event-sourced review model | nothing below it |
 | `contracts.py` | the Protocols the core is written against | nothing below it |
 | `host/`, `workspace/`, `kb/` | where a change comes from, the clone area, what you have already read | the core |
-| `view/` | folding state into scopes | the core and the edges |
+| `view/` | folding state into topics | the core and the edges |
 | `server/` | HTTP and websocket transport | everything above |
 | `web/`, `tui/` | the rendering clients | the transport only |
 | `mcp/` | the agent contract | the core directly — it runs in the same process, not over the transport |
@@ -111,27 +111,27 @@ how the agent plane stays additive: the agent can add a card, and cannot post a 
 
 ## The view protocol
 
-Clients render, and derive nothing. The server folds state into named **scopes** and sends each one
+Clients render, and derive nothing. The server folds state into named **topics** and sends each one
 whole; a client subscribes by name and displays what arrives.
 
-Whole-scope replacement is the load-bearing choice. It means a client needs no merge logic, and it
+Whole-topic replacement is the load-bearing choice. It means a client needs no merge logic, and it
 makes the slow-consumer policy fall out: an undelivered update is worthless once a newer one exists,
-so a subscriber holds at most one pending frame per scope and the newest wins.
+so a subscriber holds at most one pending frame per topic and the newest wins.
 
 ### The wire
 
 One websocket, `/api/stream`. Client frames:
 
 ```json
-{"action": "subscribe",   "scopes": ["hub", "diff:<sid>:full"]}
-{"action": "unsubscribe", "scopes": ["diff:<sid>:full"]}
+{"action": "subscribe",   "topics": ["hub", "diff:<sid>:full"]}
+{"action": "unsubscribe", "topics": ["diff:<sid>:full"]}
 ```
 
 Server frames:
 
 ```json
-{"type": "scope", "scope": "hub", "seq": 12, "view": {…}}
-{"type": "error", "scope": "hub", "reason": "RuntimeError: host is down"}
+{"type": "topic", "topic": "hub", "seq": 12, "view": {…}}
+{"type": "error", "topic": "hub", "reason": "RuntimeError: host is down"}
 ```
 
 Writes go to `POST /api/cmd` as `{"cmd": …, "args": {…}}` — `session.open`, `session.close`,
@@ -145,7 +145,7 @@ runs in is the part worth having once: a comment the host refuses must not sink 
 discussions are re-mirrored before the reviewer looks for what they just posted, and approving
 follows posting rather than racing it.
 
-### The scopes
+### The topics
 
 | name | carries |
 |---|---|
@@ -168,7 +168,7 @@ never while nobody is — which a route cannot arrange, because a route is asked
 looking or not. Until the answer lands the view says `loading`, so a client shows that rather than
 waiting on it.
 
-A file's scope name is the list's name with a path appended, so a client concatenates rather than
+A file's topic name is the list's name with a path appended, so a client concatenates rather than
 assembling a second name. Names are validated: a path may contain a colon, a session id and a diff
 view mode may not, and a malformed name reports `malformed-name` instead of being read as a
 plausible path.
@@ -208,29 +208,29 @@ An agent's own question back to the reviewer is not an ask. Nothing distinguishe
 statement in a message body, and inventing the distinction would report the reviewer's silence as
 the agent's debt.
 
-### Rules a scope holds to
+### Rules a topic holds to
 
-- **Building a scope never calls the host.** Host reads are separate methods, driven by a command or
+- **Building a topic never calls the host.** Host reads are separate methods, driven by a command or
   a one-shot loader, so a rebuild cannot turn into a fan-out of network calls.
-- **A slow source reports itself.** A scope that must reach the host or the workspace reports
+- **A slow source reports itself.** A topic that must reach the host or the workspace reports
   `loading` and republishes when the answer lands, rather than blocking the frame.
 - **Freshness tiers stay distinct.** Local state rebuilds on every publish. An automatic host read
   carries its own state field. A fan-out across reviews runs only on an explicit refresh, and its
   subjects report whether they have been checked.
-- **Derivations live in the scope.** Verdicts, counts and row order are the server's. Two clients
+- **Derivations live in the topic.** Verdicts, counts and row order are the server's. Two clients
   computing the same thing will eventually disagree.
 - **A builder failure is an error frame**, never an exception at the client. The subscription
   survives, and a later publish can succeed.
-- **Nothing is built for a scope nobody watches**, though `seq` still advances, so a late subscriber
+- **Nothing is built for a topic nobody watches**, though `seq` still advances, so a late subscriber
   learns how current its first view is.
 - **A republish that produced the same view is not sent**, and does not advance `seq` — there is no
   change for a later subscriber to have missed. Republishing is deliberately coarse (a session
-  rebuilds every scope it holds, rather than tracking which scopes an event could touch), and the
+  rebuilds every topic it holds, rather than tracking which topics an event could touch), and the
   difference check is what makes that affordable: a tokenized file dwarfs every other frame, and a
   highlight or a message leaves it untouched.
 - **Work that only makes sense while someone is looking starts and stops with the watching.** The
-  bus reports when a scope gains its first watcher and loses its last, and the tail on a session's
-  events — which is what republishes its reading scopes when its state changes — runs exactly
+  bus reports when a topic gains its first watcher and loses its last, and the tail on a session's
+  events — which is what republishes its reading topics when its state changes — runs exactly
   between those two moments.
 
 ### Reading a change
@@ -239,28 +239,28 @@ the agent's debt.
 sequenceDiagram
     participant C as Reader
     participant B as View bus
-    participant D as Diff scope
+    participant D as Diff topic
     participant G as Source of the change
 
     C->>B: subscribe diff:s1:full
     B->>D: build
     D-->>B: file list from session state
-    B-->>C: scope seq=0
+    B-->>C: topic seq=0
     Note over C: the reader opens a file
     C->>B: subscribe diff:s1:full:a.py
     B->>D: build
     D-->>B: hunks, lines, token spans
-    B-->>C: scope seq=0
+    B-->>C: topic seq=0
     Note over C: the reader switches to since
     C->>B: subscribe diff:s1:since
     B->>D: build
     D-->>B: loading
-    B-->>C: scope state=loading
+    B-->>C: topic state=loading
     D->>G: mr_versions
     G-->>D: version bases
     D->>D: resolve it against the local clone
     D->>B: publish
-    B-->>C: scope state=ready
+    B-->>C: topic state=ready
 ```
 
 Switching the diff view mode is a subscription, not a command — which is why no such command
@@ -275,12 +275,12 @@ messages are about what is inside one.
 
 Alongside the view protocol, the session document is served directly: `GET /api/sessions/{id}`
 returns the folded state, `POST /api/sessions/{id}/commands` submits a session command, and a
-per-session websocket streams its events. A client reads what the scopes fold — highlights, their
+per-session websocket streams its events. A client reads what the topics fold — highlights, their
 cards and the host context all arrive on `annotations:<sid>` — and reaches for the document only for what no
-scope carries: drafts under edit, threads, chat. The agent reaches the same sessions in-process
+topic carries: drafts under edit, threads, chat. The agent reaches the same sessions in-process
 through the MCP bridge rather than over HTTP.
 
-It reads the same folded scopes, through the same instances. `get_session` composes the annotations, the
+It reads the same folded topics, through the same instances. `get_session` composes the annotations, the
 chat index, the discussions and the consent list rather than returning the session document, so
 there is one representation of a review and not one per audience. That is what stopped the
 outstanding-asks predicate being worked out in three places, and it is why the agent's backlog is
@@ -295,12 +295,12 @@ what the map is for. One file's unified diff text is still reachable by path, fo
 checkout failed to materialize and is running over the host API alone.
 And the reviewer's unposted drafts are absent at every stage: a draft is private prose until they
 post it, at which point it is a discussion and the agent reads it in `threads` like everyone else.
-No filter enforces that; the review scope is simply not part of the agent's view.
+No filter enforces that; the review topic is simply not part of the agent's view.
 
 ### The agent does not know what the reviewer is looking at
 
 Which file is open, and which diff view mode — the whole change, since the last review, one commit
-— is a client fact. It lives in the scope a client subscribes to and is deliberately not recorded
+— is a client fact. It lives in the topic a client subscribes to and is deliberately not recorded
 on the
 session, so the agent cannot read it and is not meant to.
 
@@ -318,7 +318,7 @@ discussion, the review itself — rather than on a viewport.
 
 ## Clients
 
-The browser and the terminal client both render scopes and send commands, and neither models review
+The browser and the terminal client both render topics and send commands, and neither models review
 state. A client owns only presentation: mapping token kinds to a palette, deciding how much unfolded
 context to show, choosing a layout.
 

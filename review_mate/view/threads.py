@@ -1,4 +1,4 @@
-"""The `threads` scope: the discussions already on the merge request.
+"""The `threads` topic: the discussions already on the merge request.
 
 The host owns these, not the session — a discussion exists because someone wrote it on the MR, and
 the session mirrors what the host last reported. So this carries what a reviewer needs to read and
@@ -43,7 +43,7 @@ class ThreadsView(BaseModel):
     total: int = 0
 
 
-class ThreadsScope:
+class ThreadsTopic:
     """Builds the discussion list. Never reads the host: the session holds what the last re-sync
     mirrored, and re-syncing is a command rather than something a rebuild does behind the scenes."""
 

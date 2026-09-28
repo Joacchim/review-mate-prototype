@@ -1,4 +1,4 @@
-"""The `access` scope: repositories Claude has asked to read, and what the reviewer decided.
+"""The `access` topic: repositories Claude has asked to read, and what the reviewer decided.
 
 Cross-repo context is consent-gated and agent-initiated, so the state worth publishing is what is
 outstanding rather than what is readable. Decided requests stay: a reviewer wants to see that they
@@ -12,7 +12,7 @@ from review_mate.contracts import MRRef
 from review_mate.session.commands import DecideAccess, RecordGrant, RequestAccess
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import Grant, Origin
-from review_mate.view.access import AccessScope
+from review_mate.view.access import AccessTopic
 
 
 @pytest.fixture
@@ -20,7 +20,7 @@ async def access(tmp_path):
     async def build():
         manager = SessionManager(root=tmp_path / "sessions", mr_source=HostStub())
         sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
-        return manager, sid, AccessScope(manager)
+        return manager, sid, AccessTopic(manager)
     yield build
 
 
@@ -30,28 +30,28 @@ async def ask(manager, sid, repo, reason="it defines the type this calls"):
 
 
 async def test_a_review_nobody_has_asked_about_is_empty(access):
-    manager, sid, scope = await access()
-    view = await scope.build(sid)
+    manager, sid, topic = await access()
+    view = await topic.build(sid)
     assert view["state"] == "ready" and view["requests"] == [] and view["pending"] == 0
     await manager.shutdown()
 
 
 async def test_an_ask_carries_the_repo_and_why(access):
-    manager, sid, scope = await access()
+    manager, sid, topic = await access()
     await ask(manager, sid, "platform/virtu/vmdesc", reason="it defines VMDesc")
-    row = (await scope.build(sid))["requests"][0]
+    row = (await topic.build(sid))["requests"][0]
     assert row["repo"] == "platform/virtu/vmdesc" and row["reason"] == "it defines VMDesc"
     assert row["status"] == "pending"
     await manager.shutdown()
 
 
 async def test_deciding_moves_it_out_of_what_is_outstanding(access):
-    manager, sid, scope = await access()
+    manager, sid, topic = await access()
     rid = await ask(manager, sid, "platform/virtu/vmdesc")
-    assert (await scope.build(sid))["pending"] == 1
+    assert (await topic.build(sid))["pending"] == 1
 
     await manager.get(sid).submit(DecideAccess(request_id=rid, approve=True), Origin.BROWSER)
-    view = await scope.build(sid)
+    view = await topic.build(sid)
     assert view["pending"] == 0
     assert view["requests"][0]["status"] == "approved"
     await manager.shutdown()
@@ -59,29 +59,29 @@ async def test_deciding_moves_it_out_of_what_is_outstanding(access):
 
 async def test_a_refusal_is_kept_rather_than_forgotten(access):
     """So a reviewer sees they refused, and an agent asking again reads as asking again."""
-    manager, sid, scope = await access()
+    manager, sid, topic = await access()
     rid = await ask(manager, sid, "platform/virtu/vmdesc")
     await manager.get(sid).submit(DecideAccess(request_id=rid, approve=False), Origin.BROWSER)
-    view = await scope.build(sid)
+    view = await topic.build(sid)
     assert [r["status"] for r in view["requests"]] == ["denied"]
     assert view["pending"] == 0
     await manager.shutdown()
 
 
 async def test_several_asks_are_counted_apart_from_the_settled_ones(access):
-    manager, sid, scope = await access()
+    manager, sid, topic = await access()
     first = await ask(manager, sid, "a/one")
     await ask(manager, sid, "a/two")
     await ask(manager, sid, "a/three")
     await manager.get(sid).submit(DecideAccess(request_id=first, approve=True), Origin.BROWSER)
-    view = await scope.build(sid)
+    view = await topic.build(sid)
     assert len(view["requests"]) == 3 and view["pending"] == 2
     await manager.shutdown()
 
 
 async def test_a_session_that_is_not_there_says_unknown_session(access):
-    manager, _sid, scope = await access()
-    assert (await scope.build("no-such-session"))["state"] == "unknown-session"
+    manager, _sid, topic = await access()
+    assert (await topic.build("no-such-session"))["state"] == "unknown-session"
     await manager.shutdown()
 
 
@@ -93,29 +93,29 @@ async def _record(manager, sid, rid, grant):
 
 async def test_an_approval_nothing_has_acted_on_carries_no_grant(access):
     """The shape that must stay distinguishable: approved, and nothing is cloning anything."""
-    manager, sid, scope = await access()
+    manager, sid, topic = await access()
     rid = await ask(manager, sid, "g/sibling")
     await manager.get(sid).submit(DecideAccess(request_id=rid, approve=True), Origin.BROWSER)
-    view = await scope.build(sid)
+    view = await topic.build(sid)
     assert view["requests"][0]["status"] == "approved"
     assert view["requests"][0]["grant"] is None and view["working"] == 0
 
 
 async def test_a_clone_under_way_says_so(access):
-    manager, sid, scope = await access()
+    manager, sid, topic = await access()
     rid = await ask(manager, sid, "g/sibling")
     await manager.get(sid).submit(DecideAccess(request_id=rid, approve=True), Origin.BROWSER)
     await _record(manager, sid, rid, Grant(state="materializing"))
-    view = await scope.build(sid)
+    view = await topic.build(sid)
     assert view["requests"][0]["grant"]["state"] == "materializing" and view["working"] == 1
 
 
 async def test_a_ready_grant_carries_where_it_landed(access):
-    manager, sid, scope = await access()
+    manager, sid, topic = await access()
     rid = await ask(manager, sid, "g/sibling")
     await manager.get(sid).submit(DecideAccess(request_id=rid, approve=True), Origin.BROWSER)
     await _record(manager, sid, rid, Grant(state="ready", path="/tmp/checkouts/sibling"))
-    view = await scope.build(sid)
+    view = await topic.build(sid)
     assert view["requests"][0]["grant"] == {"state": "ready", "path": "/tmp/checkouts/sibling",
                                             "error": ""}
     assert view["working"] == 0
@@ -123,9 +123,9 @@ async def test_a_ready_grant_carries_where_it_landed(access):
 
 async def test_a_failed_grant_carries_why(access):
     """An approval that could not be honoured is the reviewer's business, not just a log line."""
-    manager, sid, scope = await access()
+    manager, sid, topic = await access()
     rid = await ask(manager, sid, "g/sibling")
     await manager.get(sid).submit(DecideAccess(request_id=rid, approve=True), Origin.BROWSER)
     await _record(manager, sid, rid, Grant(state="failed", error="LookupError: no such repository"))
-    row = (await scope.build(sid))["requests"][0]
+    row = (await topic.build(sid))["requests"][0]
     assert row["grant"]["state"] == "failed" and "no such repository" in row["grant"]["error"]
