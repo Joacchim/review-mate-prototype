@@ -99,3 +99,19 @@ def test_the_link_an_agent_hands_over_actually_opens_the_review(page, base_url, 
     page.goto(handed)          # exactly the link an agent would give them
     page.wait_for_selector("#ann .hrow")
     assert page.locator("#sid").inner_text().startswith("s1")
+
+
+def test_a_hub_frame_does_not_take_the_search_away(search, staged, stub_host, hub_republishes):
+    """The hub republishes on a timer, and the landing page it paints owns the same area the
+    results are drawn into. Rebuilding it while a search is on screen threw the results away with
+    no way back — the search has no topic behind it, so nothing would restore it.
+
+    Driven rather than waited for: the ticker fires every few seconds, so the bug reads as
+    intermittent and a test that sat still would pass most of the time.
+    """
+    stub_host.search_hits = [HIT, OTHER]
+    search.look_for("retry")
+    expect(search.results).to_have_count(2)
+    hub_republishes()
+    expect(search.results).to_have_count(2)      # still the reviewer's answer, not the listing
+    expect(search.ask_row).to_be_visible()

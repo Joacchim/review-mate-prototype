@@ -164,6 +164,25 @@ def as_agent(_fixture_server, fake_manager):
     return submit
 
 
+@pytest.fixture
+def hub_republishes(_fixture_server, staged_app, stub_host):
+    """Republish the hub the way the presence ticker does, while the browser is watching.
+
+    The ticker rebuilds `hub` every few seconds because `attached` lapses by clock, and the bus
+    sends the frame whenever the rebuilt view differs. Reproducing that needs a real difference,
+    so the host queue changes first — a frame the bus would deduplicate proves nothing.
+    """
+    def republish():
+        async def _go():
+            stub_host.queue = list(stub_host.queue)[:-1] or [{"project": "p", "iid": 1,
+                                                              "title": "t", "url": "u"}]
+            staged_app.state.hub.invalidate_queue()
+            await staged_app.state.hub.refresh()
+            await staged_app.state.bus.publish("hub")
+        asyncio.run_coroutine_threadsafe(_go(), _fixture_server.loop).result(timeout=10)
+    return republish
+
+
 def _await_release(app, timeout: float = 5.0) -> None:
     """Block until the bus holds no watches, so no tail outlives the test that started it."""
     deadline = time.monotonic() + timeout

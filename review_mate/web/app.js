@@ -29,6 +29,11 @@ let detailMax = false;               // the panel given the whole window, for re
 let detailReading = false;           // and held to a measure within it, when the lines get long
 const msgDraft = {};                 // chat topic -> in-progress message (survives re-render)
 let msgFocused = null;               // topic of the focused composer, to restore after render
+// What the landing area is showing: null for the open-reviews listing, or the query whose results
+// are on screen. The hub topic republishes on a timer (presence lapses by clock), and a rebuild of
+// the listing would throw away a search the reviewer is still reading — the search has no topic
+// behind it, so nothing would bring it back.
+let landingSearch = null;
 const MR_KEY = "__mr__";             // draftBuffers/focus key for the (anchorless) MR-level comment
 let approveToggle = false;           // "Approve MR" checkbox on the submit bar
 let threadFilter = "unresolved";     // discussions filter: unresolved | all
@@ -334,7 +339,9 @@ function connectViews(topics) {
       renderAgentLight();                 // the state rides a topic, so it repaints with one
       if (msg.topic === "hub") {
         markHubReady();
-        if (!SID) showLanding();
+        // not while a search is showing: the listing is not on screen, and rebuilding it would
+        // take the results with it. Clearing the box calls showLanding() and paints it fresh.
+        if (!SID && landingSearch === null) showLanding();
       } else if (SID && state) {
         // a full render, not just the diff: the mode's file list drives the tree and decides
         // which file is selected, and a frame can arrive before either has caught up
@@ -698,6 +705,7 @@ function mrItem(it) {
 }
 
 async function showLanding() {
+  landingSearch = null;
   $("mr").textContent = "—";
   $("files").innerHTML = ""; $("ann").innerHTML = "";
   const land = document.createElement("div");
@@ -869,6 +877,7 @@ async function renderSuggestions(query) {
   land.className = "land";
   land.innerHTML = `<h2>Search results</h2><p>GitLab matches for “${esc(query)}”</p>`;
   // GitLab search (code-first, D20) is the default; results render here first
+  landingSearch = query;
   const list = document.createElement("div");
   list.className = "searchresults";     // its own name: the answer panel below renders the same rows
   list.appendChild(empty("searching GitLab…"));
