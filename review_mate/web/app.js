@@ -7,8 +7,11 @@ let state = null;
 let currentFile = null;
 const collapsedDirs = new Set();
 let splitMode = localStorage.getItem("rm-split") === "1";
-const draftBuffers = {};   // highlight_id -> in-progress review-comment text (survives re-render)
-let focusedDraft = null;   // highlight_id of the focused draft textarea, to restore after render
+// Text the server has not been told about yet, per box. These are not a rendering workaround —
+// the merge reuses the element, so nothing is lost on the way — but the builder still fills each
+// box from what the server knows, and without these that is what a frame would put back: the
+// reviewer's half-written comment replaced by the last version they saved.
+const draftBuffers = {};   // highlight_id -> in-progress review-comment text
 let showAll = localStorage.getItem("rm-showall") === "1";
 const topicViews = {};               // topic name -> the view the server folded, whole
 let viewSocket = null;
@@ -22,25 +25,21 @@ const mdRendered = new Set();        // .md paths currently shown rendered (vs r
 let viewingPath = null;              // a non-diff file currently shown (plain view)
 let annotationFilter = "all";              // index filter: all | context | comment | posted
 let annotationQuery = "";                  // index text search (file + comment + question)
-let annotationSearchFocused = false;       // restore search focus after a WS-driven re-render
 let selected = null;                 // {kind:"hl"|"insight"|"mr"|"thread", id} shown in the detail overlay
 let detailTab = null;                // "claude" | "host" for the open subject; null picks the default
 let detailMax = false;               // the panel given the whole window, for reading a long one
 let detailReading = false;           // and held to a measure within it, when the lines get long
-const msgDraft = {};                 // chat topic -> in-progress message (survives re-render)
-let msgFocused = null;               // topic of the focused composer, to restore after render
+const msgDraft = {};                 // chat topic -> in-progress message, unsent
 // What the landing area is showing: null for the open-reviews listing, or the query whose results
 // are on screen. The hub topic republishes on a timer (presence lapses by clock), and a rebuild of
 // the listing would throw away a search the reviewer is still reading — the search has no topic
 // behind it, so nothing would bring it back.
 let landingSearch = null;
-const MR_KEY = "__mr__";             // draftBuffers/focus key for the (anchorless) MR-level comment
+const MR_KEY = "__mr__";             // draftBuffers key for the (anchorless) MR-level comment
 let approveToggle = false;           // "Approve MR" checkbox on the submit bar
 let threadFilter = "unresolved";     // discussions filter: unresolved | all
-const threadReplyBuf = {};           // thread_id -> in-progress reply text (survives re-render)
-let threadReplyFocused = null;       // thread_id of the focused reply textarea, to restore after render
+const threadReplyBuf = {};           // thread_id -> in-progress reply text, unsent
 const askBuf = {};                   // highlight_id -> in-progress "ask Claude" question text
-let askFocused = null;               // highlight_id of the focused ask-context input, to restore after render
 const suggBuf = {};                  // draft key -> in-progress suggested-change text
 const suggOpen = {};                 // draft key -> whether the suggestion editor is open
 const noteEdit = {};                 // note_id -> in-progress edit text (null/absent = not editing)
@@ -1680,10 +1679,6 @@ function renderAnnotations() {
   morph(el, built);
   renderDetail();
 
-  if (annotationSearchFocused) {  // a WS-driven re-render shouldn't steal the search box you're typing in
-    const s = $("annsearch");
-    if (s) refocus(s, "annsearch");
-  }
 }
 
 // what the whole change owns: the MR-level review comment, then the insights Claude raised itself.
@@ -1760,10 +1755,7 @@ function renderAnnotationTools(el, root) {
   wrap.appendChild(seg);
   const inp = document.createElement("input");
   inp.id = "annsearch"; inp.placeholder = "filter…"; inp.value = annotationQuery;
-  watchCaret(inp, "annsearch");
   inp.oninput = (e) => { annotationQuery = e.target.value; renderHlist(); };  // list-only → input keeps focus
-  inp.onfocus = () => { annotationSearchFocused = true; };
-  inp.onblur = () => { annotationSearchFocused = false; };
   wrap.appendChild(inp);
   el.appendChild(wrap);
   fillSeg(root || wrap);        // the detached copy while a panel is being built
@@ -1950,11 +1942,7 @@ function renderDetail() {
   body.appendChild(detailHead(subject, close));
   body.appendChild(detailTabs(subject, tab));
   body.appendChild(tab === "host" ? hostChannel(subject) : claudeChannel(subject));
-  const held = captureBox(el);      // the fallback for a node the merge could not reuse
   morph(el, built);
-  if (document.activeElement === document.body && !resumeBox(el, held)) {
-    restoreDetailFocus(el, subject, tab);
-  }
 }
 
 // resolve the selection against live state: a row can vanish under the panel — a removed highlight,
@@ -2242,9 +2230,6 @@ function conversationBlock(subject) {
     : "ask Claude about this";
   inp.value = msgDraft[topic] || "";
   inp.oninput = (e) => { msgDraft[topic] = e.target.value; };
-  inp.onfocus = () => { msgFocused = topic; };
-  inp.onblur = () => { if (msgFocused === topic) msgFocused = null; };
-  watchCaret(inp, topic);
   // the live input, found from whichever control fired — see labelControl for why
   const send = (e) => {
     const field = e.currentTarget.closest(".chatbox").querySelector("input");
@@ -2295,87 +2280,15 @@ function hostChannel(subject) {
   return frag;
 }
 
-// restore focus across a WS-driven re-render; never steal it
-function restoreDetailFocus(el, subject, tab) {
-  if (tab === "claude") {
-    if (msgFocused === chatTopic(selected)) {
-      const inp = el.querySelector(".chatbox input");
-      if (inp) refocus(inp, chatTopic(selected));
-    }
-    if (subject.kind === "hl" && askFocused === subject.hl.id) {
-      const ai = el.querySelector("input.askinp");
-      if (ai) refocus(ai, "ask\u001f" + subject.hl.id);
-    }
-    return;
-  }
-  const key = subject.kind === "mr" ? MR_KEY : subject.kind === "hl" ? subject.hl.id : null;
-  if (key !== null && focusedDraft === key) {
-    const ta = el.querySelector("textarea.draftbox");
-    if (ta) refocus(ta, key);
-  }
-}
-
 // a reviewer's review-comment draft (their words; the card is never posted). `anchor` is the
-// highlight id, or null for the MR-level comment; `key` keys the local buffer + focus tracking.
-// A comment box the reviewer dragged taller keeps that height. Every one of these is rebuilt by
-// the next frame that arrives — which is why the text lives in `draftBuffers` and the focus in
-// `focusedDraft` rather than in the DOM. The height was the one thing left behind, so it collapsed
-// mid-sentence. The browser writes an inline height only when the resize handle is used, so that is
-// the signal: nothing is remembered until the reviewer sets one, and then it survives every rebuild.
-const draftHeights = {};
-
-// Where the reviewer's cursor was, per box. Restoring focus alone is not enough: focusing a box
-// leaves the caret at the end of its text, which is invisible in a one-line composer and ruins a
-// long comment — a frame arriving mid-sentence sends you to the bottom of what you had written and
-// you type the rest of the word there. Same shape as the height: the reviewer's state, living only
-// in an element something rebuilds.
-const caretPos = {};
-
-// Name a box so it can be found again in the panel that replaces this one.
-function watchCaret(el, key) {
-  el.dataset.box = key;
-  const remember = () => { caretPos[key] = [el.selectionStart, el.selectionEnd]; };
-  // not "focus": refocus() reads the remembered pair and focusing would overwrite it first
-  for (const ev of ["input", "keyup", "click", "select", "mouseup"]) el.addEventListener(ev, remember);
-}
-
-// Put focus back where it was, caret and all. Read before focusing, and only honour a position the
-// current text can still hold — the body may have been edited elsewhere since.
-function refocus(el, key) {
-  const at = caretPos[key];
-  el.focus();
-  if (at && at[0] <= el.value.length && at[1] <= el.value.length) el.setSelectionRange(at[0], at[1]);
-  else el.setSelectionRange(el.value.length, el.value.length);
-}
-
-// Which box the reviewer was typing in, read from the DOM rather than from a flag.
-//
-// The flags cannot answer this. A rebuild empties the panel first, which blurs the box and runs the
-// handler that clears the flag — so by the time anything asks "was a draft focused?", nothing was.
-// Focus was being dropped on every frame, and the caret with it. Taking it from `activeElement`
-// before the panel is emptied is the only reading that is still true.
-function captureBox(root) {
-  const live = document.activeElement;
-  if (!live || !root.contains(live) || live.dataset.box === undefined) return null;
-  return { box: live.dataset.box, start: live.selectionStart, end: live.selectionEnd };
-}
-
-function resumeBox(root, held) {
-  if (!held) return false;
-  const el = root.querySelector(`[data-box="${CSS.escape(held.box)}"]`);
-  if (!el) return false;
-  el.focus();
-  const end = el.value.length;                 // the text can have changed under a stale position
-  el.setSelectionRange(Math.min(held.start, end), Math.min(held.end, end));
-  return true;
-}
-
-function draftBox(key) {
+// highlight id, or null for the MR-level comment; `key` keys the local buffer of unsent text.
+// A comment box the reviewer dragged taller keeps that height, and needs nothing to do it: the
+// merge reuses the element rather than replacing it, and leaves inline style alone precisely
+// because that is where the browser records a drag. It used to be remembered in a map beside the
+// text, restored on every rebuild.
+function draftBox() {
   const ta = document.createElement("textarea");
   ta.className = "draftbox";
-  if (draftHeights[key]) ta.style.height = draftHeights[key];
-  new ResizeObserver(() => { if (ta.style.height) draftHeights[key] = ta.style.height; }).observe(ta);
-  watchCaret(ta, key);
   return ta;
 }
 
@@ -2387,14 +2300,12 @@ function draftEditor(key, anchor, draft) {
       draft.url ? ` · <a href="${esc(draft.url)}" target="_blank" rel="noopener">view</a>` : ""}</div>`;
     return wrap;
   }
-  const ta = draftBox(key);
+  const ta = draftBox();
   ta.placeholder = anchor === null
     ? "write an MR-level review comment — a summary posted as a general note on the MR"
     : "prepare a review comment — your words (Claude's card is context, not posted)";
   ta.value = (key in draftBuffers) ? draftBuffers[key] : (draft ? draft.body : "");
   ta.oninput = (e) => { draftBuffers[key] = e.target.value; };
-  ta.onfocus = () => { focusedDraft = key; };
-  ta.onblur = () => { if (focusedDraft === key) focusedDraft = null; };
   wrap.appendChild(ta);
 
   // an optional suggested change (line-anchored only) — coexists with the prose above
@@ -2407,7 +2318,7 @@ function draftEditor(key, anchor, draft) {
                : (hl ? newSideLines(hl.file, hl.start, hl.end) : "");
     if (!(key in suggBuf)) suggBuf[key] = seed;
     const lbl = document.createElement("div"); lbl.className = "suglbl"; lbl.textContent = "suggested change — edit the lines";
-    sta = draftBox(key + "\u001fsuggestion");
+    sta = draftBox();
     sta.classList.add("suggbox"); sta.spellcheck = false;
     sta.value = suggBuf[key];
     sta.oninput = (e) => { suggBuf[key] = e.target.value; };
@@ -2566,7 +2477,7 @@ function threadConversationBlock(t) {
     const d = document.createElement("div");
     d.className = "msg agent";
     if (noteEdit[c.id] !== undefined) {           // this note is being edited in place
-      const ta = draftBox("note\u001f" + c.id);
+      const ta = draftBox();
       ta.value = noteEdit[c.id];
       ta.oninput = (e) => { noteEdit[c.id] = e.target.value; };
       const row = document.createElement("div"); row.className = "draftbtns";
@@ -2590,12 +2501,10 @@ function threadConversationBlock(t) {
   if (canThreads) {
     const rwrap = document.createElement("div");
     rwrap.className = "draft";
-    const ta = draftBox("reply\u001f" + t.id);
+    const ta = draftBox();
     ta.placeholder = "reply to this thread…";
     ta.value = threadReplyBuf[t.id] || "";
     ta.oninput = (e) => { threadReplyBuf[t.id] = e.target.value; };
-    ta.onfocus = () => { threadReplyFocused = t.id; };
-    ta.onblur = () => { if (threadReplyFocused === t.id) threadReplyFocused = null; };
     const row = document.createElement("div");
     row.className = "draftbtns";
     row.appendChild(btn("Reply", "btn", () => replyThread(t.id)));
@@ -2604,10 +2513,6 @@ function threadConversationBlock(t) {
         () => resolveThread(t.id, !t.resolved)));
     rwrap.appendChild(ta); rwrap.appendChild(row);
     wrap.appendChild(rwrap);
-    if (threadReplyFocused === t.id) setTimeout(() => {
-      const el2 = rwrap.querySelector("textarea");
-      if (el2) refocus(el2, "reply\u001f" + t.id);
-    }, 0);
   }
   return wrap;
 }
@@ -2710,12 +2615,9 @@ function askContextControl(hl) {
   wrap.className = "askctx";
   const inp = document.createElement("input");
   inp.className = "askinp";
-  watchCaret(inp, "ask\u001f" + hl.id);
   inp.placeholder = "ask Claude something specific (optional)";
   inp.value = askBuf[hl.id] || "";
   inp.oninput = (e) => { askBuf[hl.id] = e.target.value; };
-  inp.onfocus = () => { askFocused = hl.id; };
-  inp.onblur = () => { if (askFocused === hl.id) askFocused = null; };
   inp.onkeydown = (e) => { if (e.key === "Enter") requestContext(hl); };
   wrap.appendChild(inp);
   wrap.appendChild(btn("✦ Ask Claude for context", "btn", () => requestContext(hl)));
