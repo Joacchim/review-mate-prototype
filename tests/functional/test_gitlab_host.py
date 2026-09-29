@@ -423,3 +423,34 @@ async def test_a_name_nothing_answers_to_is_not_guessed(provider):
 async def test_it_clones_by_the_protocol_the_reviewer_chose(provider):
     provider.git_protocol = "ssh"
     assert (await provider.locate_repo("proj"))["clone_url"] == "git@gitlab:group/proj.git"
+
+
+async def test_the_queue_and_search_send_gitlab_its_own_parameter_names(provider):
+    """`scope` is GitLab's, not ours.
+
+    A rename of our own vocabulary reached three query parameters here and turned `scope=all` into
+    `topic=all`. GitLab ignores what it does not recognise, so the call still returns 200 and a
+    plausible list — the queue quietly becomes whatever the default scope is, and nothing anywhere
+    says so. Nothing else in this adapter shares a name with a word we rename, but that is luck
+    rather than design, so the wire names are asserted rather than assumed.
+    """
+    sent = []
+    original = provider._get
+
+    async def spy(path, params=None, **kw):
+        sent.append((path, dict(params or {})))
+        return await original(path, params=params, **kw)
+
+    provider._get = spy
+    await provider.review_queue()
+    await provider.search("anything")
+
+    queues = [p for path, p in sent if path == "/merge_requests"]
+    assert queues, sent
+    for params in queues:
+        assert params.get("scope") == "all", params
+        assert "topic" not in params, params
+
+    searches = [p for path, p in sent if path == "/search"]
+    for params in searches:
+        assert params.get("scope") == "merge_requests", params
