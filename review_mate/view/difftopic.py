@@ -37,6 +37,7 @@ from collections import OrderedDict
 import asyncio
 import re
 from contextlib import suppress
+from time import monotonic
 
 from pydantic import BaseModel, Field
 
@@ -54,6 +55,19 @@ COMMIT_PREFIX = "commit@"
 # how many blob failures to remember. They are error strings rather than file text, so the cost is
 # not the reason for a bound — outliving the review that produced them is.
 _FAILED_KEPT = 256
+
+# How long a failed read stays failed before it is worth asking again.
+#
+# Without this a failure is permanent: a read that failed once is answered from this cache for the
+# life of the process, so a single blip — a 502, a dropped connection, a token being refreshed —
+# takes unfolding away from that file at that sha until the server is restarted. The sha only moves
+# on a push, so there is nothing a reviewer can do about it, and nothing tells them why.
+#
+# Remembering it at all is still right: a build happens on every republish, and a file that really
+# cannot be read should not be re-fetched several times a second. This is the interval between
+# those two mistakes. A reviewer retrying inside it still sees the error — the honest fix for that
+# is a retry the reviewer can ask for, which is a command, not a cache policy.
+_FAILED_TTL = 30.0
 
 # A session id is opaque but must not carry the separator; a diff view mode is a closed set,
 # with the commit form using "@" precisely so that a sha needs no second colon.
@@ -146,7 +160,7 @@ class DiffTopics:
         self._kb = kb
         self._publish = publish          # publish(session_id, mode) -> awaitable
         self._resolved: dict[tuple, list] = {}
-        self._failed: dict[tuple, str] = {}
+        self._failed: dict[tuple, tuple[str, float]] = {}   # key -> (reason, when)
         self._aligned: dict[tuple, bool] = {}
         self._clean: dict[tuple, bool] = {}
         self._tasks: dict[tuple, asyncio.Task] = {}
@@ -225,8 +239,12 @@ class DiffTopics:
         if snapshot.mr is None:
             return "unsupported-mode", [], ""
         key = (session_id, mode, self._head(snapshot))
-        if key in self._failed:
-            return "error", [], self._failed[key]
+        failure = self._failed.get(key)
+        if failure is not None:
+            reason, at = failure
+            if (monotonic() - at) < _FAILED_TTL:
+                return "error", [], reason
+            del self._failed[key]     # long enough ago to be worth asking again
         if key in self._resolved:
             return "ready", self._resolved[key], ""
         if not self._can_resolve(mode, snapshot):
@@ -279,7 +297,7 @@ class DiffTopics:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self._failed[key] = f"{type(exc).__name__}: {exc}"
+            self._failed[key] = (f"{type(exc).__name__}: {exc}", monotonic())
         if self._publish is not None:
             await self._publish(session_id, mode)
 
@@ -433,7 +451,7 @@ class BlobTopics:
         self._sizes: dict[str, int] = {}                   # sha -> bytes, kept as we go
         self._held = 0
         self._budget = blob_budget_bytes() if budget is None else budget
-        self._failed: OrderedDict[tuple[str, str], str] = OrderedDict()
+        self._failed: OrderedDict[tuple[str, str], tuple[str, float]] = OrderedDict()
         self._tasks: dict[tuple[str, str], asyncio.Task] = {}
 
     def _remember(self, key: tuple[str, str], text: str) -> None:
@@ -484,9 +502,13 @@ class BlobTopics:
         language = next((f.language for f in (snapshot.files or []) if f.path == path), None)
         view = BlobView(session=session_id, mode=mode, path=path, sha=sha, language=language)
         key = (sha, path)
-        if key in self._failed:
-            view.state, view.error = "error", self._failed[key]
-            return view.model_dump(mode="json")
+        failure = self._failed.get(key)
+        if failure is not None:
+            reason, at = failure
+            if (monotonic() - at) < _FAILED_TTL:
+                view.state, view.error = "error", reason
+                return view.model_dump(mode="json")
+            del self._failed[key]     # long enough ago to be worth asking again
         text = self._recall(key)
         if text is None:
             if self._provider is None or not hasattr(self._provider, "get_file"):
@@ -531,7 +553,7 @@ class BlobTopics:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self._failed[key] = f"{type(exc).__name__}: {exc}"
+            self._failed[key] = (f"{type(exc).__name__}: {exc}", monotonic())
             while len(self._failed) > _FAILED_KEPT:      # small, but not a place to grow for ever
                 self._failed.popitem(last=False)
         if self._publish is not None:

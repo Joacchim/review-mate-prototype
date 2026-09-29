@@ -6,6 +6,7 @@ is the whole reason the diff is split into topics at all.
 import asyncio
 import json
 from pathlib import Path
+from time import monotonic
 
 from starlette.testclient import TestClient
 
@@ -14,6 +15,7 @@ from review_mate.contracts import MRPayload, MRRef
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import ChangeType, FileEntry, MRMetadata
+from review_mate.view.difftopic import _FAILED_TTL
 
 DIFF_A = """@@ -1,3 +1,4 @@ def reserve(self, pu):
  def reserve(self, pu):
@@ -739,3 +741,41 @@ async def test_a_session_keeps_being_pushed_after_its_scenario_is_restaged(tmp_p
             pushed = next_frame(ws)
             assert pushed is not None, "the session stopped pushing when it was re-staged"
             assert pushed["view"]["messages"][-1]["body"] == "after restaging"
+
+
+def test_a_blob_read_that_failed_once_is_tried_again(tmp_path):
+    """A failure used to be permanent. Answered from this cache for the life of the process, so one
+    blip — a 502, a dropped connection, a token refreshed mid-read — took unfolding away from that
+    file until the server was restarted. The sha moves only on a push, so nothing a reviewer did
+    could clear it and nothing told them why; the reported symptom was "unfolding is broken", and
+    restarting the server fixed it.
+
+    Remembering the failure is still right, or a build on every republish would re-fetch a file that
+    genuinely cannot be read several times a second. It just has to stop being for ever.
+    """
+    provider = BlobHost(fail=RuntimeError("gitlab 502"))
+    app = build_with(tmp_path, provider)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        topic = f"blob:{sid}:full:a.py"
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "topics": [topic]})
+            view = read_topic(ws, topic)["view"]
+            if view["state"] == "loading":
+                view = read_topic(ws, topic)["view"]
+            assert view["state"] == "error" and "gitlab 502" in view["error"]
+        attempts = len(provider.reads)
+
+        blobs = app.state.blob_topics
+        assert len(blobs._failed) == 1, "the failure is remembered, which is what throttles retries"
+        key, (reason, _at) = next(iter(blobs._failed.items()))
+        blobs._failed[key] = (reason, monotonic() - _FAILED_TTL - 1)   # as if it had been a while
+
+        provider._fail = None                     # whatever it was, it has passed
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "topics": [topic]})
+            view = read_topic(ws, topic)["view"]
+            if view["state"] == "loading":
+                view = read_topic(ws, topic)["view"]
+        assert view["state"] == "ready", view
+        assert len(provider.reads) > attempts, "it never asked again"
