@@ -78,6 +78,19 @@ class ActivityBroker:
 
     async def wait(self, since: int = 0, timeout: float | None = None) -> ActivityEvent | None:
         self._last_wait_at = datetime.now(timezone.utc)
+        # A cursor this broker never issued belongs to a previous life of the process: `seq` starts
+        # at zero on every start, so a caller holding one from before a restart would be scanned
+        # against a backlog it cannot match and told there is nothing. Hand it the backlog from the
+        # beginning instead — and, by answering with a lower seq than it asked past, tell it plainly
+        # that the stream restarted.
+        #
+        # Not complete, deliberately. A broker that has already published past the old cursor before
+        # the caller next polls looks indistinguishable from one that has not, and the events in
+        # between are skipped. Closing that needs identity on the stream — a generation beside the
+        # seq, which every client would have to read — and the reconciliation in `/api/outstanding`
+        # is what makes it not worth one: nothing here is the record of work owed.
+        if since > self._seq:
+            since = 0
         for event in self._events:
             if event.seq > since:
                 return event

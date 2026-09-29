@@ -372,3 +372,64 @@ async def test_dismissing_an_insight_takes_its_check_with_it(tmp_path):
     assert writer.snapshot().checks == []
     assert outstanding(writer.snapshot()) == []
     await mgr.shutdown()
+
+
+async def test_a_cursor_from_before_a_restart_gets_the_backlog(tmp_path):
+    """`seq` restarts at zero with the process, so a coordinator that outlives a restart holds a
+    cursor no broker will ever issue again. Scanned against the new backlog it matches nothing, and
+    the caller is told the fleet is quiet — which is what a quiet fleet also looks like.
+
+    Answering from the beginning both delivers the events and says the stream restarted, because
+    the seq handed back is lower than the one asked past. That is the signal a client resets on.
+    """
+    fresh = ActivityBroker()
+    fresh.publish("message_posted", session_id="s1")
+    fresh.publish("check_requested", session_id="s1")
+
+    event = await fresh.wait(since=11, timeout=1)        # a cursor from the previous process
+    assert event is not None and event.seq == 1, "a stale cursor must not read as an empty stream"
+
+    # and a cursor this broker did issue still means what it says
+    assert (await fresh.wait(since=1, timeout=1)).seq == 2
+    assert await fresh.wait(since=2, timeout=0.2) is None
+
+
+async def test_outstanding_rebuilds_every_ask_after_a_restart(tmp_path):
+    """The reconciliation the ephemeral stream rests on: whatever a restart drops in flight, this
+    route reconstructs from the log.
+
+    That is the whole safety argument for `seq` starting at zero on every start, and for not
+    putting a generation on the wire to close the residual gap in `wait`. If this ever stopped
+    holding, the stream would become the record of work owed, and it is not built to be one.
+
+    A second process, a second broker that has published nothing, and the same directory on disk.
+    """
+    from review_mate.server.app import create_app
+    import httpx
+
+    root = tmp_path / "s"
+    first = SessionManager(root=root, activity_broker=ActivityBroker())
+    sid = await first.create()
+    writer = first.get(sid)
+    await writer.submit(AddHighlight(**HL), Origin.BROWSER)
+    hid = writer.snapshot().highlights[0].id
+    subject = Subject(kind=SubjectKind.HIGHLIGHT, id=hid)
+    await writer.submit(RequestContext(highlight_id=hid), Origin.BROWSER)
+    await writer.submit(PostMessage(body="and this?", anchor=subject), Origin.BROWSER)
+    await writer.submit(RequestInsights(), Origin.BROWSER)
+    await writer.submit(RequestCheck(subject=subject), Origin.BROWSER)
+    await first.shutdown()                       # the process goes away, and the stream with it
+
+    reborn = ActivityBroker()
+    second = SessionManager(root=root, activity_broker=reborn)
+    await second.restore_all()
+    app = create_app(manager=second, with_mcp=False)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        body = (await client.get("/api/outstanding")).json()
+
+    assert reborn._seq == 0, "the new stream has announced nothing — that is the point"
+    kinds = sorted(a["kind"] for s in body["sessions"] for a in s["asks"])
+    assert kinds == ["chat", "check", "context", "insights"], body
+    assert body["total"] == 4
+    await second.shutdown()
