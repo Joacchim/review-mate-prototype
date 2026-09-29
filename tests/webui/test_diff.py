@@ -7,7 +7,8 @@ page does with it is this one's.
 import pytest
 from playwright.sync_api import expect
 
-from webui.fixtures.scenarios import CAPACITY_BODY, markdown_review, two_file_review
+from webui.fixtures.scenarios import (CAPACITY_BODY, markdown_review, review_with_highlights,
+                                      two_file_review)
 from webui.pages.diff import DiffPage
 
 
@@ -202,3 +203,4 @@ def test_the_file_browser_is_read_only_while_it_is_open(diff, page, staged, stub
 
     diff.show_all_repo_files()                       # off again
     page.wait_for_function("() => !wantedTopics.some(s => /^tree:/.test(s))")
+

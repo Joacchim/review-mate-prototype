@@ -613,6 +613,7 @@ function renderOpenSessions(land, sessions) {
         : meta.label;
     const row = document.createElement("div");
     row.className = "sitem" + (meta ? " " + meta.cls : "");
+    row.dataset.key = s.id;          // reviews come and go from this list
     // the title is a real link to the review (stretched over the card, see .rowlink) and the
     // project!iid a real link to the MR on the host — both middle-clickable into their own tab
     row.innerHTML =
@@ -717,6 +718,7 @@ function mrItem(it) {
   const ref = `${it.project}!${it.iid}`;
   const row = document.createElement("div");
   row.className = "qitem";
+  row.dataset.key = ref;
   row.innerHTML =
     `<div class="t"><a class="rowlink" href="?ref=${encodeURIComponent(ref)}">${esc(it.title)}</a></div>` +
     `<div class="m">${hostLink(it.url, `${esc(it.project)} !${it.iid}`)}</div>`;
@@ -740,9 +742,16 @@ async function showLanding() {
   $("files").innerHTML = ""; $("ann").innerHTML = "";
   const land = document.createElement("div");
   land.className = "land";
-  const d = $("diff"); d.innerHTML = ""; d.appendChild(land);
+  // merged in, so the queue filter someone is typing in survives a hub frame
+  const built = document.createElement("div");
+  built.appendChild(land);
+  const d = $("diff");
 
-  if (!topicViews["hub"]) { land.appendChild(empty("connecting to the review server…")); return; }
+  if (!topicViews["hub"]) {
+    land.appendChild(empty("connecting to the review server…"));
+    morph(d, built);
+    return;
+  }
   // open reviews are the local half of the topic and are already here; the queue half carries its
   // own loading state, so a slow host delays the queue block and nothing else
   const active = topicViews["hub"].sessions || [];
@@ -755,17 +764,21 @@ async function showLanding() {
   const queueBox = document.createElement("div");
   land.appendChild(queueBox);
   renderQueue(queueBox, topicViews["hub"], active);
+  morph(d, built);
 }
 
-function renderQueue(box, view, openSessions) {
-  box.innerHTML = "";
+function renderQueue(live, view, openSessions) {
+  const box = document.createElement("div");
+  const commit = () => morph(live, box);
   const queueState = view.queue_state || "idle";
   if (queueState === "idle" || queueState === "loading") {
     box.appendChild(empty("loading your review queue…"));
+    commit();
     return;
   }
   if (queueState === "error") {
     box.appendChild(empty("your review queue is unavailable — " + (view.queue_error || "host read failed")));
+    commit();
     return;
   }
   // drop MRs already open as reviews — they're listed under "Open reviews" above, not the queue
@@ -773,24 +786,31 @@ function renderQueue(box, view, openSessions) {
   let items = (view.queue || []).filter((it) => !open.has(`${it.project}!${it.iid}`));
   if (!items.length) {
     box.appendChild(empty("your review queue is empty here — paste an MR reference in the top bar (URL or group/proj!iid)."));
+    commit();
     return;
   }
   const filter = document.createElement("input");
   filter.className = "qfilter";
   filter.placeholder = "filter the queue…";
   const list = document.createElement("div");
+  list.className = "qlist";
   const matches = (it, q) => !q || `${it.title} ${it.project} !${it.iid}`.toLowerCase().includes(q);
-  const renderList = () => {
-    const q = filter.value.trim().toLowerCase();
-    list.innerHTML = "";
+  // both elements are found from the container at call time, never captured: after a merge the
+  // nodes this render built are detached, and filtering would read and fill copies (see morph.js)
+  const fill = (container) => {
+    const q = container.querySelector(".qfilter").value.trim().toLowerCase();
+    const target = container.querySelector(".qlist");
+    const built = document.createElement("div");
     const shown = items.filter((it) => matches(it, q));
-    if (!shown.length) { list.appendChild(empty("no queue entries match")); return; }
-    shown.forEach((it) => list.appendChild(mrItem(it)));
+    if (!shown.length) built.appendChild(empty("no queue entries match"));
+    else shown.forEach((it) => built.appendChild(mrItem(it)));
+    morph(target, built);
   };
-  filter.oninput = renderList;
+  filter.oninput = (e) => fill(e.currentTarget.parentElement);
   box.appendChild(filter);
   box.appendChild(list);
-  renderList();
+  fill(box);
+  commit();
 }
 
 async function loadRef(ref) {
@@ -1057,8 +1077,10 @@ function buildTree(entries) {
 }
 
 function renderTree() {
-  const el = $("files");
-  el.innerHTML = "";
+  const live = $("files");
+  // merged rather than replaced, so the tree keeps its scroll position and the row under the
+  // pointer stays the row under the pointer — see morph.js
+  const el = document.createElement("div");
   const inCommits = commitsMode && currentCommitSha();
   const inSince = sinceLast;
   if (inCommits) {   // the tree lists the current commit's files
@@ -1093,12 +1115,14 @@ function renderTree() {
   }
   if (!entries.length) {
     el.appendChild(empty(inCommits ? "this commit changed no files" : inSince ? "no changes since your last review" : "no files"));
+    morph(live, el);
     return;
   }
   const wrap = document.createElement("div");
   wrap.className = "tree";
   renderNode(buildTree(entries), "", 0, wrap);
   el.appendChild(wrap);
+  morph(live, el);
 }
 
 function renderNode(node, path, depth, out) {
@@ -1107,18 +1131,21 @@ function renderNode(node, path, depth, out) {
     const closed = collapsedDirs.has(dpath);
     const row = document.createElement("div");
     row.className = "node dir" + (closed ? " closed" : "");
+    row.dataset.key = "dir:" + dpath;      // "show all repo files" changes what this list holds
     row.style.paddingLeft = `${10 + depth * 14}px`;
     row.innerHTML = `<span class="chev">▾</span>📁 ${esc(name)}`;
     row.onclick = () => { closed ? collapsedDirs.delete(dpath) : collapsedDirs.add(dpath); renderTree(); };
     out.appendChild(row);
     const kids = document.createElement("div");
     kids.className = "children" + (closed ? " closed" : "");
+    kids.dataset.key = "kids:" + dpath;
     renderNode(node.dirs[name], dpath, depth + 1, kids);
     out.appendChild(kids);
   });
   node.files.sort((a, b) => a.name.localeCompare(b.name)).forEach(({ name, entry }) => {
     const row = document.createElement("div");
     row.className = "node file" + (entry.path === currentFile ? " on" : "") + (entry.diff ? "" : " nodiff");
+    row.dataset.key = "file:" + entry.path;
     row.style.paddingLeft = `${10 + depth * 14 + 14}px`;
     const c = entry.diff ? ((entry.change_type || "")[0] || "~") : "·";
     // the tree nests by directory, so a rename can only diverge in the leaf here; a move between
@@ -1230,6 +1257,18 @@ function activeFiles() {
   return view.files.map((f) => Object.assign({}, f, { diff: f.has_diff }));
 }
 
+// The one panel that is still rebuilt rather than merged, and deliberately.
+//
+// A diff table is thousands of cells, and its rows arrive as markup rather than as a tree. Merging
+// them was measured on a 1500-line file at 64 ms against 9 ms for a replace — and 64 ms on the
+// frame that changed nothing, which is most of them. That is a worse trade than the one being
+// fixed, so this keeps the replace.
+//
+// What the replace turns out not to cost is the reviewer's place in the file. Emptying the element
+// and refilling it in the same turn never recomputes layout in between, so the scroll position is
+// never clamped and survives on its own — measured by removing a guard written for it and watching
+// nothing change. The rest survives deliberately: a drag is held outside the table, and unfolded
+// gaps in `expandedGaps`.
 function renderDiff() {
   if (SID) watchTopics(diffTopics());   // the open file decides what this page watches
   const el = $("diff");
@@ -1238,6 +1277,7 @@ function renderDiff() {
   if (sinceLast) { renderSinceLast(el); return; }
   if (viewingPath) { renderFileView(el, viewingPath); return; }
   renderFileDiff(el, activeFiles(), "  ·  click a line, or drag to select a block", true);
+ 
 }
 
 // --- per-commit review ------------------------------------------------------
@@ -1593,23 +1633,25 @@ function annotationMatch(hl) {
 // happens to be MR-wide.
 function renderAnnotations() {
   const el = $("ann");
-  el.innerHTML = "";
+  // built detached and merged in, so the rows, the filter box and the reply boxes the reviewer is
+  // using are updated rather than replaced — see morph.js
+  const built = document.createElement("div");
 
-  renderVersionBanner(el);      // "updated since your last review" (diff-versions)
-  renderReviewBar(el);          // submit + counts
+  renderVersionBanner(built);   // "updated since your last review" (diff-versions)
+  renderReviewBar(built);       // submit + counts
 
-  el.appendChild(renderMrZone());
+  built.appendChild(renderMrZone());
 
   const list = document.createElement("div");
   list.className = "annlist";
-  el.appendChild(list);
+  built.appendChild(list);
 
   list.appendChild(annotationSplit("Per line"));
-  renderAnnotationTools(list);        // filter chips + text search
+  renderAnnotationTools(list, built);  // filter chips + text search
   const hlist = document.createElement("div");
   hlist.id = "hlist";
   list.appendChild(hlist);
-  renderHlist();
+  renderHlist(built);                 // fills the detached copy, not the one on screen
 
   renderThreads(list);          // existing MR discussions — reply / resolve / refresh
 
@@ -1619,6 +1661,7 @@ function renderAnnotations() {
   requests.forEach((r) => {
     const box = document.createElement("div");
     box.className = "req" + (r.status === "pending" ? "" : " decided");
+    box.dataset.key = "req:" + r.id;
     box.innerHTML = `<div class="repo">${esc(r.repo)}</div><div class="why">${esc(r.reason)}</div>`;
     if (r.status === "pending") {
       box.appendChild(btn("Approve", "btn ok", () => post({ type: "decide_access", request_id: r.id, approve: true })));
@@ -1634,6 +1677,7 @@ function renderAnnotations() {
     list.appendChild(box);
   });
 
+  morph(el, built);
   renderDetail();
 
   if (annotationSearchFocused) {  // a WS-driven re-render shouldn't steal the search box you're typing in
@@ -1708,7 +1752,7 @@ function annotationSplit(label) {
   return el;
 }
 
-function renderAnnotationTools(el) {
+function renderAnnotationTools(el, root) {
   if (!annotationHighlights().length) return;
   const wrap = document.createElement("div");
   wrap.className = "anntools";
@@ -1722,30 +1766,37 @@ function renderAnnotationTools(el) {
   inp.onblur = () => { annotationSearchFocused = false; };
   wrap.appendChild(inp);
   el.appendChild(wrap);
-  fillSeg();
+  fillSeg(root || wrap);        // the detached copy while a panel is being built
 }
 
-function fillSeg() {
-  const seg = $("annseg"); if (!seg) return;
-  seg.innerHTML = "";
+function fillSeg(root) {
+  const seg = (root || document).querySelector("#annseg"); if (!seg) return;
+  const built = document.createElement("div");
   const rows = annotationHighlights();
   const counts = { all: rows.length, context: 0, comment: 0, posted: 0 };
   rows.forEach((hl) => { counts[hl.comment_state] += 1; });
   [["all", "All"], ["context", "Cards"], ["comment", "Comments"], ["posted", "Posted"]].forEach(([k, label]) => {
-    seg.appendChild(btn(`${label} ${counts[k]}`, "btn" + (annotationFilter === k ? " on" : ""),
-      () => { annotationFilter = k; fillSeg(); renderHlist(); }));
+    const b = btn(`${label} ${counts[k]}`, "btn" + (annotationFilter === k ? " on" : ""),
+      () => { annotationFilter = k; fillSeg(); renderHlist(); });
+    b.dataset.key = k;
+    built.appendChild(b);
   });
+  morph(seg, built);
 }
 
-function renderHlist() {
-  const list = $("hlist"); if (!list) return;
-  list.innerHTML = "";
+function renderHlist(root) {
+  const list = (root || document).querySelector("#hlist"); if (!list) return;
+  const built = document.createElement("div");
   const rows = annotationHighlights();
-  if (!rows.length) { list.appendChild(empty("highlight a line to ask for context")); return; }
-  let shown = 0;
-  // #N is the server's, fixed when the highlight was made — a position here would move on removal
-  rows.forEach((hl) => { if (annotationMatch(hl)) { list.appendChild(hlRow(hl, hl.n)); shown += 1; } });
-  if (!shown) list.appendChild(empty("no highlights match this filter"));
+  if (!rows.length) {
+    built.appendChild(empty("highlight a line to ask for context"));
+  } else {
+    let shown = 0;
+    // #N is the server's, fixed when the highlight was made — a position here would move on removal
+    rows.forEach((hl) => { if (annotationMatch(hl)) { built.appendChild(hlRow(hl, hl.n)); shown += 1; } });
+    if (!shown) built.appendChild(empty("no highlights match this filter"));
+  }
+  morph(list, built);
 }
 
 // What closing the panel means, wherever it is noticed. Two paths notice it and they cannot share
@@ -1799,6 +1850,7 @@ function hlRow(hl, n) {
   const active = selected && selected.kind === "hl" && selected.id === hl.id;
   const row = document.createElement("div");
   row.className = "hrow" + (active ? " active" : "") + (hl.author === "agent" ? " agent" : "");
+  row.dataset.key = "hl:" + hl.id;   // filtering and removal reorder this list
   row.innerHTML =
     `<button class="x" title="discard">×</button>` +
     `<div class="top"><span class="num">#${n}</span>` +
@@ -1824,6 +1876,7 @@ function insightRow(c) {
   const active = selected && selected.kind === "insight" && selected.id === c.id;
   const row = document.createElement("div");
   row.className = "hrow agent" + (active ? " active" : "");
+  row.dataset.key = "insight:" + c.id;
   const l = c.label;
   // a corrected label reads differently from one nobody questioned — it is the reviewer's word now
   const mine = l && l.by === "browser";
@@ -1855,6 +1908,7 @@ function renderMrRow(el) {
   const prev = buf ? firstLine(buf) : "⊕ write a review summary";
   const row = document.createElement("div");
   row.className = "hrow mr" + (active ? " active" : "");
+  row.dataset.key = "mr";
   row.innerHTML =
     (d && !posted ? `<button class="x" title="discard">×</button>` : "") +
     `<div class="top">${chip}<span class="loc">whole MR</span></div>` +
@@ -2426,6 +2480,7 @@ function threadRow(t) {
              : `<span class="chip comment">open</span>`;
   const row = document.createElement("div");
   row.className = "hrow" + (active ? " active" : "") + (t.resolved ? " resolved" : "");
+  row.dataset.key = "thread:" + t.id;
   row.innerHTML =
     `<div class="top">${chip}<span class="loc">${esc(loc)}</span>` +
     (t.comments && t.comments.length > 1 ? `<span class="num">${t.comments.length}</span>` : "") +
