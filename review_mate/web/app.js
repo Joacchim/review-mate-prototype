@@ -728,7 +728,8 @@ function mrItem(it) {
   }
   const b = btn("Track", "btn track", null);
   b.title = "flag this MR for review — adds it to your open reviews without opening it";
-  b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); trackRef(ref, b); };
+  // e.currentTarget, not `b`: the row this handler was built on may not be the row on screen
+  b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); trackRef(ref, e.currentTarget); };
   row.appendChild(b);
   return row;
 }
@@ -962,11 +963,12 @@ function renderAskRow(row, panel, query, outcome) {
   box.id = "askbox";
   box.value = query;
   box.placeholder = "the MR that reworked the retry backoff";
-  const ask = () => {
-    const described = box.value.trim();
+  const ask = (e) => {
+    const field = e.currentTarget.closest(".askrow").querySelector("input");
+    const described = field.value.trim();
     if (described) askClaude(described, panel);
   };
-  box.onkeydown = (e) => { if (e.key === "Enter") ask(); };
+  box.onkeydown = (e) => { if (e.key === "Enter") ask(e); };
   row.appendChild(box);
   row.appendChild(btn("✦ Ask Claude to find it", "btn ghost", ask));
 }
@@ -1297,7 +1299,7 @@ function renderCommitView(el) {
     if (x.sha === c.sha) o.selected = true;
     sel.appendChild(o);
   });
-  sel.onchange = () => selectCommit(sel.value);
+  sel.onchange = (e) => selectCommit(e.currentTarget.value);
   bar.appendChild(prev); bar.appendChild(pos); bar.appendChild(next); bar.appendChild(sel);
   if (wmIndex >= 0) {
     const chip = document.createElement("span");
@@ -1882,18 +1884,23 @@ function renderDetail() {
     return;
   }
   el.hidden = false;
-  const held = captureBox(el);      // before the panel goes: who had the caret, and where
-  el.innerHTML = "";
   el.classList.toggle("max", detailMax);
   el.classList.toggle("reading", detailReading);
   const tab = detailTab || defaultDetailTab(subject);
+  // built detached, then merged into what is already on screen: the nodes the reviewer is using
+  // are updated rather than replaced, so focus, caret, selection and scroll stay where they are
+  const built = document.createElement("div");
   const body = document.createElement("div");
   body.className = "dbody";
-  el.appendChild(body);
+  built.appendChild(body);
   body.appendChild(detailHead(subject, close));
   body.appendChild(detailTabs(subject, tab));
   body.appendChild(tab === "host" ? hostChannel(subject) : claudeChannel(subject));
-  if (!resumeBox(el, held)) restoreDetailFocus(el, subject, tab);
+  const held = captureBox(el);      // the fallback for a node the merge could not reuse
+  morph(el, built);
+  if (document.activeElement === document.body && !resumeBox(el, held)) {
+    restoreDetailFocus(el, subject, tab);
+  }
 }
 
 // resolve the selection against live state: a row can vanish under the panel — a removed highlight,
@@ -2092,17 +2099,30 @@ function labelControl(card) {
   const pick = (name, values, current) => {
     const sel = document.createElement("select");
     sel.className = "labelpick"; sel.setAttribute("aria-label", name);
-    if (!current) sel.appendChild(new Option("—", ""));
-    values.forEach((v) => sel.appendChild(new Option(v, v, false, v === current)));
+    // keyed: the placeholder is present only while nothing is chosen, so the list changes length
+    // and a merge matching by position would put every option one place out
+    const opt = (label, value, selected) => {
+      const o = new Option(label, value, false, selected);
+      o.dataset.key = value;
+      return o;
+    };
+    if (!current) sel.appendChild(opt("—", "", false));
+    values.forEach((v) => sel.appendChild(opt(v, v, v === current)));
     return sel;
   };
   const theme = pick("theme", THEMES, shown.theme);
   const crit = pick("criticality", CRITICALITIES, shown.criticality);
-  const send = () => {
-    labelChoice[card.id] = { theme: theme.value, criticality: crit.value };
-    if (!theme.value || !crit.value) return;   // half a label is not one
+  // Both selects are found from the event, not from the two consts above. A merge reuses the
+  // nodes already on screen and throws away the ones this render built, so a captured reference
+  // reads a copy the reviewer cannot see — and the label would silently stop being sent.
+  const send = (e) => {
+    const row_ = e.currentTarget.closest(".labelrow");
+    const themeValue = row_.querySelector('[aria-label="theme"]').value;
+    const critValue = row_.querySelector('[aria-label="criticality"]').value;
+    labelChoice[card.id] = { theme: themeValue, criticality: critValue };
+    if (!themeValue || !critValue) return;     // half a label is not one
     post({ type: "label_card", card_id: card.id,
-           label: { theme: theme.value, criticality: crit.value, about: l.about || "" } });
+           label: { theme: themeValue, criticality: critValue, about: l.about || "" } });
   };
   theme.onchange = send;
   crit.onchange = send;
@@ -2171,13 +2191,15 @@ function conversationBlock(subject) {
   inp.onfocus = () => { msgFocused = topic; };
   inp.onblur = () => { if (msgFocused === topic) msgFocused = null; };
   watchCaret(inp, topic);
-  const send = () => {
-    const body = inp.value.trim();
+  // the live input, found from whichever control fired — see labelControl for why
+  const send = (e) => {
+    const field = e.currentTarget.closest(".chatbox").querySelector("input");
+    const body = field.value.trim();
     if (!body) return;
     post({ type: "post_message", body, anchor: subjectAnchor(selected) });
-    delete msgDraft[topic]; inp.value = "";
+    delete msgDraft[topic]; field.value = "";
   };
-  inp.onkeydown = (e) => { if (e.key === "Enter") send(); };
+  inp.onkeydown = (e) => { if (e.key === "Enter") send(e); };
   box.appendChild(inp);
   box.appendChild(btn("Send", "btn", send));
   wrap.appendChild(box);

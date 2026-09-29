@@ -172,3 +172,24 @@ def test_the_review_as_a_whole_offers_no_per_message_doubt(diff, annotations, de
     detail.ask("anything else worth knowing?")
     expect(detail.messages).to_have_count(1)
     expect(detail.messages.first.locator(".noteacts")).to_have_count(0)
+
+
+def test_the_composer_still_sends_after_a_frame_rebuilt_the_panel(diff, annotations, detail,
+                                                                 staged, as_agent):
+    """The composer reads the field it sends from, and the panel is rebuilt by every frame.
+
+    Merging a rebuild reuses the input already on screen and discards the one that render built —
+    so a handler holding the built one reads an element nobody can see, and the message goes
+    nowhere. Silently: the box even clears, because it clears the copy. Only reachable after
+    something has rebuilt the panel, which is why sending on a fresh one proves nothing.
+    """
+    from review_mate.session.commands import EmitCard
+
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    _open_first(annotations, detail)
+    as_agent("s1", EmitCard(highlight_id=None, body="a card lands before you type"))
+
+    detail.ask("does this still reach the server?")
+    expect(detail.messages).to_contain_text("does this still reach the server?")
+    assert "PostMessage" in [name for name, _ in _commands(staged)]
