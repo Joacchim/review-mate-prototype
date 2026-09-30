@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  A per-user launch agent, the macOS counterpart of packaging/systemd/review-mate.service.
+  launchd does not expand ~ or $HOME, so install it with __HOME__ substituted:
+
+    sed "s|__HOME__|$HOME|g" packaging/launchd/io.github.joacchim.review-mate.plist \
+      > ~/Library/LaunchAgents/io.github.joacchim.review-mate.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.joacchim.review-mate.plist
+
+  Deliberately *not* here: your API token, for the same reason as in the systemd unit.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.github.joacchim.review-mate</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/.local/bin/review-mate</string>
+  </array>
+
+  <!-- launchd's default PATH is /usr/bin:/bin:/usr/sbin:/sbin; glab lives under Homebrew. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- Restart=on-failure: relaunch after a crash, not after a clean exit. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/review-mate.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/review-mate.log</string>
+</dict>
+</plist>

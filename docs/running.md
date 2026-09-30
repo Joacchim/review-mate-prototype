@@ -44,15 +44,11 @@ per-MR worktrees. **Your own working clones are never touched.** Cloning uses wh
 `glab` is configured for (`git_protocol`, ssh or https), so it inherits credentials you already
 have; override with `REVIEW_MATE_GIT_PROTOCOL`.
 
-## As a systemd user unit
+## Keep it running
 
-review-mate is meant to sit there: a reviewer opens the UI when they have something to read, and an
-agent connects when there is something to answer. Neither wants to start a server first — an agent
-in particular registers the MCP endpoint when *it* starts, so the server has to be up before it is.
-
-A **user** unit, not a system one. It reads your git credentials, writes under your `$HOME`, and
-exists to be talked to by clients running as you; a system service would have to be handed each of
-those back one awkward piece at a time.
+Run it as a **user** service, not a system one. It reads your git credentials, writes under your
+`$HOME`, and exists to be talked to by clients running as you; a system service would have to be
+handed each of those back one awkward piece at a time.
 
 **1. Install it somewhere stable.** Include the `tui` extra even if you only want the server — the
 terminal client is installed either way, and without the extra it fails on its first import.
@@ -62,29 +58,18 @@ uv tool install 'review-mate[tui] @ git+https://github.com/Joacchim/review-mate-
 ```
 
 **2. Authenticate once.** `glab auth login`, and leave it at that — see below for why not to put a
-token in the unit.
+token in the service.
 
-**3. Install and start the unit.**
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp packaging/systemd/review-mate.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now review-mate
-```
-
-Adjust `ExecStart` if you installed it elsewhere. `loginctl enable-linger $USER` keeps it up when
-you are not logged in.
+**3. Install and start the service** — a [systemd user unit](#linux-a-systemd-user-unit) or a
+[launchd agent](#macos-a-launchd-agent).
 
 **4. Check it took.**
 
 ```bash
-systemctl --user status review-mate
 curl -s http://127.0.0.1:8765/api/sessions      # `[]` on a fresh install
-journalctl --user -u review-mate -n 50          # when it did not
 ```
 
-Then open <http://127.0.0.1:8765>.
+Then open <http://127.0.0.1:8765>. When it did not answer, the logs are in the platform section.
 
 **5. Let an agent reach it, from any repository.** The `.mcp.json` in this repo registers the
 endpoint for this project only, which is not much use when the thing you want reviewed is somewhere
@@ -94,31 +79,24 @@ else. Register it once for yourself instead:
 claude mcp add --scope user --transport http review-mate http://127.0.0.1:8765/mcp/
 ```
 
-**Upgrading.**
+**Upgrading.** Reinstall, then restart the service:
 
 ```bash
 uv tool install --force 'review-mate[tui] @ git+https://github.com/Joacchim/review-mate-prototype'
-systemctl --user restart review-mate
 ```
 
 `--force` is what makes it replace the installed version; without it an existing install is audited
 and left alone, which looks like success and changes nothing.
 Your reviews survive it — they are event-sourced under `~/.review-mate` and restored at startup.
 
-Three things worth knowing:
+Worth knowing:
 
-**Leave your token out of the unit file.** A token in `Environment=` is read once at exec and
-frozen for the life of the process, so refreshing it means restarting the service — and it shows up
-in `systemctl show` and the journal. Left to `glab`, it is re-read from disk whenever the host
-refuses the one in hand, so `glab auth login` takes effect on the running server with no restart.
-That is the whole reason the credential resolution falls back to `glab` rather than requiring
-environment variables.
-
-**A user unit has no ssh agent.** Cloning uses whatever git credentials you already have, which over
-ssh means an agent your login session started and the unit does not inherit. Point `SSH_AUTH_SOCK`
-at it in the unit (there are commented lines for the two usual places), or use `https` with a
-credential helper. Without either, reviews still work over the host API — but nothing is cloned, so
-there is no local checkout, and an agent loses grep, LSP and the code graph with it.
+**Leave your token out of the service.** A token in its environment is read once at exec and frozen
+for the life of the process, so refreshing it means restarting the service — and it shows up in
+`systemctl show`, `launchctl print` and the logs. Left to `glab`, it is re-read from disk whenever
+the host refuses the one in hand, so `glab auth login` takes effect on the running server with no
+restart. That is the whole reason the credential resolution falls back to `glab` rather than
+requiring environment variables.
 
 **Idling costs nothing.** Measured on an idle server: 66 MB resident and no measurable CPU. Every
 background task — the presence ticker, a session's event tail, the consent watch — starts when a
@@ -127,6 +105,51 @@ notification stream, which is designed to be re-derived from durable state rathe
 
 Keep it on loopback. Nothing on `/mcp` or `/api` is authenticated — the trust boundary is your user
 account, exactly as it is for the files it reads.
+
+### Linux: a systemd user unit
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp packaging/systemd/review-mate.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now review-mate
+
+systemctl --user status review-mate
+journalctl --user -u review-mate -n 50
+systemctl --user restart review-mate            # after an upgrade
+```
+
+Adjust `ExecStart` if you installed it elsewhere. `loginctl enable-linger $USER` keeps it up when
+you are not logged in.
+
+**A user unit has no ssh agent.** Cloning uses whatever git credentials you already have, which over
+ssh means an agent your login session started and the unit does not inherit. Point `SSH_AUTH_SOCK`
+at it in the unit (there are commented lines for the two usual places), or use `https` with a
+credential helper. Without either, reviews still work over the host API — but nothing is cloned, so
+there is no local checkout, and an agent loses grep, LSP and the code graph with it.
+
+### macOS: a launchd agent
+
+launchd expands neither `~` nor `$HOME`, so the plist's `__HOME__` is filled in on the way:
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+sed "s|__HOME__|$HOME|g" packaging/launchd/io.github.joacchim.review-mate.plist \
+  > ~/Library/LaunchAgents/io.github.joacchim.review-mate.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.joacchim.review-mate.plist
+
+launchctl print gui/$(id -u)/io.github.joacchim.review-mate | grep -E 'state|pid|last exit'
+tail -n 50 ~/Library/Logs/review-mate.log
+launchctl kickstart -k gui/$(id -u)/io.github.joacchim.review-mate    # after an upgrade
+launchctl bootout gui/$(id -u)/io.github.joacchim.review-mate         # before editing the plist
+```
+
+**`glab` has to be on its `PATH`.** launchd's default `PATH` has no Homebrew, and without `glab` the
+server starts with no credentials and no error. The plist covers both Homebrew prefixes; add the
+directory of `command -v glab` if yours is elsewhere.
+
+**The ssh agent is inherited**, unlike under systemd. Using another one (1Password, Secretive…)? Set
+`SSH_AUTH_SOCK` in the plist. There is no linger: the agent stops when you log out.
 
 ## The terminal client
 
@@ -153,8 +176,8 @@ The agent plane needs a Claude Code session attached to the running server.
   yourself once (see *Keep it running*, step 5); `.mcp.json` only covers the project it sits in,
   which is no use when the branch you want reviewed is in another repository.
 - A `SessionStart` hook (`.claude/hooks/ensure-review-mate.sh`) starts the server if it is not
-  already up, so the MCP tools bind cleanly. Redundant once the systemd unit is running, and
-  harmless.
+  already up, so the MCP tools bind cleanly. Redundant once the systemd unit or launch agent is
+  running, and harmless.
 - Run `/review-mate` in a Claude Code session **of its own** — not the one you use for other work.
   It watches every open review session, and per session dispatches a bounded `review-worker`
   sub-agent that turns your escalated highlights into cards.
@@ -195,7 +218,10 @@ is the main reason to run it as a unit rather than starting it by hand.
 - **The service exits immediately with `No module named 'mcp.server.fastmcp'`** — an installed
   build resolved a newer major of the `mcp` package than it was written against. Reinstall with
   `--force` from a version that caps it; `systemctl --user status review-mate` and
-  `journalctl --user -u review-mate` show the traceback that says which import failed.
+  `journalctl --user -u review-mate` show the traceback that says which import failed
+  (`~/Library/Logs/review-mate.log` on macOS).
+- **On macOS, the agent is running but there is no queue** — launchd could not find `glab`. Add the
+  directory `command -v glab` prints to `PATH` in the plist, then `bootout` and `bootstrap` it.
 - **"Failed to connect" from the MCP client** — the endpoint is `http://127.0.0.1:8765/mcp/`, with
   the trailing slash. Without it, a POST returns 405.
 - **The MCP tools are missing in Claude Code** — the server was not up when the session started.
