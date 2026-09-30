@@ -128,6 +128,31 @@ notification stream, which is designed to be re-derived from durable state rathe
 Keep it on loopback. Nothing on `/mcp` or `/api` is authenticated — the trust boundary is your user
 account, exactly as it is for the files it reads.
 
+## As a launchd agent (macOS)
+
+Steps 1, 2 and 5 above are the same, and so is the `uv tool install --force` of upgrading; only the
+service commands differ. launchd expands neither `~` nor `$HOME`, so the plist's `__HOME__` is
+filled in on the way:
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+sed "s|__HOME__|$HOME|g" packaging/launchd/io.github.joacchim.review-mate.plist \
+  > ~/Library/LaunchAgents/io.github.joacchim.review-mate.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.joacchim.review-mate.plist
+
+launchctl print gui/$(id -u)/io.github.joacchim.review-mate | grep -E 'state|pid|last exit'
+tail -n 50 ~/Library/Logs/review-mate.log
+launchctl kickstart -k gui/$(id -u)/io.github.joacchim.review-mate    # after an upgrade
+launchctl bootout gui/$(id -u)/io.github.joacchim.review-mate         # before editing the plist
+```
+
+**`glab` has to be on its `PATH`.** launchd's default `PATH` has no Homebrew, and without `glab` the
+server starts with no credentials and no error. The plist covers both Homebrew prefixes; add the
+directory of `command -v glab` if yours is elsewhere.
+
+**The ssh agent is inherited**, unlike under systemd. Using another one (1Password, Secretive…)? Set
+`SSH_AUTH_SOCK` in the plist. There is no linger: the agent stops when you log out.
+
 ## The terminal client
 
 The browser is one client of the server, not the server's only face. A terminal client ships
@@ -153,8 +178,8 @@ The agent plane needs a Claude Code session attached to the running server.
   yourself once (see *Keep it running*, step 5); `.mcp.json` only covers the project it sits in,
   which is no use when the branch you want reviewed is in another repository.
 - A `SessionStart` hook (`.claude/hooks/ensure-review-mate.sh`) starts the server if it is not
-  already up, so the MCP tools bind cleanly. Redundant once the systemd unit is running, and
-  harmless.
+  already up, so the MCP tools bind cleanly. Redundant once the systemd unit or launch agent is
+  running, and harmless.
 - Run `/review-mate` in a Claude Code session **of its own** — not the one you use for other work.
   It watches every open review session, and per session dispatches a bounded `review-worker`
   sub-agent that turns your escalated highlights into cards.
@@ -196,6 +221,9 @@ is the main reason to run it as a unit rather than starting it by hand.
   build resolved a newer major of the `mcp` package than it was written against. Reinstall with
   `--force` from a version that caps it; `systemctl --user status review-mate` and
   `journalctl --user -u review-mate` show the traceback that says which import failed.
+  (`~/Library/Logs/review-mate.log` on macOS).
+- **On macOS, the agent is running but there is no queue** — launchd could not find `glab`. Add the
+  directory `command -v glab` prints to `PATH` in the plist, then `bootout` and `bootstrap` it.
 - **"Failed to connect" from the MCP client** — the endpoint is `http://127.0.0.1:8765/mcp/`, with
   the trailing slash. Without it, a POST returns 405.
 - **The MCP tools are missing in Claude Code** — the server was not up when the session started.
