@@ -54,7 +54,16 @@ def test_reading_width_puts_the_text_back_on_a_measure(opened):
     opened.reading_width.click()
     narrow = opened.widths()
     assert narrow["panel"] == wide["panel"], (wide, narrow)   # the panel is unchanged
-    assert narrow["body"] < wide["body"] * 0.85, (wide, narrow)  # only the column narrows
+    assert narrow["body"] < wide["body"], (wide, narrow)      # only the column narrows
+
+    # Not a ratio against the wide width. The measure is set in `ch`, so what it comes to in pixels
+    # is whatever font the machine happens to have: 961 here, 1069 on one carrying only the basic
+    # fonts — enough to put a 0.85 ratio on the wrong side and fail CI while the behaviour was
+    # right. What holds anywhere is that a cap is in force, that it is narrower than the panel
+    # rather than the panel itself, and that the column is sitting on it.
+    assert narrow["cap"] is not None, narrow
+    assert narrow["cap"] < narrow["panel"], narrow
+    assert abs(narrow["body"] - narrow["cap"]) <= 1, narrow
 
 
 def test_the_width_toggle_goes_both_ways(opened):

@@ -119,7 +119,12 @@ class DetailPage:
         return self.page.evaluate("""() => {
           const d = document.getElementById('detail');
           const b = d.querySelector('.dbody');
+          // `cap` is the measure in force, if any. The reading width is set in `ch`, so what it
+          // comes to in pixels is whatever the browser's font makes it — asking the page rather
+          // than assuming a number keeps a test about the behaviour from becoming one about fonts.
+          const cap = parseFloat(getComputedStyle(b).maxWidth);
           return {panel: Math.round(d.getBoundingClientRect().width),
                   body: Math.round(b.getBoundingClientRect().width),
+                  cap: Number.isFinite(cap) ? Math.round(cap) : null,
                   window: window.innerWidth};
         }""")
