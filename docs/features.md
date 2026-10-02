@@ -181,14 +181,20 @@ Start it from an agent session with `/self-review`, and the agent hands you the 
 
 ## Hosts
 
-**GitLab** — read and write, self-hosted or gitlab.com. The only forge implemented. Which project
-and merge request you are reading is in the header (⑥ in *Reading a change*), and it links back to
-the forge.
+**GitLab** — read and write, self-hosted or gitlab.com. Which project and merge request you are
+reading is in the header (⑥ in *Reading a change*), and it links back to the forge.
 
-**GitHub** — intended, and not built. Nothing in the review model is GitLab-shaped: what a forge can
-do is advertised as capabilities, and the parts of the UI a host cannot serve turn themselves off
-rather than being special-cased. So a second forge is a provider behind the existing contract. That is
-what the design buys, not a promise about when.
+**GitHub** — read and write, github.com or Enterprise. A pull request is a merge request here, and
+everything above the adapter works the same way, because what a forge can do is advertised as
+capabilities and the parts of the UI it cannot serve turn themselves off. One difference is visible:
+GitHub keeps no versions of a pull request, so *Since last review* compares the head against the
+version **you** last marked reviewed. The view says so — nobody else sees that comparison and the
+forge has no record of it — and your comments still post against the latest code.
+
+**Both at once.** A reference names the host it is on, so `group/proj!12` and `owner/repo#12` each
+find their own forge with nothing to configure per lookup, and the review queue and the search span
+both. Two installs of the *same* forge work for the same reason: it is the hostname that routes, not
+the kind of forge.
 
 **A branch on this machine** — needs git and nothing else. No forge, no token, and the review works
 the same way apart from the parts that need somewhere to post to. The header then names the branch

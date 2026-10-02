@@ -19,10 +19,10 @@ It reads a merge request from a forge, or a branch that has never left your mach
 for work an agent has just written: you review it, and the agent that wrote it answers your comments
 and makes the changes you ask for, before anyone else is shown it.
 
-**GitLab is the only forge implemented** — self-hosted or gitlab.com. **GitHub is intended and not
-built yet.** The review model is host-neutral and a forge sits behind a contract, so adding one is a
-provider rather than a rework; that is a claim about the design, not a date. Reviewing a local
-branch needs no forge at all.
+**GitLab and GitHub are both implemented** — gitlab.com, github.com, and self-hosted or
+Enterprise installs of either. Both at once, if you work on both: a reference names the host it is
+on, so `group/proj!12` and `owner/repo#12` each go where they belong without being told. Reviewing a
+local branch needs no forge at all.
 
 ![Reading a change in review-mate](docs/images/diff.png)
 

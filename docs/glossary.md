@@ -106,7 +106,10 @@ view computed against a newer head is not, and cannot anchor a comment.
 
 ## The host and the workspace
 
-**Host** — the forge. GitLab is the only implementation.
+**Host** — the forge a review lives on, named by its network host: `gitlab.com`, `github.com`, a
+self-hosted `gitlab.internal`. GitLab and GitHub are both implemented, and `local` is the sentinel
+for a branch that has not left this machine. It is what routes a reference to the forge that can
+answer it, so two installs of the same forge are as distinct as two different ones.
 
 **Provider** — the host-facing implementation behind the contract.
 

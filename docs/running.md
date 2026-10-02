@@ -20,6 +20,11 @@ Otherwise, set them explicitly:
 export REVIEW_MATE_GITLAB_TOKEN=glpat-…          # API token
 export REVIEW_MATE_GITLAB_USER=your.username     # used to build your review queue
 export REVIEW_MATE_GITLAB_URL=https://gitlab.example.com/api/v4   # self-hosted only
+
+# or GitHub, or both at once — a reference goes to the forge its host names
+export REVIEW_MATE_GITHUB_TOKEN=ghp_…            # API token, or whatever `gh auth` already stored
+export REVIEW_MATE_GITHUB_USER=your.username     # used to build your review queue
+export REVIEW_MATE_GITHUB_URL=https://github.example.com/api/v3   # Enterprise only
 review-mate
 ```
 
@@ -170,6 +175,9 @@ is the main reason to run it as a unit rather than starting it by hand.
 | `REVIEW_MATE_GITLAB_TOKEN` | GitLab API token (`GITLAB_TOKEN` also accepted) | from `glab` |
 | `REVIEW_MATE_GITLAB_USER` | Your username, used to build the review queue (`GITLAB_USER` also accepted) | from `glab` |
 | `REVIEW_MATE_GITLAB_URL` | API base URL, e.g. `https://gitlab.example.com/api/v4` | `glab`'s host, else `https://gitlab.com/api/v4` |
+| `REVIEW_MATE_GITHUB_TOKEN` | GitHub API token (`GITHUB_TOKEN` also accepted) | from `gh` |
+| `REVIEW_MATE_GITHUB_USER` | Your username, used to build the review queue (`GITHUB_USER` also accepted) | from `gh` |
+| `REVIEW_MATE_GITHUB_URL` | API base URL for Enterprise, e.g. `https://github.example.com/api/v3` | `https://api.github.com` |
 | `REVIEW_MATE_GIT_PROTOCOL` | `ssh` or `https`, for cloning | `glab`'s `git_protocol`, else `https` |
 | `REVIEW_MATE_HOME` | Where sessions, mirrors and the review KB live | `~/.review-mate` |
 | `REVIEW_MATE_BLOB_BUDGET_MB` | How much whole-file text is kept for unfolding, oldest version dropped first | `16` |
