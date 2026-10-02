@@ -117,6 +117,8 @@ class DiffView(BaseModel):
                                # has not re-synced to, so its lines cannot anchor a comment
     clean: bool = True         # false when a since view's replay conflicted, so the diff may carry
                                # target-branch changes the author did not write
+    from_watermark: bool = False   # this since view was compared against the reviewer's own
+                               # watermark rather than versions the forge keeps — see `_since`
     mr: dict = Field(default_factory=dict)
     files: list[FileRow] = Field(default_factory=list)
 
@@ -162,6 +164,7 @@ class DiffTopics:
         self._resolved: dict[tuple, list] = {}
         self._failed: dict[tuple, tuple[str, float]] = {}   # key -> (reason, when)
         self._aligned: dict[tuple, bool] = {}
+        self._local: dict[tuple, bool] = {}
         self._clean: dict[tuple, bool] = {}
         self._tasks: dict[tuple, asyncio.Task] = {}
 
@@ -197,6 +200,7 @@ class DiffTopics:
         key = (session_id, mode, self._head(snapshot))
         return DiffView(session=session_id, mode=mode, mr=mr, files=rows,
                         head_aligned=self._aligned.get(key, True),
+                        from_watermark=self._local.get(key, False),
                         clean=self._clean.get(key, True)).model_dump(mode="json")
 
     async def _build_file(self, address: Address) -> dict:
@@ -267,9 +271,15 @@ class DiffTopics:
             return (bool(capabilities.get("commits"))
                     and self._provider is not None and hasattr(self._provider, "commit_diff"))
         if mode == SINCE:
-            return (bool(capabilities.get("diff_versions"))
-                    and self._provider is not None and hasattr(self._provider, "mr_versions")
-                    and self._workspace is not None and hasattr(self._workspace, "since_diff"))
+            if self._workspace is None or not hasattr(self._workspace, "since_diff"):
+                return False
+            if (bool(capabilities.get("diff_versions"))
+                    and self._provider is not None and hasattr(self._provider, "mr_versions")):
+                return True
+            # A forge with no versions of its own can still be compared against the reviewer's
+            # watermark. That comparison is theirs alone — nobody else's "since" agrees with it,
+            # and the forge has no record of one — so the view says so and the client shows it.
+            return self._kb is not None
         return False
 
     def _start(self, key, mode: str, snapshot) -> None:
@@ -292,8 +302,8 @@ class DiffTopics:
                                                          mode[len(COMMIT_PREFIX):])
                 self._resolved[key] = list(files)
             else:
-                (self._resolved[key], self._aligned[key],
-                 self._clean[key]) = await self._since(snapshot)
+                (self._resolved[key], self._aligned[key], self._clean[key],
+                 self._local[key]) = await self._since(snapshot)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -301,36 +311,57 @@ class DiffTopics:
         if self._publish is not None:
             await self._publish(session_id, mode)
 
-    async def _since(self, snapshot) -> tuple[list, bool, bool]:
+    async def _since(self, snapshot) -> tuple[list, bool, bool, bool]:
         """The author's work since the reviewer's watermark, as ordinary per-file diffs.
 
-        Mirrors the host/workspace resolution the since-last surface already performs: the
-        watermark names the reviewed version, the MR's version list supplies the bases, and
-        since_diff excludes target-branch movement while keeping the head as its new side.
+        Two ways to the same shape, and which one was used is the fourth thing returned.
+
+        A forge that versions its merge requests supplies the bases, and `since_diff` uses them to
+        exclude target-branch movement: that comparison is the forge's own, and another reviewer
+        asking the same question gets the same answer.
+
+        A forge that does not — GitHub has no versions — is compared against the reviewer's
+        watermark alone, head to head. The diff's new side is still the session head, so its lines
+        are head coordinates and a comment anchors exactly as it does on the full diff; that part
+        is not weaker. What is weaker is that nothing excludes target-branch movement, and that the
+        comparison exists nowhere but here: it is this reviewer's own reading, and the client says
+        so rather than letting it pass for the forge's.
         """
         mr = snapshot.mr
         watermark = (self._kb.get_watermark(mr.host, mr.project, mr.iid)
                      if self._kb is not None else None)
         if not watermark or watermark == mr.sha:
-            return [], True, True                  # never reviewed, or reviewed at this very head
-        ref = MRRef(host=mr.host, project=mr.project, iid=mr.iid)
-        versions = await self._provider.mr_versions(ref)
-        newest = versions[0] if versions else None
-        if newest is None:
-            return [], True, True
-        reviewed = next((v for v in versions if v["head_sha"] == watermark), None)
+            return [], True, True, False           # never reviewed, or reviewed at this very head
         repo = RepoRef(host=mr.host, project=mr.project, clone_url=mr.clone_url)
-        result = await self._workspace.since_diff(
-            repo, reviewed["base_sha"] if reviewed else None, watermark,
-            newest["base_sha"], newest["head_sha"])
-        # anchoring is only safe when the diff's new side is the head this session holds
-        aligned = bool(newest.get("head_sha") and newest["head_sha"] == mr.sha)
+        capabilities = (mr.capabilities or {})
+        versioned = (bool(capabilities.get("diff_versions"))
+                     and self._provider is not None and hasattr(self._provider, "mr_versions"))
+
+        if versioned:
+            ref = MRRef(host=mr.host, project=mr.project, iid=mr.iid)
+            versions = await self._provider.mr_versions(ref)
+            newest = versions[0] if versions else None
+            if newest is None:
+                return [], True, True, False
+            reviewed = next((v for v in versions if v["head_sha"] == watermark), None)
+            result = await self._workspace.since_diff(
+                repo, reviewed["base_sha"] if reviewed else None, watermark,
+                newest["base_sha"], newest["head_sha"])
+            # anchoring is only safe when the diff's new side is the head this session holds
+            aligned = bool(newest.get("head_sha") and newest["head_sha"] == mr.sha)
+            local = False
+        else:
+            # no bases to give it, so it falls to a plain watermark..head diff — whose new side is
+            # the head by construction, which is what makes this anchorable at all
+            result = await self._workspace.since_diff(repo, None, watermark, None, mr.sha)
+            aligned, local = True, True
+
         known = {f.path: f.language for f in (snapshot.files or [])}
         files = [FileEntry(path=entry.path, old_path=entry.old_path,
                            change_type=ChangeType(entry.change_type),
                            language=known.get(entry.path), hunks=[{"diff": entry.text}])
                  for entry in split_files(result.get("diff", ""))]
-        return files, aligned, bool(result.get("clean", True))
+        return files, aligned, bool(result.get("clean", True)), local
 
     async def aclose(self) -> None:
         for task in list(self._tasks.values()):
@@ -372,7 +403,8 @@ class DiffTopics:
         """
         for task in [t for key, t in self._tasks.items() if key[0] == session_id]:
             task.cancel()                       # nobody is left to publish the answer to
-        for store in (self._resolved, self._failed, self._aligned, self._clean, self._tasks):
+        for store in (self._resolved, self._failed, self._aligned, self._local, self._clean,
+                      self._tasks):
             for key in [k for k in store if k[0] == session_id]:
                 del store[key]
 
@@ -381,6 +413,7 @@ class DiffTopics:
         self._resolved.clear()
         self._failed.clear()
         self._aligned.clear()
+        self._local.clear()
         self._clean.clear()
 
     # --- internals ---------------------------------------------------------

@@ -119,6 +119,8 @@
   .fname .renamed{cursor:help}   /* the braces are terse — the title spells the move out */
   .mdview{padding:14px 20px;overflow:auto;line-height:1.55;max-width:900px}
   .sincenote{margin:10px 14px 0;padding:6px 10px;font-size:11.5px;color:var(--warnfg);background:var(--warnbg);border:1px solid var(--warnline);border-radius:6px}
+  /* the locally-derived since view is a fact about the comparison, not a warning about it */
+  .sincenote.local{color:var(--fg2);background:var(--panel2);border-color:var(--line2)}
   table.hunk{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:12.5px}
   table.hunk td{padding:0 8px;white-space:pre-wrap;word-break:break-word;vertical-align:top}
   td.ln{min-width:42px;white-space:nowrap;word-break:normal;text-align:right;color:var(--fg2);user-select:none;border-right:1px solid var(--line);background:var(--panel)}

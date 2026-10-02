@@ -204,3 +204,35 @@ def test_the_file_browser_is_read_only_while_it_is_open(diff, page, staged, stub
     diff.show_all_repo_files()                       # off again
     page.wait_for_function("() => !wantedTopics.some(s => /^tree:/.test(s))")
 
+
+
+def test_a_since_view_the_forge_did_not_version_says_whose_comparison_it_is(
+        diff, staged, stub_host, review_kb, page):
+    """A forge with no versions of its own — GitHub — is compared against this reviewer's
+    watermark instead. The diff is just as anchorable, because its new side is still the head, so
+    the thing worth saying is not a warning: it is that nobody else sees this comparison and the
+    forge has no record of it.
+    """
+    from webui.fixtures.scenarios import reviewed_then_advanced
+
+    state = reviewed_then_advanced("s1")
+    state.mr.capabilities = {"commits": True}        # no diff_versions, as GitHub reports
+    staged.put(state)
+    review_kb.set_watermark("gitlab", "platform/virtu/control-plane", 137, "reviewed-head")
+    diff.load("s1")
+    diff.show_since_last()
+
+    note = page.locator(".sincenote.local")
+    expect(note).to_be_visible()
+    expect(note).to_contain_text("yours alone")
+    expect(note).to_contain_text("Comments still post against the latest code")
+    expect(diff.table).to_contain_text("added since you last looked")   # and it still renders
+
+
+def test_a_since_view_the_forge_versioned_claims_nothing_of_the_kind(
+        diff, staged, stub_host, review_kb, page):
+    stage_advanced_review(staged, stub_host, review_kb)
+    diff.load("s1")
+    diff.show_since_last()
+    expect(diff.table).to_contain_text("added since you last looked")
+    expect(page.locator(".sincenote.local")).to_have_count(0)

@@ -144,12 +144,14 @@ class HubTopic:
         head = host.get("head") or snap.mr.sha
         mr_state = host.get("mr_state", "")
         unresolved = host.get("unresolved", 0)
-        # a host that cannot version its diffs has nothing to be behind: there is no record of
-        # what was read last, and keying one on a branch would collide across repositories that
-        # happen to share a name
-        versioned = bool((snap.mr.capabilities or {}).get("diff_versions", True))
+        # A watermark is keyed on (host, project, iid), and whether that key means anything is the
+        # question — not whether the forge versions its diffs. It is stable for any review on a
+        # forge, including one that keeps no versions at all; it is not stable for a branch on this
+        # machine, whose project is a directory name and whose iid is zero, so two branches in two
+        # clones that happened to share a name would share a watermark.
+        tracked = snap.mr.host != "local"
         wm = (self._kb.get_watermark(snap.mr.host, snap.mr.project, snap.mr.iid)
-              if self._kb is not None and versioned else None)
+              if self._kb is not None and tracked else None)
         behind = bool(wm and head and wm != head)
         at_watermark = bool(wm and head and wm == head)
         return HubSession(

@@ -1548,6 +1548,17 @@ function renderSinceLast(el) {
   if (!files.length) {
     return note("No author changes since your last review (a rebase brought no new work).");
   }
+  if (view.from_watermark) {
+    // This forge keeps no versions of its own, so the comparison was made here, against the sha
+    // this reviewer last marked read. Nobody else sees it and the forge has no record of it — but
+    // a comment still lands on the head, because the diff's new side is the head.
+    const local = document.createElement("div"); local.className = "sincenote local";
+    local.textContent = "yours alone — compared against the version you last marked reviewed, "
+      + "not a version the forge keeps. Comments still post against the latest code.";
+    local.title = "This forge cannot version a merge request, so review-mate compares the head "
+      + "against your own watermark. Another reviewer's \u201csince\u201d will differ from yours.";
+    el.appendChild(local);
+  }
   if (view.clean === false) {
     const warn = document.createElement("div"); warn.className = "sincenote";
     warn.textContent = "⚠ the replay conflicted — this diff may include target-branch changes";
@@ -2520,8 +2531,10 @@ function threadConversationBlock(t) {
 function renderVersionBanner(el) {
   const version = reviewVersion();
   if (!version) return;
-  const cap = state.mr && (state.mr.capabilities || {}).diff_versions === true;
-  if (!cap) return;
+  // offered for any review on a forge, including one that keeps no versions of its own — the
+  // comparison is then made here against the watermark, and says so. A branch on this machine has
+  // no watermark worth keeping, because its identity is a directory name.
+  if (local()) return;
   if (version.behind) {
     // the MR advanced past the reviewed watermark — offer the interdiff + advance the watermark
     const bar = document.createElement("div");

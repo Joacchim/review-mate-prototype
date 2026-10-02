@@ -501,17 +501,48 @@ def test_a_clean_replay_says_so(tmp_path):
 
 
 def test_a_mode_the_mr_does_not_advertise_is_unavailable(tmp_path):
-    """The host implements it, but this MR says the forge cannot list its versions. Asking anyway
-    produces an error where the honest answer is that the mode is not available here."""
+    """The host implements it, but this MR says the forge cannot step through its commits. Asking
+    anyway produces an error where the honest answer is that the mode is not available here."""
     provider = VersionHost(capabilities={})
     app, _ = build_versioned(tmp_path, provider=provider)
     with TestClient(app) as tc:
         sid = open_session(tc)
         with tc.websocket_connect("/api/stream") as ws:
-            ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:since",
-                                                            f"diff:{sid}:commit@abc1234"]})
-            assert settled(ws, f"diff:{sid}:since")["state"] == "unavailable"
+            ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:commit@abc1234"]})
             assert settled(ws, f"diff:{sid}:commit@abc1234")["state"] == "unavailable"
+
+
+def test_a_forge_with_no_versions_still_compares_against_the_watermark(tmp_path):
+    """`since` is not gated on the forge versioning anything, because it does not have to be.
+
+    A watermark and the clone are enough for a head-to-head diff, and `since_diff` keeps the head
+    as its new side — so the lines are head coordinates and a comment anchors exactly as it does on
+    the full diff. What is lost is that nothing excludes target-branch movement and that the
+    comparison exists nowhere but here, so the view says it came from the watermark and the client
+    tells the reviewer.
+    """
+    provider = VersionHost(capabilities={})      # no diff_versions, as GitHub reports
+    app, _ = build_versioned(tmp_path, provider=provider)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:since"]})
+            view = settled(ws, f"diff:{sid}:since")
+    assert view["state"] == "ready" and view["files"], view
+    assert view["from_watermark"] is True
+    assert view["head_aligned"] is True, "a comment has to land on the head, which is the point"
+
+
+def test_a_forge_that_versions_its_diffs_is_not_reported_as_local(tmp_path):
+    """The other side of the same flag: this comparison is the forge's own, and another reviewer
+    asking for it gets the same answer."""
+    app, _ = build_versioned(tmp_path)            # VersionHost's default capabilities version diffs
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:since"]})
+            view = settled(ws, f"diff:{sid}:since")
+    assert view["state"] == "ready" and view["from_watermark"] is False
 
 
 def test_each_capability_gates_only_its_own_mode(tmp_path):
@@ -522,7 +553,10 @@ def test_each_capability_gates_only_its_own_mode(tmp_path):
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:since",
                                                             f"diff:{sid}:commit@deadbee"]})
-            assert settled(ws, f"diff:{sid}:since")["state"] == "unavailable"
+            # read in subscription order: settled() discards frames for other topics as it goes
+            since = settled(ws, f"diff:{sid}:since")
+            # `since` needs no capability of the forge's at all — only a watermark and a clone
+            assert (since["state"], since["from_watermark"]) == ("ready", True)
             assert settled(ws, f"diff:{sid}:commit@deadbee")["state"] == "ready"
 
 
