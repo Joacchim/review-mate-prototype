@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 from review_mate.config import sessions_dir
 from review_mate.contracts import CheckoutHandle, LocalRef, MRRef, RepoRef
+from review_mate.forges import Forges
 from review_mate.session import events as ev
 from review_mate.session.writer import SessionWriter
 from review_mate.session.commands import (
@@ -41,7 +42,7 @@ class SessionManager:
         self.root = Path(root) if root is not None else sessions_dir()
         self.root.mkdir(parents=True, exist_ok=True)
         self._writers: dict[str, SessionWriter] = {}
-        self._mr_source = mr_source   # MRSource contract (optional, injected) — host-adapter impl
+        self._forges = Forges.of(mr_source)   # every configured forge, addressed by host
         self._local_source = local_source  # the same contract for a branch that has not left this machine
         self._workspace = workspace   # Workspace contract (optional, injected) — workspace-manager impl
         self._activity_broker = activity_broker  # ActivityBroker (optional) — review-fleet notify spine
@@ -151,9 +152,12 @@ class SessionManager:
 
         Dispatch is on the reference, not on configuration: a branch on disk needs git and nothing
         else, so reviewing your own work before it leaves the machine works on a server with no
-        forge configured at all.
+        forge configured at all. A reference to a forge, likewise, names the host it is on, so two
+        of them can be configured at once and a reference decides which one is asked.
         """
-        return self._local_source if isinstance(ref, LocalRef) else self._mr_source
+        if isinstance(ref, LocalRef):
+            return self._local_source
+        return self._forges.pick(getattr(ref, "host", None)) if self._forges else None
 
     async def materialize_checkout(self, session_id, writer, payload) -> None:
         """Check out the change on disk (a worktree off the bare mirror) so the agent can run

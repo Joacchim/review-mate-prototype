@@ -53,11 +53,10 @@ class LocatingHost(HostStub):
 
 async def _approved_through_the_app(tmp_path, clone_url, ref, watch=True):
     """Build the real app, ask for access as the agent, approve as the reviewer, return the state."""
-    manager = SessionManager(root=tmp_path / "sessions",
-                             mr_source=LocatingHost(clone_url=clone_url, ref=ref),
+    provider = LocatingHost(clone_url=clone_url, ref=ref)
+    manager = SessionManager(root=tmp_path / "sessions", mr_source=provider,
                              workspace=WorkspaceManager(root=tmp_path / "home"))
-    app = create_app(manager=manager, with_mcp=False,
-                     provider=manager._mr_source, kb=_kb(tmp_path))
+    app = create_app(manager=manager, with_mcp=False, provider=provider, kb=_kb(tmp_path))
     async with app.router.lifespan_context(app):
         sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
         writer = manager.get(sid)
