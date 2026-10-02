@@ -16,6 +16,7 @@ from review_mate.contracts import MRRef, RepoRef
 from review_mate.view.asks import outstanding as outstanding_asks
 from review_mate.session.commands import parse_command
 from review_mate.session.manager import SessionManager
+from review_mate.forges import Forges
 from review_mate.session.state import Origin, SessionStatus
 
 # server-side long-poll ceiling for GET /api/activity: under common idle cutoffs, and short enough
@@ -25,6 +26,8 @@ ACTIVITY_TIMEOUT = 50.0
 
 def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broker=None,
                  activity_broker=None) -> list:
+    forges = Forges.of(provider)   # one forge or several, asked the same way
+
     async def create_session(request: Request) -> JSONResponse:
         body = await _maybe_json(request)
         raw = body.get("ref") if isinstance(body, dict) else None
@@ -43,10 +46,10 @@ def build_routes(manager: SessionManager, resolve_ref=None, provider=None, broke
 
     async def search(request: Request) -> JSONResponse:
         q = request.query_params.get("q", "").strip()
-        if provider is None or not q or not hasattr(provider, "search"):
-            return JSONResponse([])  # no host / empty query → no suggestions
+        if forges is None or not q:
+            return JSONResponse([])  # no forge / empty query → no suggestions
         try:
-            return JSONResponse(await provider.search(q))
+            return JSONResponse(await forges.search(q))   # every forge, merged
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
 

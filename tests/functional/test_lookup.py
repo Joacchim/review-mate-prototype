@@ -54,7 +54,7 @@ def test_answer_unknown_raises():
 
 async def test_bridge_lookup_roundtrip_and_search():
     class StubProvider:
-        async def search(self, q):
+        async def search(self, q, limit=15):
             return [{"host": "gitlab", "project": "g/p", "iid": 7, "title": f"hit:{q}", "url": "u"}]
 
     broker = LookupBroker()

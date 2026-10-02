@@ -341,7 +341,7 @@ class GitHubProvider:
             return None
         clone = repo.get("ssh_url") if self.git_protocol == "ssh" else repo.get("clone_url")
         return {"host": self.host, "project": repo.get("full_name") or name,
-                "clone_url": clone or "", "default_branch": repo.get("default_branch") or "main"}
+                "clone_url": clone or "", "ref": repo.get("default_branch") or "HEAD"}
 
 
 def _entry(row: dict) -> FileEntry:

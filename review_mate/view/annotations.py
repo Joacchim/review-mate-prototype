@@ -18,7 +18,7 @@ from contextlib import suppress
 
 from pydantic import BaseModel, Field
 
-from review_mate.contracts import serves
+from review_mate.forges import Forges
 from review_mate.session.state import DraftStatus, SessionStatus, SubjectKind
 
 
@@ -125,7 +125,7 @@ class AnnotationsTopic:
 
     def __init__(self, manager, provider=None, publish=None) -> None:
         self._manager = manager
-        self._provider = provider
+        self._forges = Forges.of(provider)
         self._publish = publish      # publish(session_id) -> awaitable
         self._context: dict[tuple, dict] = {}     # (sha, file, start, end) -> {blame, linked_issues}
         self._failed: dict[tuple, str] = {}
@@ -199,16 +199,16 @@ class AnnotationsTopic:
         if found is not None:
             return AnnotationContext(state="ready", blame=found["blame"],
                                linked_issues=found["linked_issues"])
-        if self._provider is None or not hasattr(self._provider, "blame") \
-                or not serves(self._provider, snapshot):
+        forge = self._forges.for_session(snapshot) if self._forges else None
+        if forge is None or not hasattr(forge, "blame"):
             return AnnotationContext(state="unavailable")
-        self._start(key, snapshot.mr.project, snapshot.mr.iid, session_id)
+        self._start(key, snapshot.mr.host, snapshot.mr.project, snapshot.mr.iid, session_id)
         return AnnotationContext(state="loading")
 
-    def _start(self, key, project: str, iid, session_id: str) -> None:
+    def _start(self, key, host: str, project: str, iid, session_id: str) -> None:
         if key in self._tasks:
             return
-        task = asyncio.create_task(self._fetch(key, project, iid, session_id))
+        task = asyncio.create_task(self._fetch(key, host, project, iid, session_id))
         self._tasks[key] = task
         task.add_done_callback(lambda finished: self._finished(key, finished))
 
@@ -217,16 +217,20 @@ class AnnotationsTopic:
         if not task.cancelled():
             task.exception()      # retrieve it; the failure is already in the view
 
-    async def _fetch(self, key, project: str, iid, session_id: str) -> None:
+    async def _fetch(self, key, host: str, project: str, iid, session_id: str) -> None:
         sha, file, start, end = key
         out = {"blame": [], "linked_issues": []}
+        # the host travels with the project: a project path does not say which forge it is on
+        forge = self._forges.pick(host) if self._forges else None
+        if forge is None:
+            return
         try:
             # each source degrades on its own: a missing blame must not cost the linked issues
             with suppress(Exception):
-                out["blame"] = await self._provider.blame(project, file, sha, start, end)
-            if hasattr(self._provider, "linked_issues"):
+                out["blame"] = await forge.blame(project, file, sha, start, end)
+            if hasattr(forge, "linked_issues"):
                 with suppress(Exception):
-                    out["linked_issues"] = await self._provider.linked_issues(project, iid)
+                    out["linked_issues"] = await forge.linked_issues(project, iid)
             self._context[key] = out
         except asyncio.CancelledError:
             raise

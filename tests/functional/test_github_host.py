@@ -199,9 +199,10 @@ async def test_the_queue_and_search_speak_in_references(provider):
 
 
 async def test_a_repository_the_agent_asked_for_is_located(provider):
+    # the keys are the contract the cross-repo broker reads, `ref` included — it clones at one
     assert await provider.locate_repo("o/other") == {
         "host": "github.com", "project": "o/other",
-        "clone_url": "https://github.com/o/other.git", "default_branch": "trunk"}
+        "clone_url": "https://github.com/o/other.git", "ref": "trunk"}
     assert await provider.locate_repo("o/absent") is None
 
 

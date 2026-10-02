@@ -25,7 +25,7 @@ class StubHost:
             raise self.fail_with
         return list(self.queue)
 
-    async def search(self, query: str):
+    async def search(self, query: str, limit: int = 15):
         if self.search_fails is not None:
             raise self.search_fails
         return list(self.search_hits)

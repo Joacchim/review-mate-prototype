@@ -42,7 +42,8 @@ from time import monotonic
 from pydantic import BaseModel, Field
 
 from review_mate.config import blob_budget_bytes
-from review_mate.contracts import MRRef, RepoRef, ref_of, serves
+from review_mate.contracts import MRRef, RepoRef, ref_of
+from review_mate.forges import Forges
 from review_mate.session.state import ChangeType, FileEntry, SessionStatus
 from review_mate.view.diffdoc import build as build_hunks
 from review_mate.view.diffdoc import split_files
@@ -157,7 +158,9 @@ class DiffTopics:
 
     def __init__(self, manager, provider=None, workspace=None, kb=None, publish=None) -> None:
         self._manager = manager
-        self._provider = provider
+        self._forges = Forges.of(provider)
+        # resolved per review: one server can be configured for several forges
+        self._forge = lambda snap: (self._forges.for_session(snap) if self._forges else None)
         self._workspace = workspace
         self._kb = kb
         self._publish = publish          # publish(session_id, mode) -> awaitable
@@ -264,17 +267,16 @@ class DiffTopics:
         anyway produces an error where the honest answer is that this diff view mode is unavailable
         here.
         """
-        if not serves(self._provider, snapshot):
-            return False    # this host did not load this review and cannot resolve diff view modes
+        forge = self._forge(snapshot)
+        if forge is None:
+            return False    # no forge loaded this review, so none can resolve its diff view modes
         capabilities = (snapshot.mr.capabilities or {}) if snapshot.mr else {}
         if mode.startswith(COMMIT_PREFIX):
-            return (bool(capabilities.get("commits"))
-                    and self._provider is not None and hasattr(self._provider, "commit_diff"))
+            return bool(capabilities.get("commits")) and hasattr(forge, "commit_diff")
         if mode == SINCE:
             if self._workspace is None or not hasattr(self._workspace, "since_diff"):
                 return False
-            if (bool(capabilities.get("diff_versions"))
-                    and self._provider is not None and hasattr(self._provider, "mr_versions")):
+            if bool(capabilities.get("diff_versions")) and hasattr(forge, "mr_versions"):
                 return True
             # A forge with no versions of its own can still be compared against the reviewer's
             # watermark. That comparison is theirs alone — nobody else's "since" agrees with it,
@@ -298,8 +300,8 @@ class DiffTopics:
         session_id = key[0]
         try:
             if mode.startswith(COMMIT_PREFIX):
-                files = await self._provider.commit_diff(ref_of(snapshot),
-                                                         mode[len(COMMIT_PREFIX):])
+                files = await self._forge(snapshot).commit_diff(ref_of(snapshot),
+                                                                mode[len(COMMIT_PREFIX):])
                 self._resolved[key] = list(files)
             else:
                 (self._resolved[key], self._aligned[key], self._clean[key],
@@ -334,12 +336,13 @@ class DiffTopics:
             return [], True, True, False           # never reviewed, or reviewed at this very head
         repo = RepoRef(host=mr.host, project=mr.project, clone_url=mr.clone_url)
         capabilities = (mr.capabilities or {})
+        forge = self._forge(snapshot)
         versioned = (bool(capabilities.get("diff_versions"))
-                     and self._provider is not None and hasattr(self._provider, "mr_versions"))
+                     and forge is not None and hasattr(forge, "mr_versions"))
 
         if versioned:
             ref = MRRef(host=mr.host, project=mr.project, iid=mr.iid)
-            versions = await self._provider.mr_versions(ref)
+            versions = await forge.mr_versions(ref)
             newest = versions[0] if versions else None
             if newest is None:
                 return [], True, True, False
@@ -477,7 +480,7 @@ class BlobTopics:
 
     def __init__(self, manager, provider=None, publish=None, budget: int | None = None) -> None:
         self._manager = manager
-        self._provider = provider
+        self._forges = Forges.of(provider)
         self._publish = publish
         # sha -> {path: text}, in least-recently-read order: one entry per version of the code
         self._generations: OrderedDict[str, dict[str, str]] = OrderedDict()
@@ -544,10 +547,12 @@ class BlobTopics:
             del self._failed[key]     # long enough ago to be worth asking again
         text = self._recall(key)
         if text is None:
-            if self._provider is None or not hasattr(self._provider, "get_file"):
-                view.state = "unavailable"          # no host configured to read a blob from
+            forge = self._forges.for_session(snapshot) if self._forges else None
+            if forge is None or not hasattr(forge, "get_file"):
+                view.state = "unavailable"          # no forge configured to read a blob from
                 return view.model_dump(mode="json")
-            self._start(key, snapshot.mr.project, f"blob:{argument}")
+            # the host travels with the project: a project path does not name the forge it is on
+            self._start(key, snapshot.mr.host, snapshot.mr.project, f"blob:{argument}")
             return view.model_dump(mode="json")     # state stays "loading"
         spans = tokenize(text, path, language)
         view.lines = [BlobLine(n=index + 1, text=line, tokens=line_spans)
@@ -567,10 +572,10 @@ class BlobTopics:
             return mode[len(COMMIT_PREFIX):]
         return None
 
-    def _start(self, key: tuple[str, str], project: str, topic: str) -> None:
+    def _start(self, key: tuple[str, str], host: str, project: str, topic: str) -> None:
         if key in self._tasks:
             return
-        task = asyncio.create_task(self._fetch(key, project, topic))
+        task = asyncio.create_task(self._fetch(key, host, project, topic))
         self._tasks[key] = task
         task.add_done_callback(lambda finished: self._done(key, finished))
 
@@ -579,10 +584,13 @@ class BlobTopics:
         if not task.cancelled():
             task.exception()      # retrieve it; failures are already recorded in the view
 
-    async def _fetch(self, key: tuple[str, str], project: str, topic: str) -> None:
+    async def _fetch(self, key: tuple[str, str], host: str, project: str, topic: str) -> None:
         sha, path = key
+        forge = self._forges.pick(host) if self._forges else None
+        if forge is None:
+            return
         try:
-            self._remember(key, await self._provider.get_file(project, path, sha))
+            self._remember(key, await forge.get_file(project, path, sha))
         except asyncio.CancelledError:
             raise
         except Exception as exc:

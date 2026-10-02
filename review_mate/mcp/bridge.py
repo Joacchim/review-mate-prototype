@@ -17,6 +17,7 @@ from review_mate.session.events import (
     AccessDecided, AccessGrantChanged, HighlightAdded, MessagePosted,
 )
 from review_mate.session.manager import SessionManager
+from review_mate.forges import Forges
 from review_mate.session.state import (
     CardStatus, Criticality, FileEntry, Label, LineRange, Origin, Side, SessionState,
     SessionSummary, Subject, SubjectKind, Theme,
@@ -45,7 +46,8 @@ class AgentBridge:
                  base_url: str = ""):
         self._m = manager
         self._broker = broker      # LookupBroker (MR-discovery channel); None in the baseline
-        self._provider = provider  # HostProvider, for search_mrs; None when no host configured
+        self._provider = provider
+        self._forges = Forges.of(provider)  # HostProvider, for search_mrs; None when no host configured
         self._view = view          # AgentView — the folded read; injected so it shares the clients'
                                    # topic instances, and with them their caches
         self._base_url = (base_url or _default_base_url()).rstrip("/")
@@ -241,9 +243,9 @@ class AgentBridge:
 
     async def search_mrs(self, query: str) -> list[dict]:
         """Host search for MRs matching `query` — real, loadable candidates for a lookup answer."""
-        if self._provider is None or not hasattr(self._provider, "search"):
+        if self._forges is None:
             return []
-        return await self._provider.search(query)
+        return await self._forges.search(query)        # every forge the reviewer works on
 
     async def wait_for_lookup(self, since: int = 0, timeout: float | None = None) -> dict | None:
         """Wait for the reviewer's next MR-lookup request after `since`; returns {seq, id, query}."""

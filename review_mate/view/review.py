@@ -20,6 +20,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from review_mate.contracts import MRRef
+from review_mate.forges import Forges
 from review_mate.session.state import DraftStatus, SessionStatus
 
 
@@ -73,7 +74,8 @@ class ReviewTopic:
 
     def __init__(self, manager, provider=None, kb=None) -> None:
         self._manager = manager
-        self._provider = provider
+        self._forges = Forges.of(provider)
+
         self._kb = kb
         self._approval: dict[str, dict] = {}       # session id -> what the host last said
 
@@ -101,10 +103,11 @@ class ReviewTopic:
         snapshot = self._snapshot(session_id)
         if snapshot is None or snapshot.mr is None or not self._can_approve(snapshot):
             return
-        if self._provider is None or not hasattr(self._provider, "approvals"):
+        forge = self._forge(snapshot)
+        if forge is None or not hasattr(forge, "approvals"):
             return
         ref = MRRef(host=snapshot.mr.host, project=snapshot.mr.project, iid=snapshot.mr.iid)
-        answer = await self._provider.approvals(ref)
+        answer = await forge.approvals(ref)
         if answer is not None:
             self._approval[session_id] = dict(answer)
 
@@ -142,6 +145,11 @@ class ReviewTopic:
             mark = self._kb.get_watermark(snapshot.mr.host, snapshot.mr.project, snapshot.mr.iid)
         return VersionView(head=snapshot.mr.sha, watermark=mark,
                            behind=bool(mark and mark != snapshot.mr.sha))
+
+    def _forge(self, snapshot):
+        """The forge this review came from — resolved per session, because a server can be
+        configured for several and a review belongs to exactly one."""
+        return self._forges.for_session(snapshot) if self._forges else None
 
     def _snapshot(self, session_id: str):
         writer = self._manager.get(session_id)

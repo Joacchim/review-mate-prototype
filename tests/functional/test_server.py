@@ -82,7 +82,7 @@ async def test_search_no_provider_returns_empty(client):
 
 async def test_search_routes_to_provider(tmp_path):
     class StubProvider:
-        async def search(self, q):
+        async def search(self, q, limit=15):
             return [{"host": "gitlab", "project": "g/p", "iid": 9, "title": f"hit:{q}", "url": "u"}]
 
     manager = SessionManager(root=tmp_path / "sessions")

@@ -21,6 +21,7 @@ class Stub:
     def __init__(self, host):
         self.host = host
         self.asked = []
+        self.read = []
         self.queue = [{"project": f"{host}/q", "iid": 1, "title": "t", "url": "u"}]
         self.hits = [{"project": f"{host}/s", "iid": 2, "title": "t", "url": "u"}]
         self.repo = {"clone_url": f"https://{host}/r.git"} if host == "second.example" else None
@@ -40,6 +41,10 @@ class Stub:
 
     async def locate_repo(self, name):
         return self.repo
+
+    async def get_file(self, project, path, ref):
+        self.read.append((project, path, ref))
+        return f"content from {self.host}\n"
 
 
 def test_each_forge_answers_for_its_own_host():
@@ -133,3 +138,32 @@ def test_each_forge_is_asked_to_write_back_its_own_reviews(monkeypatch, tmp_path
     assert type(writers.pick("gitlab.example")).__name__ == "GitLabWriter"
     assert type(writers.pick("github.com")).__name__ == "GitHubWriter"
     assert writers.pick("local") is None       # a branch on this machine is written back to nothing
+
+
+async def test_a_view_asks_the_forge_that_loaded_the_review(tmp_path):
+    """The routing has to reach the view topics, not just the load.
+
+    They are handed one `provider` at construction and serve every session, so a server with two
+    forges configured would otherwise read a file from whichever one happened to be passed. The
+    forge is resolved from the review instead, each time it is needed.
+    """
+    from review_mate.view.difftopic import BlobTopics
+
+    first, second = Stub("first.example"), Stub("second.example")
+    forges = Forges({"first.example": first, "second.example": second})
+    manager = SessionManager(root=tmp_path / "s", mr_source=forges)
+    sid = await manager.create()
+    await manager.load(sid, MRRef(host="second.example", project="g/p", iid=7))
+
+    blobs = BlobTopics(manager, provider=forges)
+    view = await blobs.build(f"{sid}:full:a.py")
+    assert view["state"] == "loading"                 # a host read, started off the build
+    for task in list(blobs._tasks.values()):
+        await task
+
+    assert [p for p, _, _ in second.read] == ["g/p"], "the forge that loaded it was not asked"
+    assert first.read == [], "a forge that never saw this review was asked for its files"
+    view = await blobs.build(f"{sid}:full:a.py")
+    assert view["state"] == "ready"
+    assert "content from second.example" in "".join(l["text"] for l in view["lines"])
+    await manager.shutdown()

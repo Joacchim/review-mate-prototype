@@ -53,6 +53,15 @@ class Forges:
                 return only          # it claims no host, so it is not claiming not to serve this
         return None
 
+    def can(self, method: str) -> bool:
+        """Whether any configured forge offers `method` at all.
+
+        For the decisions taken once at wiring time rather than per review — whether to stand up
+        the cross-repo broker, say. Per review the question is different and is asked of the forge
+        itself, because what one can do says nothing about the other.
+        """
+        return any(hasattr(provider, method) for provider in self.all())
+
     def for_session(self, snapshot):
         """The forge that loaded this review, read off the review itself."""
         mr = getattr(snapshot, "mr", None) if snapshot is not None else None

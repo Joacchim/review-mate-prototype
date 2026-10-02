@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 from review_mate.contracts import MRRef
+from review_mate.forges import Forges
 from review_mate.session.state import DraftStatus, SessionStatus
 from review_mate.view.asks import outstanding
 
@@ -104,7 +105,7 @@ class HubTopic:
     def __init__(self, manager, provider=None, kb=None, user: str = "", watcher=None) -> None:
         self._manager = manager
         self._watcher = watcher              # callable returning the activity stream's watcher dict
-        self._provider = provider
+        self._forges = Forges.of(provider)
         self._kb = kb
         self._user = user
         self._host: dict[str, dict] = {}     # session id -> {head, mr_state, unresolved}
@@ -196,11 +197,12 @@ class HubTopic:
             await task
 
     async def _load_queue(self, publish) -> None:
-        if self._provider is None or not hasattr(self._provider, "review_queue_items"):
-            self._queue, self._queue_state = [], "ready"   # no host → empty queue, not an error
+        if self._forges is None:
+            self._queue, self._queue_state = [], "ready"   # no forge → empty queue, not an error
         else:
             try:
-                items = await self._provider.review_queue_items()
+                # every forge the reviewer works on, merged into one queue
+                items = await self._forges.review_queue_items()
                 self._queue = list(items or [])
                 self._queue_state = "ready"
             except asyncio.CancelledError:
@@ -219,7 +221,7 @@ class HubTopic:
         """The manual host fan-out across open reviews (D19). One `mr_summary` + one thread
         read per active review, each best-effort: a review whose host read fails keeps the
         facts it had rather than reverting to unchecked."""
-        if self._provider is None:
+        if self._forges is None:
             self._checked_at = _now()
             return
         for summ in self._manager.list():
@@ -236,24 +238,27 @@ class HubTopic:
             facts.setdefault("head", snap.mr.sha)
             facts.setdefault("mr_state", "")
             facts.setdefault("unresolved", 0)
-            if hasattr(self._provider, "mr_summary"):
+            forge = self._forges.pick(snap.mr.host) if self._forges else None
+            if forge is None:
+                continue                      # no forge serves this review: nothing to ask
+            if hasattr(forge, "mr_summary"):
                 try:
-                    summary = await self._provider.mr_summary(ref)
+                    summary = await forge.mr_summary(ref)
                     facts["head"] = summary.get("head") or facts["head"]
                     facts["mr_state"] = summary.get("state", facts["mr_state"])
                 except Exception:
                     pass
-            elif hasattr(self._provider, "mr_versions"):
+            elif hasattr(forge, "mr_versions"):
                 try:
-                    versions = await self._provider.mr_versions(ref)
+                    versions = await forge.mr_versions(ref)
                     if versions and versions[0].get("head_sha"):
                         facts["head"] = versions[0]["head_sha"]
                 except Exception:
                     pass
-            if hasattr(self._provider, "fetch_threads"):
+            if hasattr(forge, "fetch_threads"):
                 try:
                     facts["unresolved"] = sum(
-                        1 for t in await self._provider.fetch_threads(ref) if not t.resolved)
+                        1 for t in await forge.fetch_threads(ref) if not t.resolved)
                 except Exception:
                     pass
             self._host[summ.id] = facts

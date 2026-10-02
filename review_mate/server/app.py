@@ -29,6 +29,7 @@ from review_mate.host.config import build_provider_from_env, build_writer_from_e
 from review_mate.server.routes import build_routes
 from review_mate.session.manager import SessionManager
 from review_mate.contracts import RepoRef
+from review_mate.forges import Forges
 from review_mate.host.local import LocalBranchProvider
 from review_mate.workspace.manager import WorkspaceManager
 from review_mate.writeback.service import Writeback
@@ -266,12 +267,13 @@ def create_app(manager: SessionManager | None = None,
     # this is what makes an approval mean something — it materializes the repository and records
     # where it landed, so "approved" stops being a note nothing acts on.
     crossrepo = None
+    forges = Forges.of(provider)
     workspace = getattr(manager, "_workspace", None)
-    if workspace is not None and provider is not None and hasattr(provider, "locate_repo"):
+    if workspace is not None and forges is not None and forges.can("locate_repo"):
         from review_mate.crossrepo.broker import CrossRepoBroker
 
         async def _locate(name: str):
-            found = await provider.locate_repo(name)
+            found = await forges.locate_repo(name)
             if found is None:
                 return None
             return (RepoRef(host=found["host"], project=found["project"],

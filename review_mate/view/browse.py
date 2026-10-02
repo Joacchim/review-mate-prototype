@@ -16,7 +16,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from review_mate.contracts import ref_of, serves
+from review_mate.contracts import ref_of
+from review_mate.forges import Forges
 from review_mate.session.state import SessionStatus
 
 
@@ -53,7 +54,7 @@ class BrowseTopics:
 
     def __init__(self, manager, provider=None, publish=None) -> None:
         self._manager = manager
-        self._provider = provider
+        self._forges = Forges.of(provider)
         self._publish = publish              # publish(topic) -> awaitable
         self._trees: dict[str, list[str]] = {}     # sha -> paths
         self._tree_state: dict[str, str] = {}      # sha -> loading | ready | error
@@ -69,7 +70,7 @@ class BrowseTopics:
         if snapshot is None:
             return TreeView(session=session_id, state="unknown-session").model_dump(mode="json")
         sha = snapshot.mr.sha if snapshot.mr else ""
-        if not sha or not self._can("get_repo_tree") or not serves(self._provider, snapshot):
+        if not sha or not self._can(snapshot, "get_repo_tree"):
             return TreeView(session=session_id, state="unavailable").model_dump(mode="json")
         state = self._tree_state.get(sha, "idle")
         return TreeView(session=session_id, state=state, sha=sha,
@@ -78,16 +79,17 @@ class BrowseTopics:
 
     async def fetch_tree(self, session_id: str) -> None:
         snapshot = self._snapshot(session_id)
-        if snapshot is None or snapshot.mr is None or self._provider is None:
+        forge = self._forge(snapshot)
+        if snapshot is None or snapshot.mr is None or forge is None:
             return
         sha = snapshot.mr.sha
-        if not sha or not self._can("get_repo_tree") or not serves(self._provider, snapshot) \
+        if not sha or not self._can(snapshot, "get_repo_tree") \
                 or sha in self._tree_state:
             return                            # already asked, or nothing to ask about
         self._tree_state[sha] = "loading"
         await self._republish(f"tree:{session_id}")
         try:
-            self._trees[sha] = list(await self._provider.get_repo_tree(snapshot.mr.project, sha))
+            self._trees[sha] = list(await forge.get_repo_tree(snapshot.mr.project, sha))
             self._tree_state[sha] = "ready"
         except Exception as exc:
             self._tree_state[sha] = "error"
@@ -110,7 +112,8 @@ class BrowseTopics:
 
     async def fetch_commits(self, session_id: str) -> None:
         snapshot = self._snapshot(session_id)
-        if snapshot is None or snapshot.mr is None or self._provider is None:
+        forge = self._forge(snapshot)
+        if snapshot is None or snapshot.mr is None or forge is None:
             return
         if not self._commits_supported(snapshot):
             return
@@ -119,7 +122,7 @@ class BrowseTopics:
         self._commits_state[session_id] = "loading"
         await self._republish(f"commits:{session_id}")
         try:
-            rows = await self._provider.commits(ref_of(snapshot))
+            rows = await forge.commits(ref_of(snapshot))
             self._commits[session_id] = [self._row(r) for r in rows]
             self._commits_state[session_id] = "ready"
         except Exception as exc:
@@ -142,11 +145,15 @@ class BrowseTopics:
 
     def _commits_supported(self, snapshot) -> bool:
         cap = bool(snapshot.mr and (snapshot.mr.capabilities or {}).get("commits", False))
-        return (bool(snapshot.mr) and cap and self._can("commits")
-                and serves(self._provider, snapshot))
+        return bool(snapshot.mr) and cap and self._can(snapshot, "commits")
 
-    def _can(self, method: str) -> bool:
-        return self._provider is not None and hasattr(self._provider, method)
+    def _forge(self, snapshot):
+        """The forge this review came from — one server, possibly several forges."""
+        return self._forges.for_session(snapshot) if self._forges else None
+
+    def _can(self, snapshot, method: str) -> bool:
+        forge = self._forge(snapshot)
+        return forge is not None and hasattr(forge, method)
 
     async def _republish(self, topic: str) -> None:
         if self._publish is not None:

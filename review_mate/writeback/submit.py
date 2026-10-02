@@ -12,6 +12,7 @@ sending a review cannot get the sequence subtly different.
 from __future__ import annotations
 
 from review_mate.contracts import MRRef
+from review_mate.forges import Forges
 from review_mate.session.commands import MarkDraftPosted, ReplaceThreads
 from review_mate.session.state import DraftStatus, Origin
 
@@ -20,7 +21,7 @@ class ReviewSubmitter:
     def __init__(self, manager, writeback, provider=None, kb=None) -> None:
         self._manager = manager
         self._writeback = writeback
-        self._provider = provider
+        self._forges = Forges.of(provider)
         self._kb = kb
 
     async def submit(self, session_id: str, *, approve: bool = False) -> dict:
@@ -92,10 +93,11 @@ class ReviewSubmitter:
         Best-effort: the review is already posted by this point, and failing here would report a
         successful submission as an error.
         """
-        if self._provider is None or not hasattr(self._provider, "fetch_threads"):
+        forge = self._forges.pick(ref.host) if self._forges else None
+        if forge is None or not hasattr(forge, "fetch_threads"):
             return
         try:
-            threads = await self._provider.fetch_threads(ref)
+            threads = await forge.fetch_threads(ref)
         except Exception:
             return
         # the host is the single source of truth for threads, so this reconciles wholesale
