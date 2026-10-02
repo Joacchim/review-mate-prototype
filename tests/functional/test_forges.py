@@ -92,3 +92,44 @@ async def test_a_branch_on_this_machine_still_bypasses_every_forge(tmp_path):
     assert manager.source_for(LocalRef(path="/tmp", branch="x", base="main")) is None  # none wired
     assert manager.source_for(MRRef(host="first.example", project="g/p", iid=1)) is not None
     await manager.shutdown()
+
+
+# --- two forges, each with its own kind of reference --------------------------------------------
+
+def test_the_two_forges_shorthands_cannot_claim_each_other(monkeypatch, tmp_path):
+    """A reference needs no forge named alongside it: `!` is how GitLab's users write one and `#`
+    is how GitHub's do, and a URL carries the forge in its own path."""
+    from review_mate.host.config import build_provider_from_env
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))      # no glab/gh config to fall back on
+    monkeypatch.setenv("REVIEW_MATE_GITLAB_URL", "https://gitlab.example/api/v4")
+    monkeypatch.setenv("REVIEW_MATE_GITLAB_TOKEN", "gl")
+    monkeypatch.setenv("REVIEW_MATE_GITLAB_USER", "me")
+    monkeypatch.setenv("REVIEW_MATE_GITHUB_TOKEN", "gh")
+    monkeypatch.setenv("REVIEW_MATE_GITHUB_USER", "me")
+
+    forges, resolve = build_provider_from_env()
+    assert sorted(h for h in ["gitlab.example", "github.com"]
+                  if forges.pick(h) is not None) == ["github.com", "gitlab.example"]
+
+    assert resolve("g/p!3").host == "gitlab.example"
+    assert resolve("o/r#7").host == "github.com"
+    assert resolve("https://gitlab.example/g/p/-/merge_requests/3").host == "gitlab.example"
+    assert resolve("https://github.com/o/r/pull/7").host == "github.com"
+    assert resolve("neither of these") is None
+
+
+def test_each_forge_is_asked_to_write_back_its_own_reviews(monkeypatch, tmp_path):
+    from review_mate.host.config import build_writer_from_env
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("REVIEW_MATE_GITLAB_URL", "https://gitlab.example/api/v4")
+    monkeypatch.setenv("REVIEW_MATE_GITLAB_TOKEN", "gl")
+    monkeypatch.setenv("REVIEW_MATE_GITLAB_USER", "me")
+    monkeypatch.setenv("REVIEW_MATE_GITHUB_TOKEN", "gh")
+    monkeypatch.setenv("REVIEW_MATE_GITHUB_USER", "me")
+
+    writers = build_writer_from_env()
+    assert type(writers.pick("gitlab.example")).__name__ == "GitLabWriter"
+    assert type(writers.pick("github.com")).__name__ == "GitHubWriter"
+    assert writers.pick("local") is None       # a branch on this machine is written back to nothing

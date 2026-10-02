@@ -6,15 +6,24 @@ comment lands exactly where the reviewer was looking.
 """
 from __future__ import annotations
 
-from review_mate.host.base import HostWriter
 from review_mate.contracts import MRRef
+from review_mate.forges import Forges
+from review_mate.host.base import HostWriter
 from review_mate.session.manager import SessionManager
 
 
 class Writeback:
     def __init__(self, manager: SessionManager, writer: HostWriter):
         self._m = manager
-        self._writer = writer
+        # keyed by host, like the read side: a review is written back to the forge it came from,
+        # and a lone writer that names no host still answers for everything
+        self._writers = Forges.of(writer)
+
+    def _for(self, ref: MRRef):
+        writer = self._writers.pick(getattr(ref, "host", None)) if self._writers else None
+        if writer is None:
+            raise LookupError(f"nothing configured to write to {getattr(ref, 'host', None)!r}")
+        return writer
 
     async def post_comment(self, session_id: str, highlight_id: str | None, body: str,
                            ref: MRRef) -> dict:
@@ -23,7 +32,7 @@ class Writeback:
             raise KeyError(session_id)
         snap = writer.snapshot()
         if highlight_id is None:  # an MR-level review comment — a general note, no diff position
-            return await self._writer.post_mr_comment(ref, body)
+            return await self._for(ref).post_mr_comment(ref, body)
         hl = next((h for h in snap.highlights if h.id == highlight_id), None)
         if hl is None:
             raise KeyError(highlight_id)
@@ -36,24 +45,24 @@ class Writeback:
             "start_sha": refs.get("start_sha"),
             "sha": snap.mr.sha if snap.mr else None,  # fallback when diff_refs absent
         }
-        return await self._writer.post_comment(ref, position, body)
+        return await self._for(ref).post_comment(ref, position, body)
 
     async def reply(self, ref: MRRef, thread_id: str, body: str) -> dict:
         """Reply to an existing discussion thread (capability: threads)."""
-        return await self._writer.reply(ref, thread_id, body)
+        return await self._for(ref).reply(ref, thread_id, body)
 
     async def resolve(self, ref: MRRef, thread_id: str, resolved: bool = True) -> dict:
         """Resolve or unresolve a discussion thread — the "validate a comment" primitive."""
-        return await self._writer.resolve(ref, thread_id, resolved)
+        return await self._for(ref).resolve(ref, thread_id, resolved)
 
     async def approve(self, ref: MRRef) -> dict:
         """Approve the MR (capability: approvals)."""
-        return await self._writer.approve(ref)
+        return await self._for(ref).approve(ref)
 
     async def edit_note(self, ref: MRRef, thread_id: str, note_id: str, body: str) -> dict:
         """Edit one of the reviewer's own notes (host enforces ownership; capability: threads)."""
-        return await self._writer.edit_note(ref, thread_id, note_id, body)
+        return await self._for(ref).edit_note(ref, thread_id, note_id, body)
 
     async def delete_note(self, ref: MRRef, thread_id: str, note_id: str) -> dict:
         """Delete one of the reviewer's own notes (host enforces ownership; capability: threads)."""
-        return await self._writer.delete_note(ref, thread_id, note_id)
+        return await self._for(ref).delete_note(ref, thread_id, note_id)

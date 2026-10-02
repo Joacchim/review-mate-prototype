@@ -13,7 +13,11 @@ from urllib.parse import urlparse
 
 import httpx
 
+from review_mate.forges import Forges
 from review_mate.host.base import GITLAB_CAPABILITIES, parse_reference
+from review_mate.host.github import (
+    GITHUB_CAPABILITIES, GitHubProvider, GitHubWriter, parse_github_reference,
+)
 from review_mate.host.gitlab import GitLabProvider, GitLabWriter
 
 
@@ -117,27 +121,111 @@ def build_gitlab_writer(config: GitLabConfig,
                         reload_token=_token_reloader)
 
 
-def build_provider_from_env(client: httpx.AsyncClient | None = None):
-    """Host-agnostic entry: select and build a provider from the environment.
+class GitHubConfig:
+    def __init__(self, base_url: str, token: str, username: str, host: str,
+                 git_protocol: str = "https"):
+        self.base_url = base_url          # …/api/v3 on Enterprise, api.github.com otherwise
+        self.token = token
+        self.username = username
+        self.host = host                  # the forge people name, not the API endpoint
+        self.git_protocol = git_protocol
 
-    The composition root calls this without naming any host; host selection lives here. Returns
-    (provider, resolve_ref) or (None, None) when no host is configured. A second host slots in by
-    extending this function, touching no other unit.
+
+def _gh_credentials() -> tuple[str | None, str | None]:
+    """What `gh auth` left behind, so a reviewer already logged in configures nothing.
+
+    Mirrors the glab fallback: the token and the account, read rather than asked for.
     """
-    config = resolve_gitlab_config()
-    if config is None:
+    cfg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "gh" / "hosts.yml"
+    if not cfg.exists():
         return None, None
-    provider = build_gitlab_provider(config, client)
-    return provider, (lambda s: parse_reference(s, config.host))
+    token = user = None
+    try:
+        for line in cfg.read_text().splitlines():
+            stripped = line.strip()
+            if stripped.startswith("oauth_token:"):
+                token = token or stripped.partition(":")[2].strip()
+            elif stripped.startswith("user:"):
+                user = user or stripped.partition(":")[2].strip()
+    except OSError:
+        return None, None
+    return token, user
+
+
+def resolve_github_config() -> GitHubConfig | None:
+    base = os.environ.get("REVIEW_MATE_GITHUB_URL", "").rstrip("/")
+    token = os.environ.get("REVIEW_MATE_GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    user = os.environ.get("REVIEW_MATE_GITHUB_USER") or os.environ.get("GITHUB_USER")
+    if not token or not user:
+        gh_token, gh_user = _gh_credentials()
+        token, user = token or gh_token, user or gh_user
+    if not token:
+        return None            # no credentials → no GitHub, and the rest still runs
+    if not base:
+        base = "https://api.github.com"
+    netloc = urlparse(base).netloc
+    # the review model's host is the forge people name, not the API endpoint in front of it
+    host = "github.com" if netloc == "api.github.com" else netloc
+    protocol = (os.environ.get("REVIEW_MATE_GIT_PROTOCOL") or "https").lower()
+    return GitHubConfig(base_url=base, token=token, username=(user or ""), host=host,
+                        git_protocol=protocol)
+
+
+def build_github_provider(config: GitHubConfig, client: httpx.AsyncClient | None = None):
+    return GitHubProvider(base_url=config.base_url, token=config.token,
+                          username=config.username, host=config.host,
+                          client=client, git_protocol=config.git_protocol)
+
+
+def build_github_writer(config: GitHubConfig, client: httpx.AsyncClient | None = None):
+    return GitHubWriter(base_url=config.base_url, token=config.token, host=config.host,
+                        capabilities=dict(GITHUB_CAPABILITIES), client=client)
+
+
+def build_provider_from_env(client: httpx.AsyncClient | None = None):
+    """Host-agnostic entry: build every configured forge from the environment.
+
+    The composition root names no host; selection lives here. Returns (forges, resolve_ref), or
+    (None, None) when nothing is configured — the self-contained baseline, where a branch on this
+    machine is still reviewable.
+
+    `resolve_ref` tries each forge's own parser. They cannot collide: a pull request URL carries
+    `/pull/`, a merge request URL `/-/merge_requests/`, and the shorthands are told apart by the
+    separator each forge's own users already write — `owner/repo#12` against `group/proj!12`.
+    """
+    forges, parsers = {}, []
+    gitlab = resolve_gitlab_config()
+    if gitlab is not None:
+        forges[gitlab.host] = build_gitlab_provider(gitlab, client)
+        parsers.append(lambda s, h=gitlab.host: parse_reference(s, h))
+    github = resolve_github_config()
+    if github is not None:
+        forges[github.host] = build_github_provider(github, client)
+        parsers.append(lambda s, h=github.host: parse_github_reference(s, h))
+    if not forges:
+        return None, None
+
+    def resolve_ref(s: str):
+        for parse in parsers:
+            ref = parse(s)
+            if ref is not None:
+                return ref
+        return None
+
+    return Forges(forges), resolve_ref
 
 
 def build_writer_from_env(client: httpx.AsyncClient | None = None):
     """The write side, host-agnostic: a HostWriter built from the environment, or None.
 
-    Mirrors build_provider_from_env so the composition root names no host. Used to post the
-    reviewer's prepared review back to the host.
+    Mirrors build_provider_from_env so the composition root names no host, and is keyed the same
+    way: a review is written back to the forge it was read from.
     """
-    config = resolve_gitlab_config()
-    if config is None:
-        return None
-    return build_gitlab_writer(config, client)
+    writers = {}
+    gitlab = resolve_gitlab_config()
+    if gitlab is not None:
+        writers[gitlab.host] = build_gitlab_writer(gitlab, client)
+    github = resolve_github_config()
+    if github is not None:
+        writers[github.host] = build_github_writer(github, client)
+    return Forges(writers) if writers else None
