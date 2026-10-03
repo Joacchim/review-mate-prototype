@@ -145,7 +145,7 @@ class GitHubProvider:
                 title=pr.get("title") or "", source_branch=head.get("ref") or "",
                 target_branch=base.get("ref") or "", sha=head.get("sha") or "",
                 author=((pr.get("user") or {}).get("login") or ""),
-                url=pr.get("html_url") or "", clone_url=clone or "",
+                url=pr.get("html_url") or "", clone_url=clone or "", ref_mark="#",
                 capabilities=self.capabilities(),
                 # `base.sha` is the base branch as this pull request sees it, not a merge base —
                 # enough for the agent to diff a pair itself, and the since-diff computes its own
@@ -310,7 +310,8 @@ class GitHubProvider:
                 if ref and (ref.project, ref.iid) not in seen:
                     seen.add((ref.project, ref.iid))
                     items.append({"host": ref.host, "project": ref.project, "iid": ref.iid,
-                                  "title": row.get("title") or "", "url": row.get("html_url") or ""})
+                                  "title": row.get("title") or "", "ref_mark": "#",
+                                  "url": row.get("html_url") or ""})
         return items
 
     async def review_queue(self) -> list[MRRef]:
@@ -328,7 +329,8 @@ class GitHubProvider:
             ref = parse_github_reference(row.get("html_url") or "", self.host)
             if ref:
                 out.append({"host": ref.host, "project": ref.project, "iid": ref.iid,
-                            "title": row.get("title") or "", "url": row.get("html_url") or ""})
+                            "title": row.get("title") or "", "ref_mark": "#",
+                            "url": row.get("html_url") or ""})
         return out
 
     async def locate_repo(self, name: str) -> dict | None:

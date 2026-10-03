@@ -65,6 +65,7 @@ class MRMetadata(BaseModel):
     sha: str
     author: str
     url: str
+    ref_mark: str = "!"                # how this forge writes a change's number: `!12`, `#12`
     clone_url: str = ""                # repo clone URL — lets the server materialize a checkout (diff-versions)
     # host-neutral capability advertisement (design D6) — what the active provider supports
     capabilities: dict[str, bool] = Field(default_factory=dict)
@@ -81,11 +82,16 @@ class MRMetadata(BaseModel):
         branch that never left this machine has no merge-request number, so naming it by one would
         put back the fiction `LocalRef` exists to keep out of the model: it is named by where it is
         going, which is the only thing that identifies it.
+
+        The mark before the number is the forge's, not ours. GitLab's users write `!12` and
+        GitHub's write `#12`, and telling either that their change is the other is wrong in the one
+        place a reviewer looks to check they opened the right thing. The forge supplies it, because
+        a hostname does not: an Enterprise install is not called github.com.
         """
         if self.host == "local":
             return f"{self.source_branch} → {self.target_branch}" if self.target_branch \
                 else self.source_branch
-        return f"{self.project} !{self.iid}"
+        return f"{self.project} {self.ref_mark}{self.iid}"
 
 
 class FileEntry(BaseModel):

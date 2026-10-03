@@ -10,9 +10,11 @@ from playwright.sync_api import expect
 from webui.fixtures.scenarios import review_with_highlights
 from webui.pages.hub import SearchPage
 
-HIT = {"project": "platform/virtu/control-plane", "iid": 137, "title": "rework the retry backoff",
+HIT = {"host": "gitlab", "project": "platform/virtu/control-plane", "iid": 137,
+       "title": "rework the retry backoff",
        "url": "https://gitlab/x/-/merge_requests/137"}
-OTHER = {"project": "platform/virtu/control-plane", "iid": 92, "title": "bump the base image",
+OTHER = {"host": "gitlab", "project": "platform/virtu/control-plane", "iid": 92,
+         "title": "bump the base image",
          "url": "https://gitlab/x/-/merge_requests/92"}
 
 
@@ -139,3 +141,26 @@ def test_tracking_one_result_keeps_the_rest_on_screen(search, staged, stub_host)
     search.track_buttons.first.click()
     expect(search.results).to_have_count(2)        # the list is still there to work through
     expect(search.tracked).to_have_count(2)        # and the click is visible without a reload
+
+
+GH_HIT = {"host": "github.com", "project": "Joacchim/tryouts", "iid": 1, "ref_mark": "#",
+          "title": "add a retry helper", "url": "https://github.com/Joacchim/tryouts/pull/1"}
+
+
+def test_a_github_result_is_written_and_opened_the_way_github_writes_it(search, staged, stub_host,
+                                                                       page):
+    """A row used to build `owner/repo!12` for every forge. That is GitLab's notation, and the
+    server's GitLab parser claims it — so opening a pull request from the queue resolved to
+    gitlab.com and reviewed a different change, or none.
+
+    The row knows its forge, so it says so and links by the forge's own URL, which every parser
+    understands.
+    """
+    stub_host.search_hits = [GH_HIT]
+    search.look_for("retry")
+    expect(search.results).to_have_count(1)
+    expect(search.results.first).to_contain_text("Joacchim/tryouts #1")
+    expect(search.results.first).not_to_contain_text("!1")
+
+    href = search.results.first.locator("a.rowlink").get_attribute("href")
+    assert "github.com%2FJoacchim%2Ftryouts%2Fpull%2F1" in href, href

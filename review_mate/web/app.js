@@ -656,27 +656,45 @@ async function findTracking(ref) {
 // the same answer without the wait, for a row being drawn: it has whatever the hub has sent, and a
 // row that renders before the first frame simply offers Track — which resolves to the open review
 // anyway, because trackRef checks again before opening anything.
+//
+// Matched on the host too. `group/proj!12` and `owner/repo#12` are different changes on different
+// forges, and a key built without the host would call one of them the other.
 function trackedSession(ref) {
   const sessions = (topicViews["hub"] && topicViews["hub"].sessions) || [];
-  return sessions.find((s) => s.mr && `${s.mr.project}!${s.mr.iid}` === ref) || null;
+  return sessions.find((s) => s.mr && sameChange(s.mr, ref)) || null;
+}
+
+// `ref` is either what a queue row knows ({host, project, iid}) or whatever a reviewer typed into
+// the box. A typed reference is matched against the forge's own notation and against its URL,
+// because those are the three ways the same change gets written down.
+function sameChange(mr, ref) {
+  if (ref && typeof ref === "object") {
+    return mr.host === ref.host && mr.project === ref.project && mr.iid === ref.iid;
+  }
+  const typed = String(ref || "").trim();
+  return typed === `${mr.project}!${mr.iid}` || typed === `${mr.project}#${mr.iid}`
+      || (!!mr.url && typed === mr.url);
 }
 
 // "Track": flag a queue entry for review without leaving the queue. It starts the review session, so
 // the MR moves up into "Open reviews" — where check-for-updates then watches it — and the reviewer
 // carries on triaging the rest of the queue.
 async function trackRef(ref, button) {
+  const shown = (ref && ref.project) ? `${ref.project} ${ref.mark || ''}${ref.iid}` : String(ref);
   button.disabled = true; button.textContent = "tracking…";
-  setStatus("tracking " + ref + "…");
+  setStatus("tracking " + shown + "…");
   // already open: say so and mark the row, but leave the list alone. Repainting the landing here
   // would throw away the search or queue the reviewer is still working through.
-  if (await findTracking(ref)) { setStatus(ref + " is already in your open reviews"); markTracked(button); return; }
-  const res = await cmd("session.open", { ref });
+  if (await findTracking(ref)) { setStatus(shown + " is already in your open reviews"); markTracked(button); return; }
+  // only what a reference is: the display mark travels with the row, not to the server
+  const res = await cmd("session.open",
+                        { ref: { host: ref.host, project: ref.project, iid: ref.iid } });
   if (!res.ok) {
     setStatus("✕ " + res.reason);
     button.disabled = false; button.textContent = "Track";
     return;
   }
-  setStatus("tracking " + ref + " — it's in your open reviews");
+  setStatus("tracking " + shown + " — it's in your open reviews");
   markTracked(button);   // the row says so now; the queue entry moves on the next hub frame
 }
 
@@ -713,14 +731,24 @@ async function openRef(ref) {
 // one MR entry in a picker list — the review queue, search results, Claude's candidates. All three
 // offer Track: wherever you come across an MR, flagging it for later is the cheaper action than
 // opening it. The row links to the review; the project!iid links out to the MR on the host.
+// How this forge writes a change's number. It travels with the row rather than being guessed from
+// the hostname, because an Enterprise install is not called github.com.
+function refMark(it) {
+  return (it && it.ref_mark) || "!";
+}
+
 function mrItem(it) {
-  const ref = `${it.project}!${it.iid}`;
+  // the change itself, not a string that has to be parsed back into one: these rows come from a
+  // forge and already know which. The link carries the forge's own URL, which every parser
+  // understands, rather than a shorthand only one of them claims.
+  const ref = { host: it.host, project: it.project, iid: it.iid, mark: refMark(it) };
+  const open = it.url || `${it.project}${refMark(it)}${it.iid}`;
   const row = document.createElement("div");
   row.className = "qitem";
-  row.dataset.key = ref;
+  row.dataset.key = `${it.host}|${it.project}|${it.iid}`;
   row.innerHTML =
-    `<div class="t"><a class="rowlink" href="?ref=${encodeURIComponent(ref)}">${esc(it.title)}</a></div>` +
-    `<div class="m">${hostLink(it.url, `${esc(it.project)} !${it.iid}`)}</div>`;
+    `<div class="t"><a class="rowlink" href="?ref=${encodeURIComponent(open)}">${esc(it.title)}</a></div>` +
+    `<div class="m">${hostLink(it.url, `${esc(it.project)} ${refMark(it)}${it.iid}`)}</div>`;
   if (trackedSession(ref)) {
     // knowing this before clicking is the point: a search hit you already opened looks exactly
     // like one you have never seen otherwise
