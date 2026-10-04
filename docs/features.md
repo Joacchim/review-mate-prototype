@@ -82,6 +82,25 @@ how work that arrived in several passes is easiest to follow.
 the author changed since — with target-branch noise excluded, so a rebase does not read as a hundred
 new files.
 
+**Files you have finished with.** Mark a file read and the tree ticks it off, with a count of how
+far through the change you are. It is per file, and separate from the baseline above: that is one
+point in the change's history, this is a record of where you have got to.
+
+![Working through a change file by file](images/reviewed-files.png)
+
+> ① how far through you are, and how much is waiting · ② read, and still read · ③ read, and
+> changed by the author since — it stops counting and stops receding, because it is not done any
+> more · ④ the same mark from the file you have open
+
+What makes this worth keeping is what a push does to it. A mark holds until *that file* changes,
+so an author pushing to some other file does not undo your afternoon. When the file does change
+the mark is not thrown away — it greys, drops out of the count, and the file comes back to full
+strength in the list, because something you read and must read again is not the same as something
+you have never seen. Reading it again records the new version.
+
+It is the same mark in every reading mode, because which lines a mode shows you does not change
+which file it is.
+
 ## Asking about a line
 
 Press the left mouse button on a line in the diff and drag down to the last line you mean, then

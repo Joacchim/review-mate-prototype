@@ -23,6 +23,33 @@ class DiffPage:
     def open_file(self, name: str) -> None:
         self.files.filter(has_text=name).click()
 
+    # --- files the reviewer has finished reading ----------------------------
+
+    @property
+    def reviewed_files(self):
+        return self.page.locator(".node.file.reviewed")
+
+    @property
+    def stale_files(self):
+        """Read, and changed by the author since — ticked, but greyed and uncounted."""
+        return self.page.locator(".node.file.reviewed.stale")
+
+    def tick(self, name: str):
+        """The tree's mark on one file: ✓ read, ✓! read and changed since."""
+        return self.files.filter(has_text=name).locator(".rv")
+
+    @property
+    def progress(self):
+        return self.page.locator(".treeprog")
+
+    @property
+    def reviewed_button(self):
+        """The toggle in the open file's header, whatever state it is in."""
+        return self.page.locator(".fname .rvbtn")
+
+    def mark_reviewed(self) -> None:
+        self.reviewed_button.click()
+
     # --- the diff -----------------------------------------------------------
 
     @property

@@ -50,11 +50,15 @@ class TwoFileHost(HostStub):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.diffs = {"a.py": DIFF_A, "pkg/b.py": DIFF_B}
+        # a real push moves the head as well as the content, and a test that leaves it fixed
+        # cannot tell "the head moved" apart from "this file changed" — which is the whole
+        # question the reviewed marks turn on
+        self.sha = "abc"
 
     async def load(self, ref: MRRef) -> MRPayload:
         return MRPayload(
             mr=MRMetadata(host="gitlab", project=ref.project, iid=ref.iid, title="T",
-                          source_branch="x", target_branch="main", sha="abc",
+                          source_branch="x", target_branch="main", sha=self.sha,
                           author="dev", url="http://x"),
             files=[
                 FileEntry(path="a.py", change_type=ChangeType.MODIFIED, language="python",
@@ -813,3 +817,147 @@ def test_a_blob_read_that_failed_once_is_tried_again(tmp_path):
                 view = read_topic(ws, topic)["view"]
         assert view["state"] == "ready", view
         assert len(provider.reads) > attempts, "it never asked again"
+
+
+# --- files the reviewer has finished reading ---------------------------------------------------
+#
+# The one property worth protecting: a push that touched some other file must leave this file's
+# mark standing. A record of progress that clears itself on every push records nothing.
+#
+# These read through a fresh subscription rather than the next frame on an open one. A subscribe
+# always delivers the current view, while the next frame is whatever was published last — and this
+# file's edited diffs are deliberately the same shape as their originals, so a listing that carries
+# counts and not bodies is sometimes byte-identical afterwards and correctly publishes nothing.
+
+def _mark(tc, sid, path, on=True):
+    return tc.post(f"/api/sessions/{sid}/commands",
+                   json={"type": "mark_file_reviewed" if on else "unmark_file_reviewed",
+                         "path": path})
+
+
+def _now(tc, topic):
+    with tc.websocket_connect("/api/stream") as ws:
+        ws.send_json({"action": "subscribe", "topics": [topic]})
+        return read_topic(ws, topic)["view"]
+
+
+def _rows(tc, sid, mode="full"):
+    return {f["path"]: f for f in _now(tc, f"diff:{sid}:{mode}")["files"]}
+
+
+def test_a_file_is_marked_read_and_the_listing_says_so(tmp_path):
+    with TestClient(build(tmp_path)) as tc:
+        sid = open_session(tc)
+        assert _rows(tc, sid)["a.py"]["reviewed"] is False
+        assert _mark(tc, sid, "a.py").json()["ok"] is True
+        rows = _rows(tc, sid)
+        assert rows["a.py"]["reviewed"] is True and rows["a.py"]["reviewed_stale"] is False
+        assert rows["pkg/b.py"]["reviewed"] is False       # one file, not the change
+
+
+def test_a_push_that_touched_another_file_leaves_the_mark_standing(tmp_path):
+    """The whole design. Keyed on the review's head instead, every push would clear every mark."""
+    host = TwoFileHost()
+    with TestClient(build(tmp_path, host)) as tc:
+        sid = open_session(tc)
+        _mark(tc, sid, "a.py")
+        host.diffs["pkg/b.py"] = DIFF_B_EDITED             # the author pushes, touching only b
+        host.sha = "def"                                   # ... which moves the head, as it must
+        tc.post("/api/cmd", json={"cmd": "session.resync", "args": {"session": sid}})
+        row = _rows(tc, sid)["a.py"]
+        assert row["reviewed"] is True
+        assert row["reviewed_stale"] is False              # it did not change, so it still holds
+
+
+def test_a_push_that_touched_this_file_makes_the_mark_stale_without_removing_it(tmp_path):
+    host = TwoFileHost()
+    with TestClient(build(tmp_path, host)) as tc:
+        sid = open_session(tc)
+        _mark(tc, sid, "a.py")
+        host.diffs["a.py"] = DIFF_A_EDITED
+        host.sha = "def"
+        tc.post("/api/cmd", json={"cmd": "session.resync", "args": {"session": sid}})
+        row = _rows(tc, sid)["a.py"]
+        assert row["reviewed"] is True and row["reviewed_stale"] is True    # stale, not gone
+
+        _mark(tc, sid, "a.py")                             # re-reading records this version
+        again = _rows(tc, sid)["a.py"]
+        assert again["reviewed"] is True and again["reviewed_stale"] is False
+
+
+def test_the_mark_is_the_file_s_and_the_file_topic_carries_it_too(tmp_path):
+    """The diff view modes differ in which lines they show; the mark is about the file."""
+    with TestClient(build(tmp_path)) as tc:
+        sid = open_session(tc)
+        _mark(tc, sid, "a.py")
+        assert _rows(tc, sid)["a.py"]["reviewed"] is True
+        one = _now(tc, f"diff:{sid}:full:a.py")
+        assert one["reviewed"] is True and one["reviewed_sha"] == "abc"
+
+
+def test_unmarking_puts_the_file_back(tmp_path):
+    with TestClient(build(tmp_path)) as tc:
+        sid = open_session(tc)
+        _mark(tc, sid, "a.py")
+        assert _rows(tc, sid)["a.py"]["reviewed"] is True
+        _mark(tc, sid, "a.py", on=False)
+        assert _rows(tc, sid)["a.py"]["reviewed"] is False
+
+
+def test_a_file_the_change_no_longer_touches_leaves_no_mark_behind(tmp_path):
+    class OneFileLater(TwoFileHost):
+        dropped = False
+
+        async def load(self, ref):
+            payload = await super().load(ref)
+            if self.dropped:
+                payload.files = [f for f in payload.files if f.path != "a.py"]
+            return payload
+
+    host = OneFileLater()
+    with TestClient(build(tmp_path, host)) as tc:
+        sid = open_session(tc)
+        _mark(tc, sid, "a.py")
+        host.dropped = True
+        tc.post("/api/cmd", json={"cmd": "session.resync", "args": {"session": sid}})
+        state = tc.get(f"/api/sessions/{sid}").json()
+        assert [f["path"] for f in state["files"]] == ["pkg/b.py"]
+        assert state["reviewed_files"] == []       # no orphan, as a draft's highlight going
+
+
+def test_a_file_that_is_not_in_the_change_cannot_be_marked(tmp_path):
+    with TestClient(build(tmp_path)) as tc:
+        sid = open_session(tc)
+        resp = _mark(tc, sid, "nowhere.py")
+        assert resp.status_code == 400 and "no such file" in resp.json()["reason"]
+
+
+def test_the_mark_shows_in_every_diff_view_mode(tmp_path):
+    """A reviewer marks a file read in one mode and finds it marked in the others.
+
+    The modes differ in which of a file's lines they show, and in which files they list at all —
+    full against the target, since against the watermark, commit@ within one commit. None of that
+    changes which file it is, so the mark is read from the session's own files rather than from
+    the mode's, and a file a mode lists but nobody marked stays unmarked.
+    """
+    app, _ = build_versioned(tmp_path)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        for path in ("a.py", "pkg/b.py"):
+            assert _mark(tc, sid, path).json()["ok"] is True
+
+        # ... and nothing has changed since, so no mode may call the mark stale. A mode's own
+        # hunks are not the file's: comparing against those reports every marked file stale the
+        # moment it is read in since or commit@.
+        expected = {                              # topic -> {path: (reviewed, stale)}
+            f"diff:{sid}:full": {"a.py": (True, False), "pkg/b.py": (True, False)},
+            f"diff:{sid}:since": {"a.py": (True, False), "pkg/__init__.py": (False, False)},
+            f"diff:{sid}:commit@abcdef0": {"pkg/b.py": (True, False)},
+        }
+        for topic, want in expected.items():
+            with tc.websocket_connect("/api/stream") as ws:
+                ws.send_json({"action": "subscribe", "topics": [topic]})
+                view = settled(ws, topic)
+                assert view["state"] == "ready", (topic, view)
+                got = {f["path"]: (f["reviewed"], f["reviewed_stale"]) for f in view["files"]}
+                assert got == want, topic

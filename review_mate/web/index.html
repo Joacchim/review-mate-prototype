@@ -113,6 +113,19 @@
   .node .ct{font-family:var(--mono);font-size:10px;color:var(--fg2);width:11px;text-align:center}
   .node .ct.added{color:var(--addfg)} .node .ct.deleted{color:var(--delfg)} .node .ct.renamed{color:var(--accent)}
   .children.closed{display:none}
+  /* reviewed files — a read file recedes rather than disappearing, so the shape of the change
+     stays legible; one that changed after being read says so instead of quietly reverting */
+  .treeprog{padding:5px 10px;font-size:11px;color:var(--fg2);border-bottom:1px solid var(--line)}
+  .treeprog.all{color:var(--addfg)}
+  .node.file.reviewed{color:var(--fg2);opacity:.72}
+  .node.file.reviewed.on{opacity:1}
+  /* a file read and then changed under you is not finished, so it does not recede the way a
+     finished one does — it is waiting to be read again, which is the opposite of done */
+  .node.file.reviewed.stale{color:inherit;opacity:1}
+  .node .rv{margin-left:auto;padding-left:8px;font-size:12px;line-height:1;color:var(--ok)}
+  .node.file.stale .rv{color:var(--fg2);opacity:.8}
+  .btn.fnbtn.on{color:var(--addfg);border-color:var(--addfg)}
+  .btn.fnbtn.stale{color:var(--warn);border-color:var(--warn)}
   /* diff */
   .fname{padding:12px 16px 6px;font-family:var(--mono);font-size:12px;color:var(--fg2);display:flex;align-items:center;gap:10px}
   .fname .fnbtn{margin-left:auto;font-size:11px;padding:1px 7px;flex:none}

@@ -109,6 +109,7 @@ tests/webui/
   test_diff.py
   test_highlights.py
   test_review.py
+  test_reviewed_files.py
   test_protocol_edges.py
 ```
 
@@ -134,6 +135,7 @@ right command, and that a pushed update repaints. Review logic is the protocol s
 | Channels | `test_channels.py` | the two channels as tabs, that neither can leave by the other, the review as a subject like any other, one chat at a time, and doubting a claim — Claude's or your own |
 | Agent state | `test_agent_state.py` | what the server says is outstanding, and what it says once answered |
 | Review | `test_review.py` | drafting per highlight and at MR level, editing one, the counts, batch submit and what landed, approve, the discussion list and its filter, jump to line, reply, resolve, and the review-pass control in all three of its states |
+| Reviewed files | `test_reviewed_files.py` | marking the open file read and unmarking it, the tree's tick and the progress count, a mark that arrived with the session, and one the author has changed under — stale rather than cleared, and settled by reading it again |
 | Consent | `test_consent.py` | what a cross-repo ask shows, allowing, refusing, an already-decided ask, and each repository answered on its own |
 | Full view | `test_full_view.py` | the panel taking the window, reading width, the toggle both ways, and what survives the diff view mode |
 | Annotation zones | `test_annotation_zones.py` | the pin outside the scroller, its cap, and the index still reachable past a run of insights |

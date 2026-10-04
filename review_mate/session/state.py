@@ -5,6 +5,8 @@ access-requests, review threads) plus a small envelope. Pure data: no IO, no hos
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from enum import Enum
 
 from pydantic import BaseModel, Field, computed_field
@@ -100,6 +102,41 @@ class FileEntry(BaseModel):
     change_type: ChangeType
     language: str | None = None
     hunks: list[dict] = Field(default_factory=list)
+
+
+class ReviewedFile(BaseModel):
+    """A file the reviewer has finished reading.
+
+    Deliberately not the watermark: that is one sha for the whole review ("reviewed up to"),
+    while this is a reviewer working through a change file by file. Both can be true at once and
+    neither implies the other.
+
+    `fingerprint` is what decides whether the mark still holds, and it is the file's own diff
+    rather than the review's head. A push that touches some other file leaves this file's diff
+    byte-identical, so a mark survives it — which is the whole point, since a review whose marks
+    all clear on every push records no progress at all. `sha` is kept for the reader, not the
+    predicate: a stale mark can say which version was read.
+    """
+    path: str
+    sha: str | None = None         # MR head when marked — what "you read this at abc123" reports
+    fingerprint: str = ""          # the file's diff when marked; stale once it no longer matches
+    at: str = ""
+
+
+def file_fingerprint(entry: "FileEntry | None") -> str:
+    """What a reviewed mark is checked against: the file's own diff, canonically.
+
+    The hunks are what the reviewer actually read, so a change to them is exactly what should put
+    the mark in doubt — and a push that touches some other file leaves them byte-identical. The
+    change type and the old path travel with them so a file that becomes a deletion, or is
+    renamed, does not match the modification that was read.
+    """
+    if entry is None:
+        return ""
+    change = getattr(entry.change_type, "value", entry.change_type)
+    payload = json.dumps([change, entry.old_path, entry.hunks],
+                         sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 class Highlight(BaseModel):
@@ -312,6 +349,7 @@ class SessionState(BaseModel):
     checks: list[CheckRequest] = Field(default_factory=list)
     addressed: list[Addressed] = Field(default_factory=list)
     drafts: list[DraftComment] = Field(default_factory=list)
+    reviewed_files: list[ReviewedFile] = Field(default_factory=list)
 
 
 class SessionSummary(BaseModel):

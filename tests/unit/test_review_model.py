@@ -9,7 +9,8 @@ from review_mate.session.state import (
     SessionState, Origin, Side, LineRange, MRMetadata, FileEntry, ChangeType,
     Highlight, Card, AccessRequest, ReviewThread, CardStatus, AccessStatus, ChatMessage, Addressed,
     CheckRequest,
-    Criticality, DraftComment, DraftStatus, Grant, Label, Subject, SubjectKind, Theme,
+    Criticality, DraftComment, DraftStatus, Grant, Label, ReviewedFile, Subject, SubjectKind,
+    Theme,
 )
 
 ALL_ORIGINS = [Origin.BROWSER, Origin.AGENT, Origin.SYSTEM]
@@ -23,6 +24,8 @@ def _sample(cmd_type: str):
     return {
         "add_highlight": cmd.AddHighlight(file="a.py", side=Side.NEW, line_range=LineRange(start=1, end=1)),
         "remove_highlight": cmd.RemoveHighlight(highlight_id="x"),
+        "mark_file_reviewed": cmd.MarkFileReviewed(path="a.py"),
+        "unmark_file_reviewed": cmd.UnmarkFileReviewed(path="a.py"),
         "request_context": cmd.RequestContext(highlight_id="x"),
         "request_insights": cmd.RequestInsights(),
         "request_check": cmd.RequestCheck(
@@ -213,6 +216,9 @@ def test_mr_and_files_reduce():
         id="k", subject=Subject(kind=SubjectKind.HIGHLIGHT, id="h"))),
     ev.MessagePosted(seq=25, ts="t", origin=Origin.BROWSER, message=ChatMessage(
         id="m", role=Origin.BROWSER, body="hello")),
+    ev.FileReviewed(seq=26, ts="t", origin=Origin.BROWSER,
+        file=ReviewedFile(path="a.py", sha="abc", fingerprint="f", at="t")),
+    ev.FileUnreviewed(seq=27, ts="t", origin=Origin.BROWSER, path="a.py"),
 ])
 def test_event_roundtrip_all_types(event):
     back = ev.parse_event(event.model_dump_json())

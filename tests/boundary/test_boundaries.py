@@ -57,7 +57,12 @@ def test_session_state_is_exactly_the_contract_set():  # AC-13
     asks = {"insights_requested", "insights_requested_at", "insights_requested_sha"}
     envelope = {"id", "status", "created_at", "seq"}
     workspace = {"checkout_path"}   # the on-disk MR checkout (code-graph / LSP / grep)
-    assert set(SessionState.model_fields) == doc_fields | envelope | workspace | counters | asks
+    # the reviewer working through the change file by file. Deliberately not the watermark, which
+    # is one sha for the whole review: this is per file, and so is the question of whether it
+    # still holds after a push.
+    progress = {"reviewed_files"}
+    assert set(SessionState.model_fields) == (doc_fields | envelope | workspace | counters
+                                              | asks | progress)
 
 
 def test_the_browser_suites_map_lists_every_file_in_it():

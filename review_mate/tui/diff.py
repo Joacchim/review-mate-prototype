@@ -235,6 +235,17 @@ class DiffScreen:
         self.scroll = self.body_cursor = 0
         return self.viewing is not None
 
+    def reviewed_toggle(self) -> dict | None:
+        """The command that flips the selected file's reviewed mark, or None when there is no
+        file to mark. A stale mark is re-made rather than cleared: re-reading is the common case,
+        and clearing it is what the reviewer gets by pressing the key twice."""
+        row = self.current
+        if row is None or not row.get("changed", True):
+            return None        # a repository file is not part of the change, so it is not read
+        on = not row.get("reviewed") or bool(row.get("reviewed_stale"))
+        return {"type": "mark_file_reviewed" if on else "unmark_file_reviewed",
+                "path": row["path"]}
+
     def cycle_thread_filter(self) -> str:
         self.thread_filter = "all" if self.thread_filter == "unresolved" else "unresolved"
         self.thread_index = 0
@@ -422,6 +433,15 @@ class DiffScreen:
                     "unavailable": "this host cannot list the repository",
                     "error": self.tree.get("error", "")}.get(state, "reading the repository\u2026")
             out.append(("class:muted", f"  {note}\n"))
+        changed = [r for r in rows if r.get("changed")]
+        if changed:
+            # a stale mark is not counted: the file changed after it was read, so it is not read.
+            # Saying how many are waiting is what stops a count that drops looking like a bug.
+            done = sum(1 for r in changed if r.get("reviewed") and not r.get("reviewed_stale"))
+            stale = sum(1 for r in changed if r.get("reviewed") and r.get("reviewed_stale"))
+            out.append(("class:ok" if done == len(changed) else "class:muted",
+                        f"  {done} of {len(changed)} reviewed"
+                        + (f" \u00b7 {stale} to re-read\n" if stale else "\n")))
         top = max(0, min(self.file_index - FILE_PANE_ROWS // 2, len(rows) - FILE_PANE_ROWS))
         for index in range(top, min(top + FILE_PANE_ROWS, len(rows))):
             row = rows[index]
@@ -432,7 +452,11 @@ class DiffScreen:
                       if row.get("changed") else "")
             style = "class:selected" if selected and self.focus == "files" else ""
             asked = sum(1 for h in self.highlights if h["file"] == row.get("path"))
+            # a file the reviewer has finished reading, and whether it has changed since they did
+            tick = "\u2713" if row.get("reviewed") else " "
             out.append(("class:muted", f" {marker} {counts:>9}  "))
+            # the same tick either way; muted once the file has changed under the mark
+            out.append(("class:muted" if row.get("reviewed_stale") else "class:ok", f"{tick} "))
             out.append((style if row.get("changed") else (style or "class:muted"),
                         f"{row.get('path', '')}"))
             out.append(("class:info", f"  {asked} asked\n" if asked else "\n"))
@@ -716,8 +740,8 @@ class DiffScreen:
         if self.focus == "threads":
             return ("\n tab pane   j/k move   enter go to it   f open/all   c ask Claude"
                     "   D double-check   R reply   V resolve   b back   q quit\n")
-        return ("\n tab pane   j/k move   i review pass   o browse repo   c write   d comment"
-                "   S send   b back   q quit\n")
+        return ("\n tab pane   j/k move   s reviewed   i review pass   o browse repo   c write"
+                "   d comment   S send   b back   q quit\n")
 
     # --- interaction ---------------------------------------------------------
 

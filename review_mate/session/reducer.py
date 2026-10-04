@@ -20,6 +20,17 @@ def reduce(state: SessionState, event: "ev.Event") -> SessionState:
         s.checkout_path = event.path
     elif isinstance(event, ev.FilesApplied):
         s.files = list(event.files)
+        # a file the change no longer touches cannot be read, so its mark has nothing left to be
+        # about — the same no-orphans rule the drafts follow when their highlight goes
+        paths = {f.path for f in event.files}
+        s.reviewed_files = [r for r in s.reviewed_files if r.path in paths]
+    elif isinstance(event, ev.FileReviewed):
+        # re-marking a file replaces the old mark rather than stacking: re-reading a file that
+        # changed is the same claim made again, against what it says now
+        s.reviewed_files = [r for r in s.reviewed_files if r.path != event.file.path]
+        s.reviewed_files.append(event.file)
+    elif isinstance(event, ev.FileUnreviewed):
+        s.reviewed_files = [r for r in s.reviewed_files if r.path != event.path]
     elif isinstance(event, ev.HighlightAdded):
         # a log written before highlights were numbered carries ordinal 0: number it on replay, in
         # the order it was added, which is the numbering it had at the time

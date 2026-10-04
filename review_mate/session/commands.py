@@ -16,8 +16,8 @@ from pydantic import BaseModel, Field, TypeAdapter
 from review_mate.session import events as ev
 from review_mate.session.state import (
     AccessRequest, AccessStatus, Card, CardStatus, ChatMessage, CheckRequest, DraftComment, DraftStatus,
-    Addressed, FileEntry, Grant, Highlight, Label, LineRange, MRMetadata, Origin, ReviewThread,
-    Side, Subject, SubjectKind,
+    Addressed, FileEntry, Grant, Highlight, Label, LineRange, MRMetadata, Origin, ReviewedFile,
+    ReviewThread, Side, Subject, SubjectKind, file_fingerprint,
 )
 
 
@@ -35,6 +35,17 @@ class AddHighlight(BaseModel):
 class RemoveHighlight(BaseModel):
     type: Literal["remove_highlight"] = "remove_highlight"
     highlight_id: str
+
+
+class MarkFileReviewed(BaseModel):
+    """The reviewer has finished reading this file. Re-issuing it on a stale mark re-reads it."""
+    type: Literal["mark_file_reviewed"] = "mark_file_reviewed"
+    path: str
+
+
+class UnmarkFileReviewed(BaseModel):
+    type: Literal["unmark_file_reviewed"] = "unmark_file_reviewed"
+    path: str
 
 
 class RequestContext(BaseModel):
@@ -189,7 +200,8 @@ Command = Union[
     RequestAccess, DecideAccess, RecordGrant, RecordAddressed, LabelCard, ApplyMRMetadata,
     SetCheckout, ApplyFiles, ApplyThread,
     ReplaceThreads,
-    PostMessage, ClearChat, RequestCheck, SaveDraft, RemoveDraft, MarkDraftPosted, EndSession,
+    PostMessage, ClearChat, RequestCheck, SaveDraft, RemoveDraft, MarkDraftPosted,
+    MarkFileReviewed, UnmarkFileReviewed, EndSession,
 ]
 
 
@@ -233,6 +245,9 @@ AUTHORITY: dict[str, set[Origin]] = {
     "save_draft": {Origin.BROWSER},
     "remove_draft": {Origin.BROWSER},
     "mark_draft_posted": {Origin.BROWSER},
+    # having read a file is the reviewer's own claim; the agent never makes it on their behalf
+    "mark_file_reviewed": {Origin.BROWSER},
+    "unmark_file_reviewed": {Origin.BROWSER},
     "apply_mr_metadata": {Origin.SYSTEM},
     "set_checkout": {Origin.SYSTEM},
     "apply_files": {Origin.SYSTEM},
@@ -293,6 +308,18 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
 
     if isinstance(command, RemoveHighlight):
         return emit(ev.HighlightRemoved, highlight_id=command.highlight_id)
+
+    if isinstance(command, MarkFileReviewed):
+        entry = next((f for f in state.files if f.path == command.path), None)
+        if entry is None:
+            return Rejection(reason=f"no such file: {command.path}")
+        return emit(ev.FileReviewed,
+                    file=ReviewedFile(path=command.path,
+                                      sha=state.mr.sha if state.mr else None,
+                                      fingerprint=file_fingerprint(entry), at=ts))
+
+    if isinstance(command, UnmarkFileReviewed):
+        return emit(ev.FileUnreviewed, path=command.path)
 
     if isinstance(command, RequestContext):
         if not any(h.id == command.highlight_id for h in state.highlights):

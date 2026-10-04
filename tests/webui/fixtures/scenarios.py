@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from review_mate.session.state import (
     Card, ChangeType, DraftComment, DraftStatus, FileEntry, Highlight, LineRange, MRMetadata,
-    SessionState, SessionStatus, Side,
+    ReviewedFile, SessionState, SessionStatus, Side, file_fingerprint,
 )
 
 DIFF_A = """@@ -44,3 +44,4 @@ class Scheduler:
@@ -44,6 +44,20 @@ def two_file_review(session_id="s1") -> SessionState:
         FileEntry(path="scheduler/config.py", change_type=ChangeType.MODIFIED,
                   language="python", hunks=[{"diff": DIFF_B}]),
     ])
+
+
+def review_with_a_file_read(session_id="s1", stale=False) -> SessionState:
+    """A change whose first file the reviewer has finished reading.
+
+    `stale` records the mark against a fingerprint that is not the file's any more — which is
+    what the server reports after a push that touched this file, and the only way to stage it
+    here without a second load.
+    """
+    state = two_file_review(session_id)
+    entry = state.files[0]
+    state.reviewed_files = [ReviewedFile(path=entry.path, sha="abc123", at="2026-01-01T00:02:00+00:00",
+                                         fingerprint="not-this-file" if stale else file_fingerprint(entry))]
+    return state
 
 
 def review_with_drafts(session_id="s1") -> SessionState:

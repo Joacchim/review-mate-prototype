@@ -44,7 +44,7 @@ from pydantic import BaseModel, Field
 from review_mate.config import blob_budget_bytes
 from review_mate.contracts import MRRef, RepoRef, ref_of
 from review_mate.forges import Forges
-from review_mate.session.state import ChangeType, FileEntry, SessionStatus
+from review_mate.session.state import ChangeType, FileEntry, SessionStatus, file_fingerprint
 from review_mate.view.diffdoc import build as build_hunks
 from review_mate.view.diffdoc import split_files
 from review_mate.view.tokens import tokenize
@@ -106,6 +106,20 @@ class FileRow(BaseModel):
     additions: int = 0
     deletions: int = 0
     has_diff: bool = True
+    reviewed: bool = False         # the reviewer has finished reading this file
+    reviewed_stale: bool = False   # ... and it has changed since they did
+
+
+def _reviewed(snapshot) -> dict:
+    """path -> the ReviewedFile and whether it still holds.
+
+    Read against the session's own files, never the mode's. The same file read in `since` and in
+    `commit@` is one file and carries one mark; what each mode changes is the lines it shows,
+    which is not what the mark is about.
+    """
+    by_path = {f.path: f for f in snapshot.files}
+    return {r.path: (r, r.fingerprint != file_fingerprint(by_path.get(r.path)))
+            for r in snapshot.reviewed_files}
 
 
 class DiffView(BaseModel):
@@ -131,6 +145,9 @@ class FileView(BaseModel):
     old_path: str | None = None
     change_type: str = ""
     language: str | None = None
+    reviewed: bool = False
+    reviewed_stale: bool = False
+    reviewed_sha: str | None = None   # which version they read, for a mark that has gone stale
     state: str = "ready"       # ready | loading | unknown-session | unknown-file
                                # | unsupported-mode | malformed-name | unavailable | error
     error: str = ""
@@ -192,13 +209,16 @@ class DiffTopics:
             return DiffView(session=session_id, mode=mode, state=state, error=error,
                             mr=snapshot.mr.model_dump(mode="json") if snapshot.mr else {},
                             ).model_dump(mode="json")
+        marks = _reviewed(snapshot)
         rows = []
         for entry in files:
             additions, deletions = _counts(_diff_text(entry))
+            mark, stale = marks.get(entry.path, (None, False))
             rows.append(FileRow(path=entry.path, old_path=entry.old_path,
                                 change_type=getattr(entry.change_type, "value", "") or "",
                                 language=entry.language, additions=additions, deletions=deletions,
-                                has_diff=bool(_diff_text(entry).strip())))
+                                has_diff=bool(_diff_text(entry).strip()),
+                                reviewed=mark is not None, reviewed_stale=stale))
         mr = snapshot.mr.model_dump(mode="json") if snapshot.mr else {}
         key = (session_id, mode, self._head(snapshot))
         return DiffView(session=session_id, mode=mode, mr=mr, files=rows,
@@ -221,9 +241,12 @@ class DiffTopics:
             return FileView(session=session_id, mode=mode, path=path,
                             state="unknown-file").model_dump(mode="json")
         hunks = build_hunks(_diff_text(entry), entry.path, entry.language)
+        mark, stale = _reviewed(snapshot).get(entry.path, (None, False))
         return FileView(session=session_id, mode=mode, path=entry.path, old_path=entry.old_path,
                         change_type=getattr(entry.change_type, "value", "") or "",
                         language=entry.language,
+                        reviewed=mark is not None, reviewed_stale=stale,
+                        reviewed_sha=mark.sha if mark else None,
                         head_aligned=self._aligned.get((session_id, mode, self._head(snapshot)), True),
                         hunks=[hunk.model_dump(mode="json") for hunk in hunks]).model_dump(mode="json")
 

@@ -27,8 +27,9 @@ from review_mate.server.app import create_app  # noqa: E402
 from review_mate.contracts import MRRef  # noqa: E402
 from review_mate.session.state import (  # noqa: E402
     AccessRequest, Addressed, Card, ChangeType, ChatMessage, Criticality, DraftComment,
-    DraftStatus, FileEntry, Highlight, Label, LineRange, MRMetadata, ReviewThread, ThreadComment,
-    SessionState, SessionStatus, Side, Subject, SubjectKind, Theme,
+    DraftStatus, FileEntry, Highlight, Label, LineRange, MRMetadata, ReviewedFile, ReviewThread,
+    ThreadComment, SessionState, SessionStatus, Side, Subject, SubjectKind, Theme,
+    file_fingerprint,
 )
 from webui.fixtures.host import StubHost  # noqa: E402
 from webui.fixtures.manager import FakeManager  # noqa: E402
@@ -252,6 +253,30 @@ def showcase(session_id: str = "s1") -> SessionState:
 
 
 # --- the shots -----------------------------------------------------------------
+
+def part_read(session_id: str = "s1") -> SessionState:
+    """The showcase review, partly worked through: one file finished and still finished, one
+    finished and changed by the author since. Both states at once is the only way to show that
+    the difference is the point."""
+    state = showcase(session_id)
+    settled, moved = state.files[1], state.files[2]
+    state.reviewed_files = [
+        ReviewedFile(path=settled.path, sha="abc123def", at="2026-02-01T09:30:00+00:00",
+                     fingerprint=file_fingerprint(settled)),
+        ReviewedFile(path=moved.path, sha="0ldhead", at="2026-02-01T09:34:00+00:00",
+                     fingerprint="read-against-an-earlier-version"),
+    ]
+    return state
+
+
+@shot("reviewed-files", "working through a change file by file",
+      shows=".node.file.reviewed .rv",
+      marks=((".treeprog", "1"), (".node.file.reviewed:not(.stale) .rv", "2"),
+             (".node.file.stale .rv", "3"), (".fname .rvbtn", "4")))
+def _reviewed_files(page, base, stage):
+    stage(part_read())
+    _open(page, base)
+
 
 @shot("hub", "the landing page: what is open, and what is waiting on you", shows=".land",
       marks=(("#ref", "1"), (".land .hubhdr", "2"), (".land .queuehdr", "3")), height=620)

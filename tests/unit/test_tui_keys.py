@@ -695,3 +695,40 @@ async def test_nothing_happens_on_a_highlight_or_off_the_annotations():
     shell.diff.focus = "body"
     press(shell, "L")
     assert shell.labelling is None
+
+
+# --- files the reviewer has finished reading -------------------------------------------------
+
+async def test_s_marks_the_selected_file_read():
+    shell, client = shell_on_a_review()
+    press(shell, "s")
+    await settle()
+    assert client.session_commands == [("s1", {"type": "mark_file_reviewed", "path": "a.py"})]
+
+
+async def test_s_on_a_file_already_read_takes_the_mark_off():
+    shell, client = shell_on_a_review()
+    client.views["diff:s1:full"]["files"][0]["reviewed"] = True
+    press(shell, "s")
+    await settle()
+    assert client.session_commands == [("s1", {"type": "unmark_file_reviewed", "path": "a.py"})]
+
+
+async def test_s_on_a_stale_mark_records_the_new_version_rather_than_clearing_it():
+    """Re-reading is the common case after a push; clearing is what a second press is for."""
+    shell, client = shell_on_a_review()
+    client.views["diff:s1:full"]["files"][0].update(reviewed=True, reviewed_stale=True)
+    press(shell, "s")
+    await settle()
+    assert client.session_commands == [("s1", {"type": "mark_file_reviewed", "path": "a.py"})]
+
+
+async def test_s_does_nothing_on_a_repository_file_that_is_not_in_the_change():
+    shell, client = shell_on_a_review()
+    shell.diff.browsing = True
+    shell.diff.file_index = 99          # clamped to the last row, a browsed repository file
+    shell.diff.client.views["tree:s1"] = {"state": "ready", "paths": ["a.py", "untouched.py"]}
+    press(shell, "s")
+    await settle()
+    assert [c for c in client.session_commands
+            if c[1]["path"] != "a.py"] == []    # never a file the change does not touch

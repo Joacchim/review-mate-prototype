@@ -622,6 +622,16 @@ class Shell:
                                       approve=self.approve))
             self.approve = False
 
+        @kb.add("s")
+        def _reviewed(event) -> None:
+            """Mark the selected file read, or unmark it. `r` and `v` are taken, so this is
+            "seen" — the same affordance GitLab spells "viewed"."""
+            if self.diff is None:
+                return
+            command = self.diff.reviewed_toggle()
+            if command is not None:
+                spawn(self.client.session_command(self.diff.session, command))
+
         @kb.add("x")
         def _discard(event) -> None:
             if self.diff is None or not self.diff.draft_body():

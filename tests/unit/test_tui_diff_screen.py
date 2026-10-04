@@ -676,3 +676,46 @@ def test_closing_the_browser_closes_the_file_it_opened():
     screen.open_current()
     screen.toggle_browse()
     assert screen.viewing is None              # it has nowhere to be listed any more
+
+
+# --- files the reviewer has finished reading -------------------------------------------------
+
+def _tick_style(screen, path):
+    """The style on the tick that precedes a file's row, or None when it carries no tick."""
+    pieces = list(screen.fragments())
+    for index, (style, text) in enumerate(pieces):
+        if text == path and index and pieces[index - 1][1].strip() == "\u2713":
+            return pieces[index - 1][0]
+    return None
+
+
+def test_the_file_pane_ticks_what_has_been_read_and_counts_it():
+    screen = DiffScreen(StubClient({"diff:s1:full": listing(
+        [dict(row("a.py"), reviewed=True), row("pkg/b.py")])}), "s1")
+    assert "1 of 2 reviewed" in text_of(screen)
+    assert _tick_style(screen, "a.py") == "class:ok"
+    assert _tick_style(screen, "pkg/b.py") is None
+
+
+def test_a_mark_the_author_has_changed_under_is_shown_but_not_counted():
+    """Uncounted, because the file is not read any more; still ticked, because it was. The tick
+    is the same glyph muted rather than a different one — the count carries the difference."""
+    screen = DiffScreen(StubClient({"diff:s1:full": listing(
+        [dict(row("a.py"), reviewed=True, reviewed_stale=True), row("pkg/b.py")])}), "s1")
+    assert "0 of 2 reviewed \u00b7 1 to re-read" in text_of(screen)
+    assert _tick_style(screen, "a.py") == "class:muted"
+
+
+def test_nothing_is_said_about_re_reading_when_nothing_needs_it():
+    screen = DiffScreen(StubClient({"diff:s1:full": listing(
+        [dict(row("a.py"), reviewed=True), row("pkg/b.py")])}), "s1")
+    assert "re-read" not in text_of(screen)
+
+
+def test_the_count_is_over_the_change_not_the_repository():
+    """Browsing adds repository files to the list; they are not part of the change to read."""
+    client = StubClient({"diff:s1:full": listing([dict(row("a.py"), reviewed=True)]),
+                         "tree:s1": {"state": "ready", "paths": ["a.py", "untouched.py"]}})
+    screen = DiffScreen(client, "s1")
+    screen.browsing = True
+    assert "1 of 1 reviewed" in text_of(screen)

@@ -1087,6 +1087,46 @@ function render() {
   renderAnnotations();
 }
 
+// --- reviewed files ---------------------------------------------------------
+//
+// GitLab's "viewed" checkbox, under the name this tool uses for it. The mark is per file and
+// deliberately not the review-wide watermark: both can be true at once and neither implies the
+// other. Whether it still holds is the server's answer, not ours — it compares the file's own
+// diff rather than the review's head, so a push that touched some other file leaves this one
+// marked, which is the only way a file-by-file record survives an active author.
+
+function markReviewed(path, on) {
+  post({ type: on ? "mark_file_reviewed" : "unmark_file_reviewed", path });
+}
+
+// Delegated from #diff rather than bound to the button, because the diff panel is rebuilt rather
+// than merged — deliberately, it is thousands of cells and measured — and any topic frame rebuilds
+// it, which the presence tick produces on its own every few seconds. A handler on the button is
+// lost when the press and the release fall either side of one of those: neither node sees a click.
+// The container survives, and a click whose two halves land on two different buttons still fires
+// on their nearest common ancestor, which is this one.
+let reviewedDelegated = false;
+function delegateReviewed() {
+  if (reviewedDelegated) return;
+  reviewedDelegated = true;
+  $("diff").addEventListener("click", (e) => {
+    const b = e.target.closest(".rvbtn");
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    markReviewed(b.dataset.rvpath, b.dataset.rvon === "1");
+  });
+}
+
+// "3 of 11 reviewed", counted over whatever the current diff view mode lists. A stale mark is
+// not counted: the file has changed since it was read, so it is not read. It still shows as
+// marked, because the reviewer did read it and losing that is worse than carrying it greyed —
+// and the count says how many are waiting to be re-read, so a number that drops explains itself.
+function reviewedCount(files) {
+  let done = 0, stale = 0;
+  files.forEach((f) => { if (f.reviewed) (f.reviewed_stale ? stale++ : done++); });
+  return { done, stale };
+}
+
 // --- file tree (nested, foldable) -------------------------------------------
 
 function buildTree(entries) {
@@ -1134,9 +1174,19 @@ function renderTree() {
   }
 
   const files = activeFiles();
+  if (files.length) {
+    const { done, stale } = reviewedCount(files);
+    const prog = document.createElement("div");
+    prog.className = "treeprog" + (done === files.length ? " all" : "");
+    prog.dataset.key = "treeprog";
+    prog.textContent = `${done} of ${files.length} reviewed`
+      + (stale ? ` · ${stale} to re-read` : "");
+    el.appendChild(prog);
+  }
   const diffPaths = new Set(files.map((f) => f.path));
   const entries = files.map((f) => ({ path: f.path, old_path: f.old_path,
-                                     change_type: f.change_type, diff: true }));
+                                     change_type: f.change_type, diff: true,
+                                     reviewed: f.reviewed, reviewed_stale: f.reviewed_stale }));
   if (!inSince && !inCommits && showAll) {
     repoPaths().forEach((p) => { if (!diffPaths.has(p)) entries.push({ path: p, diff: false }); });
   }
@@ -1171,7 +1221,8 @@ function renderNode(node, path, depth, out) {
   });
   node.files.sort((a, b) => a.name.localeCompare(b.name)).forEach(({ name, entry }) => {
     const row = document.createElement("div");
-    row.className = "node file" + (entry.path === currentFile ? " on" : "") + (entry.diff ? "" : " nodiff");
+    row.className = "node file" + (entry.path === currentFile ? " on" : "") + (entry.diff ? "" : " nodiff")
+      + (entry.reviewed ? (entry.reviewed_stale ? " reviewed stale" : " reviewed") : "");
     row.dataset.key = "file:" + entry.path;
     row.style.paddingLeft = `${10 + depth * 14 + 14}px`;
     const c = entry.diff ? ((entry.change_type || "")[0] || "~") : "·";
@@ -1180,7 +1231,10 @@ function renderNode(node, path, depth, out) {
     const moved = entry.old_path && entry.old_path !== entry.path;
     const oldName = moved ? entry.old_path.split("/").pop() : null;
     const shown = oldName && oldName !== name ? `{${oldName},${name}}` : name;
-    row.innerHTML = `<span class="ct ${entry.change_type || ""}">${c}</span>${esc(shown)}`;
+    const tick = entry.reviewed
+      ? `<span class="rv" title="${entry.reviewed_stale ? "you read this, and it has changed since" : "you have read this"}">✓</span>`
+      : "";
+    row.innerHTML = `<span class="ct ${entry.change_type || ""}">${c}</span>${esc(shown)}${tick}`;
     if (moved) row.title = `renamed: ${entry.old_path} → ${entry.path}`;
     row.onclick = () => selectFile(entry);
     out.appendChild(row);
@@ -1442,6 +1496,22 @@ function renderFileDiff(el, files, suffix, interactive) {
   name.appendChild(label);
   if (isMd) name.appendChild(btn(mdRendered.has(file.path) ? "◱ show diff" : "◱ rendered",
                                  "btn ghost fnbtn", () => toggleMd(file.path)));
+  // in every diff view mode, because the mark is about the file and the modes differ only in
+  // which of its lines they show. A stale mark offers to be made again rather than clearing
+  // itself: the reviewer decides they have re-read it, nothing decides that for them.
+  delegateReviewed();
+  const stale = !!file.reviewed_stale;
+  const toggle = btn(stale ? "✓! read again" : file.reviewed ? "✓ reviewed" : "mark reviewed",
+                     "btn ghost fnbtn rvbtn" + (stale ? " stale" : file.reviewed ? " on" : ""),
+                     null);
+  toggle.dataset.rvpath = file.path;
+  // what the click means, read off the button rather than captured when it was built — a stale
+  // mark is re-made, because re-reading is why you came back; a second press then clears it
+  toggle.dataset.rvon = stale || !file.reviewed ? "1" : "0";
+  toggle.title = stale ? "you read this file, and it has changed since — marking it again records this version"
+                       : file.reviewed ? "you have read this file — click to undo"
+                                       : "record that you have finished reading this file";
+  name.appendChild(toggle);
   el.appendChild(name);
   if (isMd && mdRendered.has(file.path)) { renderMarkdownDoc(el, file.path); return; }
   const hl = interactive ? highlightLines(file.path) : new Set();

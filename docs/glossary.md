@@ -101,6 +101,12 @@ mirrored into session state. `thread` is its name on the wire.
 
 **Watermark** — the MR head a reviewer last marked as reviewed. What `since` measures from.
 
+**Reviewed file** — a file the reviewer has finished reading. Per file, and not the watermark:
+both can be true at once and neither implies the other. It holds until that file's own diff
+changes, so a push elsewhere in the change leaves it standing; once the file does change the mark
+goes **stale** rather than away, as a highlight does — kept, but uncounted, because a file waiting
+to be read again is not a file that is done.
+
 **head-aligned** — whether a view's line numbers are in the session's head coordinates. A `since`
 view computed against a newer head is not, and cannot anchor a comment.
 

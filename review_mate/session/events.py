@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from review_mate.session.state import (
     AccessRequest, AccessStatus, Addressed, Card, CardStatus, ChatMessage, CheckRequest,
-    DraftComment, FileEntry, Grant, Highlight, Label, MRMetadata, Origin, ReviewThread, Subject,
+    DraftComment, FileEntry, Grant, Highlight, Label, MRMetadata, Origin, ReviewedFile,
+    ReviewThread, Subject,
 )
 
 
@@ -154,6 +155,16 @@ class DraftPosted(_EventBase):
     thread_id: str | None = None       # the discussion the posted draft became (draft-as-thread)
 
 
+class FileReviewed(_EventBase):
+    type: Literal["file_reviewed"] = "file_reviewed"
+    file: ReviewedFile
+
+
+class FileUnreviewed(_EventBase):
+    type: Literal["file_unreviewed"] = "file_unreviewed"
+    path: str
+
+
 class SessionEnded(_EventBase):
     type: Literal["session_ended"] = "session_ended"
 
@@ -166,7 +177,7 @@ Event = Annotated[
         CardLabelled, SubjectAddressed, AccessRequested, AccessDecided, AccessGrantChanged,
         ThreadApplied, ThreadsReplaced, InsightsRequested, CheckRequested, MessagePosted,
         ChatCleared,
-        DraftSaved, DraftRemoved, DraftPosted, SessionEnded,
+        DraftSaved, DraftRemoved, DraftPosted, FileReviewed, FileUnreviewed, SessionEnded,
     ],
     Field(discriminator="type"),
 ]
