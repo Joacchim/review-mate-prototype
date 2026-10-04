@@ -7,7 +7,8 @@ from review_mate.session.commands import handle, Rejection, AUTHORITY
 from review_mate.session.reducer import reduce, fold
 from review_mate.session.state import (
     SessionState, Origin, Side, LineRange, MRMetadata, FileEntry, ChangeType,
-    Highlight, Card, AccessRequest, ReviewThread, CardStatus, AccessStatus, ChatMessage,
+    Highlight, Card, AccessRequest, ReviewThread, CardStatus, AccessStatus, ChatMessage, Addressed,
+    CheckRequest,
     Criticality, DraftComment, DraftStatus, Grant, Label, Subject, SubjectKind, Theme,
 )
 
@@ -198,10 +199,38 @@ def test_mr_and_files_reduce():
         draft=DraftComment(id="d", highlight_id="h", body="nit")),
     ev.DraftRemoved(seq=15, ts="t", origin=Origin.BROWSER, highlight_id="h"),
     ev.DraftPosted(seq=16, ts="t", origin=Origin.BROWSER, highlight_id="h", url="u#note_1"),
+    ev.CheckoutSet(seq=17, ts="t", origin=Origin.SYSTEM, path="/tmp/wt"),
+    ev.ContextRequested(seq=18, ts="t", origin=Origin.BROWSER, highlight_id="h", question="why?"),
+    ev.CardLabelled(seq=19, ts="t", origin=Origin.AGENT, card_id="c",
+        label=Label(theme=Theme.BUG, criticality=Criticality.HIGH, by=Origin.AGENT)),
+    ev.SubjectAddressed(seq=20, ts="t", origin=Origin.AGENT, record=Addressed(
+        subject=Subject(kind=SubjectKind.HIGHLIGHT, id="h"), sha="abc", summary="fixed")),
+    ev.AccessGrantChanged(seq=21, ts="t", origin=Origin.SYSTEM, request_id="r",
+        grant=Grant(repo="x", path="/tmp/x")),
+    ev.ThreadsReplaced(seq=22, ts="t", origin=Origin.SYSTEM, threads=[ReviewThread(id="t")]),
+    ev.InsightsRequested(seq=23, ts="t", origin=Origin.BROWSER, sha="abc"),
+    ev.CheckRequested(seq=24, ts="t", origin=Origin.BROWSER, request=CheckRequest(
+        id="k", subject=Subject(kind=SubjectKind.HIGHLIGHT, id="h"))),
+    ev.MessagePosted(seq=25, ts="t", origin=Origin.BROWSER, message=ChatMessage(
+        id="m", role=Origin.BROWSER, body="hello")),
 ])
 def test_event_roundtrip_all_types(event):
     back = ev.parse_event(event.model_dump_json())
     assert type(back) is type(event) and back.seq == event.seq
+
+
+def test_the_roundtrip_list_covers_every_event_there_is():
+    """The list above is written by hand, and it had fallen nine events behind.
+
+    A persisted event missing from it is a resume bug nothing else catches: the suite stays green
+    while the event that never round-tripped is the one that fails to come back. Checking the list
+    against the union is what stops it drifting again.
+    """
+    from typing import get_args
+    declared = {cls.__name__ for cls in get_args(get_args(ev.Event)[0])}
+    covered = {type(case).__name__
+               for case in test_event_roundtrip_all_types.pytestmark[0].args[1]}
+    assert declared == covered, f"never round-tripped: {sorted(declared - covered)}"
 
 
 # --- a review pass remembers which code it was about --------------------------
