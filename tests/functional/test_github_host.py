@@ -52,7 +52,8 @@ def _handler(request: httpx.Request) -> httpx.Response:
     p, body = request.url.path, {}
     if request.content:
         body = json.loads(request.content)
-    sent.append((request.method, p, dict(request.url.params), body))
+    sent.append((request.method, p, dict(request.url.params), body,
+                 dict(request.headers)))
     if p.endswith("/graphql"):
         query = body.get("query", "")
         if "reviewThreads" in query:
@@ -157,9 +158,13 @@ async def test_one_commit_diffs_like_the_whole_change(provider):
 
 
 async def test_a_file_is_read_raw(provider):
+    """Without the raw Accept, GitHub answers with base64 JSON and the reader gets metadata
+    where it wanted the file."""
     assert await provider.get_file("o/r", "a.py", "head1") == "the whole file\n"
-    accept = [m for m in sent if "/contents/" in m[1]]
-    assert accept, sent
+    reads = [m for m in sent if "/contents/" in m[1]]
+    assert reads, sent
+    assert reads[0][4]["accept"] == "application/vnd.github.raw"
+    assert reads[0][4]["authorization"] == "Bearer t"   # and it is still an authenticated read
 
 
 async def test_approvals_take_each_reviewer_s_last_word(provider):
@@ -215,7 +220,7 @@ def test_the_writer_satisfies_the_contract(writer):
 async def test_an_inline_comment_lands_on_the_head_the_lines_belong_to(writer):
     await writer.post_comment(REF, {"new_path": "a.py", "new_line": 12, "head_sha": "head1",
                                     "sha": "fallback"}, "this needs a guard")
-    method, path, _, body = sent[-1]
+    method, path, _, body, _hdrs = sent[-1]
     assert (method, path) == ("POST", "/repos/o/r/pulls/7/comments")
     assert body == {"body": "this needs a guard", "path": "a.py", "line": 12,
                     "side": "RIGHT", "commit_id": "head1"}
@@ -268,3 +273,113 @@ async def test_a_capability_the_forge_lacks_is_refused_rather_than_attempted(wri
     writer._caps["approvals"] = False
     with pytest.raises(CapabilityError):
         await writer.approve(REF)
+
+
+# --- the credential, and keeping it fresh ------------------------------------------------------
+
+def _gh_config(tmp_path, body: str):
+    cfgdir = tmp_path / "gh"; cfgdir.mkdir(exist_ok=True)
+    (cfgdir / "hosts.yml").write_text(body)
+
+
+def test_the_token_is_asked_of_the_cli_not_read_out_of_the_config(tmp_path, monkeypatch):
+    """gh keeps the token in the OS keyring and writes a config that names the account and holds
+    no token — read the file alone and you find a user you cannot authenticate as."""
+    from review_mate.host import config as cfgmod
+    _gh_config(tmp_path, "github.com:\n    git_protocol: ssh\n    users:\n        me:\n    user: me\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(cfgmod.subprocess, "run",
+                        lambda *a, **k: type("P", (), {"returncode": 0, "stdout": "gho_live\n"})())
+    assert cfgmod._gh_config_credentials() == (None, "me")    # the file alone: no token
+    assert cfgmod._gh_credentials() == ("gho_live", "me")     # asking gh: both
+
+
+def test_the_config_still_answers_when_gh_is_not_installed(tmp_path, monkeypatch):
+    from review_mate.host import config as cfgmod
+    _gh_config(tmp_path, "github.com:\n    oauth_token: gho_onfile\n    user: me\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    def absent(*a, **k):
+        raise FileNotFoundError("gh")
+    monkeypatch.setattr(cfgmod.subprocess, "run", absent)
+    assert cfgmod._gh_credentials() == ("gho_onfile", "me")   # older gh, or no gh at all
+
+
+def test_a_refused_gh_leaves_the_caller_with_nothing_rather_than_a_blank_token(tmp_path, monkeypatch):
+    from review_mate.host import config as cfgmod
+    _gh_config(tmp_path, "github.com:\n    user: me\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(cfgmod.subprocess, "run",
+                        lambda *a, **k: type("P", (), {"returncode": 1, "stdout": ""})())
+    assert cfgmod._gh_credentials() == (None, "me")
+
+
+def test_gh_git_protocol_honours_the_host_the_reviewer_configured(tmp_path, monkeypatch):
+    from review_mate.host.config import _gh_git_protocol
+    _gh_config(tmp_path, "github.com:\n    git_protocol: ssh\n    user: me\n"
+                         "ghe.corp:\n    git_protocol: https\n    user: me\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert _gh_git_protocol("github.com") == "ssh"      # gh keys its hosts at the top level
+    assert _gh_git_protocol("ghe.corp") == "https"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "absent"))
+    assert _gh_git_protocol("github.com") is None       # no gh config → caller defaults to https
+
+
+def _after_one_401(good_token: str):
+    """A GitHub that rejects every token but `good_token` — as a live forge would."""
+    def handler(request):
+        if request.headers.get("Authorization") != f"Bearer {good_token}":
+            return httpx.Response(401, json={"message": "Bad credentials"})
+        return _handler(request)
+    return handler
+
+
+async def test_the_token_reloads_live_on_a_401_and_the_request_retries(provider):
+    # a side `gh auth login` refreshed the credential; the running server must pick it up
+    provider._client = httpx.AsyncClient(transport=httpx.MockTransport(_after_one_401("fresh")),
+                                         base_url="https://api.github.com")
+    provider.token = "stale"
+    provider._reload_token = lambda: "fresh"
+    payload = await provider.load(REF)
+    assert provider.token == "fresh"                   # swapped in place, no restart
+    assert payload.mr.source_branch == "fix/backoff"   # and the read actually completed
+
+
+async def test_graphql_reloads_too_so_threads_are_not_the_one_thing_that_stays_broken(provider):
+    provider._client = httpx.AsyncClient(transport=httpx.MockTransport(_after_one_401("fresh")),
+                                         base_url="https://api.github.com")
+    provider.token = "stale"
+    provider._reload_token = lambda: "fresh"
+    assert len(await provider.fetch_threads(REF)) == 2
+
+
+async def test_the_writer_reloads_as_well(writer):
+    writer._client = httpx.AsyncClient(transport=httpx.MockTransport(_after_one_401("fresh")),
+                                       base_url="https://api.github.com")
+    writer.token = "stale"
+    writer._reload_token = lambda: "fresh"
+    await writer.post_comment(REF, {"new_path": "a.py", "new_line": 12, "head_sha": "head1"},
+                              "here")
+    assert writer.token == "fresh"
+
+
+async def test_an_auth_error_with_nothing_to_reload_is_surfaced_not_swallowed(provider):
+    """The retry must not turn a genuinely dead credential into a silent empty read."""
+    provider._client = httpx.AsyncClient(transport=httpx.MockTransport(_after_one_401("fresh")),
+                                         base_url="https://api.github.com")
+    provider.token = "stale"
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider.load(REF)
+
+
+async def test_a_reload_that_returns_the_same_dead_token_does_not_loop(provider):
+    tries = []
+    async def count(request):
+        tries.append(1)
+        return httpx.Response(401, json={"message": "Bad credentials"})
+    provider._client = httpx.AsyncClient(transport=httpx.MockTransport(count),
+                                         base_url="https://api.github.com")
+    provider.token = "stale"
+    provider._reload_token = lambda: "stale"      # nothing changed on disk
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider.load(REF)
+    assert len(tries) == 1                        # no pointless second round-trip

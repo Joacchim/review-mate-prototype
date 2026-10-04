@@ -77,17 +77,37 @@ def parse_github_reference(s: str, default_host: str) -> MRRef | None:
     return None
 
 
+async def _authed(client: httpx.AsyncClient, obj, method: str, url: str,
+                  headers: dict | None = None, **kw):
+    """Send as obj; on 401/403 reload the token once (so a side `gh auth` refresh takes effect
+    live) and retry. A still-failing auth error propagates (surfaced). The headers are rebuilt
+    for the retry rather than reused, which is what carries the fresh token; a caller's own
+    headers (the raw-content Accept) still win over the defaults.
+    """
+    def _h():
+        return {**obj._headers(), **(headers or {})}
+    resp = await client.request(method, url, headers=_h(), **kw)
+    if resp.status_code in (401, 403) and getattr(obj, "_reload_token", None) is not None:
+        fresh = obj._reload_token()
+        if fresh and fresh != obj.token:
+            obj.token = fresh
+            resp = await client.request(method, url, headers=_h(), **kw)
+    resp.raise_for_status()
+    return resp
+
+
 class GitHubProvider:
     """Reads a pull request. `project` is `owner/repo`; `iid` is the number people cite."""
 
     def __init__(self, base_url: str, token: str, username: str, host: str = "github.com",
                  graphql_url: str | None = None, client: httpx.AsyncClient | None = None,
-                 git_protocol: str = "https"):
+                 git_protocol: str = "https", reload_token=None):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.username = username
         self.host = host
         self.git_protocol = git_protocol
+        self._reload_token = reload_token   # () -> fresh token | None (live credential reload)
         # Enterprise splits them: the REST root ends /api/v3 while GraphQL sits at /api/graphql.
         self.graphql_url = graphql_url or (
             "https://api.github.com/graphql" if "api.github.com" in self.base_url
@@ -106,8 +126,7 @@ class GitHubProvider:
                 "X-GitHub-Api-Version": "2022-11-28"}
 
     async def _get(self, path: str, params: dict | None = None):
-        resp = await self._client.get(path, params=params, headers=self._headers())
-        resp.raise_for_status()
+        resp = await _authed(self._client, self, "GET", path, params=params)
         return resp.json()
 
     async def _paged(self, path: str, params: dict | None = None, max_pages: int = 20) -> list:
@@ -124,9 +143,8 @@ class GitHubProvider:
         return out
 
     async def _graphql(self, query: str, **variables):
-        resp = await self._client.post(self.graphql_url, headers=self._headers(),
-                                       json={"query": query, "variables": variables})
-        resp.raise_for_status()
+        resp = await _authed(self._client, self, "POST", self.graphql_url,
+                             json={"query": query, "variables": variables})
         body = resp.json()
         if body.get("errors"):
             raise RuntimeError(f"github graphql: {body['errors'][0].get('message', 'failed')}")
@@ -178,10 +196,9 @@ class GitHubProvider:
         return [_entry(f) for f in (row.get("files") or [])]
 
     async def get_file(self, project: str, path: str, ref: str) -> str:
-        resp = await self._client.get(
-            f"/repos/{project}/contents/{quote(path)}", params={"ref": ref},
-            headers={**self._headers(), "Accept": "application/vnd.github.raw"})
-        resp.raise_for_status()
+        resp = await _authed(
+            self._client, self, "GET", f"/repos/{project}/contents/{quote(path)}",
+            params={"ref": ref}, headers={"Accept": "application/vnd.github.raw"})
         return resp.text
 
     async def get_repo_tree(self, project: str, ref: str, max_pages: int = 30) -> list[str]:
@@ -364,11 +381,13 @@ class GitHubWriter:
 
     def __init__(self, base_url: str, token: str, host: str = "github.com",
                  capabilities: dict[str, bool] | None = None,
-                 graphql_url: str | None = None, client: httpx.AsyncClient | None = None):
+                 graphql_url: str | None = None, client: httpx.AsyncClient | None = None,
+                 reload_token=None):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.host = host
         self._caps = dict(capabilities or GITHUB_CAPABILITIES)
+        self._reload_token = reload_token   # () -> fresh token | None (live credential reload)
         self.graphql_url = graphql_url or (
             "https://api.github.com/graphql" if "api.github.com" in self.base_url
             else self.base_url.replace("/api/v3", "") + "/api/graphql")
@@ -388,14 +407,12 @@ class GitHubWriter:
                 "X-GitHub-Api-Version": "2022-11-28"}
 
     async def _send(self, method: str, path: str, json: dict | None = None) -> dict:
-        resp = await self._client.request(method, path, headers=self._headers(), json=json)
-        resp.raise_for_status()
+        resp = await _authed(self._client, self, method, path, json=json)
         return resp.json() if resp.content else {}
 
     async def _graphql(self, query: str, **variables) -> dict:
-        resp = await self._client.post(self.graphql_url, headers=self._headers(),
-                                       json={"query": query, "variables": variables})
-        resp.raise_for_status()
+        resp = await _authed(self._client, self, "POST", self.graphql_url,
+                             json={"query": query, "variables": variables})
         body = resp.json()
         if body.get("errors"):
             raise RuntimeError(f"github graphql: {body['errors'][0].get('message', 'failed')}")

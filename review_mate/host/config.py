@@ -131,12 +131,13 @@ class GitHubConfig:
         self.git_protocol = git_protocol
 
 
-def _gh_credentials() -> tuple[str | None, str | None]:
-    """What `gh auth` left behind, so a reviewer already logged in configures nothing.
+def _gh_config_path() -> Path:
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "gh" / "hosts.yml"
 
-    Mirrors the glab fallback: the token and the account, read rather than asked for.
-    """
-    cfg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "gh" / "hosts.yml"
+
+def _gh_config_credentials() -> tuple[str | None, str | None]:
+    """What `gh`'s config file holds: the account always, the token only on older gh."""
+    cfg = _gh_config_path()
     if not cfg.exists():
         return None, None
     token = user = None
@@ -150,6 +151,44 @@ def _gh_credentials() -> tuple[str | None, str | None]:
     except OSError:
         return None, None
     return token, user
+
+
+def _gh_credentials() -> tuple[str | None, str | None]:
+    """What `gh auth` left behind, so a reviewer already logged in configures nothing.
+
+    Asks the CLI for the token instead of reading it, because gh keeps it in the OS keyring and
+    writes a config naming the account with no token beside it — read the file alone and you
+    find a user you have no way to authenticate as.
+    """
+    cfg_token, user = _gh_config_credentials()
+    token = None
+    try:
+        proc = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=10)
+        if proc.returncode == 0:
+            token = (proc.stdout or "").strip() or None
+    except (FileNotFoundError, subprocess.SubprocessError):
+        pass
+    return token or cfg_token, user
+
+
+def _gh_git_protocol(host: str | None) -> str | None:
+    """The git access method the user configured in gh — review-mate clones over whichever they
+    chose, the same as it honours glab's. gh keys its hosts at the top level, glab nests them."""
+    cfg = _gh_config_path()
+    if not cfg.exists():
+        return None
+    try:
+        text = cfg.read_text()
+    except OSError:
+        return None
+    if host:
+        block = re.search(rf"^{re.escape(host)}:\s*$(.*?)(?=^\S|\Z)", text, re.M | re.S)
+        if block:
+            per_host = re.search(r"git_protocol:\s*(\w+)", block.group(1))
+            if per_host:
+                return per_host.group(1)
+    top = re.search(r"^git_protocol:\s*(\w+)", text, re.M)
+    return top.group(1) if top else None
 
 
 def resolve_github_config() -> GitHubConfig | None:
@@ -166,20 +205,30 @@ def resolve_github_config() -> GitHubConfig | None:
     netloc = urlparse(base).netloc
     # the review model's host is the forge people name, not the API endpoint in front of it
     host = "github.com" if netloc == "api.github.com" else netloc
-    protocol = (os.environ.get("REVIEW_MATE_GIT_PROTOCOL") or "https").lower()
+    protocol = (os.environ.get("REVIEW_MATE_GIT_PROTOCOL")
+                or _gh_git_protocol(host) or "https").lower()
     return GitHubConfig(base_url=base, token=token, username=(user or ""), host=host,
                         git_protocol=protocol)
+
+
+def _github_token_reloader():
+    """Re-resolve the GitHub token from the environment / gh — so a side `gh auth` refresh takes
+    effect on a running server without a restart (used to retry after a 401)."""
+    cfg = resolve_github_config()
+    return cfg.token if cfg else None
 
 
 def build_github_provider(config: GitHubConfig, client: httpx.AsyncClient | None = None):
     return GitHubProvider(base_url=config.base_url, token=config.token,
                           username=config.username, host=config.host,
-                          client=client, git_protocol=config.git_protocol)
+                          client=client, git_protocol=config.git_protocol,
+                          reload_token=_github_token_reloader)
 
 
 def build_github_writer(config: GitHubConfig, client: httpx.AsyncClient | None = None):
     return GitHubWriter(base_url=config.base_url, token=config.token, host=config.host,
-                        capabilities=dict(GITHUB_CAPABILITIES), client=client)
+                        capabilities=dict(GITHUB_CAPABILITIES), client=client,
+                        reload_token=_github_token_reloader)
 
 
 def build_provider_from_env(client: httpx.AsyncClient | None = None):
