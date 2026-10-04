@@ -9,16 +9,32 @@
 #
 # Deliberately *not* here: your API token. See the README — a token set in this file is frozen for
 # the life of the process and shows up in `systemctl show` and the journal, whereas one left to
-# `glab` is re-read from disk when the old one is refused, so `glab auth login` takes effect on the
-# running server with no restart.
+# `glab` or `gh` is re-read when the old one is refused, so `glab auth login` / `gh auth login`
+# takes effect on the running server with no restart.
 
 [Unit]
 Description=review-mate — a local code-review companion
 Documentation=https://github.com/Joacchim/review-mate-prototype
-After=network-online.target
+After=network-online.target graphical-session.target
 
 [Service]
 Type=exec
+
+# Wait for a credential to become obtainable before starting — never for longer than it takes.
+#
+# `glab` and `gh` keep their tokens in the OS keyring, which your login session unlocks. With
+# linger enabled this manager starts at boot, before there is a session, and review-mate resolves
+# credentials *once*, at startup: come up two seconds early and it has no forge for the life of
+# the process, showing an empty queue rather than an error. Ordering after graphical-session.target
+# covers the login case and does nothing under linger, where that target is never reached.
+#
+# The wait is bounded and its failure ignored, because having no forge is a supported state, not
+# an error: with no credentials at all the server still runs, and a branch on this machine needs
+# git and nothing else. Installations that authenticate by environment instead skip the wait
+# entirely — with neither CLI present there is nothing to wait for.
+ExecStartPre=-/bin/sh -c 'command -v gh >/dev/null 2>&1 || command -v glab >/dev/null 2>&1 || exit 0; timeout 120 sh -c "until gh auth token >/dev/null 2>&1 || glab auth status >/dev/null 2>&1; do sleep 2; done"'
+TimeoutStartSec=180
+
 ExecStart=%h/.local/bin/review-mate
 Restart=on-failure
 RestartSec=2s

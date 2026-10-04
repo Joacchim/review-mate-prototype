@@ -116,7 +116,7 @@ systemctl --user restart review-mate
 and left alone, which looks like success and changes nothing.
 Your reviews survive it — they are event-sourced under `~/.review-mate` and restored at startup.
 
-Three things worth knowing:
+Four things worth knowing:
 
 **Leave your token out of the unit file.** A token in `Environment=` is read once at exec and
 frozen for the life of the process, so refreshing it means restarting the service — and it shows up
@@ -124,6 +124,14 @@ in `systemctl show` and the journal. Left to the CLI, it is re-read whenever the
 one in hand, so `glab auth login` or `gh auth login` takes effect on the running server with no
 restart. That is the whole reason the credential resolution falls back to those CLIs rather than
 requiring environment variables.
+
+**It waits for your keyring before it starts.** Credentials are resolved once, at startup, and
+`glab`/`gh` read a keyring your login session unlocks. With `enable-linger` the unit starts at
+boot, before there is a session — two seconds too early and the server has no forge for the life
+of the process, showing an empty queue rather than an error. So the unit waits, up to two minutes,
+for one of the CLIs to be able to hand over a token. The wait is skipped when neither CLI is
+installed, and giving up is not an error: with no credentials at all the server still runs, and a
+branch on this machine is still reviewable.
 
 **A user unit has no ssh agent.** Cloning uses whatever git credentials you already have, which over
 ssh means an agent your login session started and the unit does not inherit. Point `SSH_AUTH_SOCK`
@@ -228,3 +236,7 @@ is the main reason to run it as a unit rather than starting it by hand.
 - **It works in your terminal but not as a service** — a user unit reads neither `~/.bashrc` nor
   your login shell's exports, so anything you set there is invisible to it. Prefer leaving the
   credentials to the CLIs, which the unit can reach.
+- **The service starts with no forge after a reboot** — it resolved credentials before your
+  keyring was unlocked. The shipped unit waits up to two minutes for one of the CLIs to produce a
+  token, so this means the wait ran out: `systemctl --user restart review-mate` once you are
+  logged in, and check `gh auth token` / `glab auth status` work at all.
