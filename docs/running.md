@@ -6,13 +6,19 @@ particular registers the MCP endpoint when *it* starts, so the server has to be 
 
 ## Credentials
 
-review-mate resolves GitLab credentials from the environment first, then falls back to `glab`'s own
-authentication. If you already use `glab`, there is nothing to configure:
+review-mate resolves credentials from the environment first, then falls back to the forge's own CLI
+— `glab` for GitLab, `gh` for GitHub. If you already use either, there is nothing to configure, and
+configuring both gives you both at once:
 
 ```bash
 glab auth login       # if not already done
+gh auth login         # likewise, for GitHub
 review-mate
 ```
+
+It asks the CLI for the token rather than reading its config file, because recent `glab` and `gh`
+keep the token in the OS keyring and write a config that names your account with no token beside
+it. Reading that file alone finds a user you cannot authenticate as.
 
 Otherwise, set them explicitly:
 
@@ -28,9 +34,9 @@ export REVIEW_MATE_GITHUB_URL=https://github.example.com/api/v3   # Enterprise o
 review-mate
 ```
 
-A token set here is read once at launch, so refreshing it means restarting the server. Left to
-`glab`, it is re-read from disk when the host refuses the one in hand — which is why the unit below
-is written to keep tokens out of it.
+A token set here is read once at launch, so refreshing it means restarting the server. Left to the
+CLI, it is re-read when the host refuses the one in hand — so `glab auth login` or `gh auth login`
+takes effect on a running server. That is why the unit below is written to keep tokens out of it.
 
 With no credentials at all the server still starts. There is then no queue and no merge request to
 load — but reviewing a branch on this machine needs git and nothing else, so that still works.
@@ -66,8 +72,8 @@ terminal client is installed either way, and without the extra it fails on its f
 uv tool install 'review-mate[tui] @ git+https://github.com/Joacchim/review-mate-prototype'
 ```
 
-**2. Authenticate once.** `glab auth login`, and leave it at that — see below for why not to put a
-token in the unit.
+**2. Authenticate once.** `glab auth login` and/or `gh auth login`, and leave it at that — see
+below for why not to put a token in the unit.
 
 **3. Install and start the unit.**
 
@@ -114,10 +120,10 @@ Three things worth knowing:
 
 **Leave your token out of the unit file.** A token in `Environment=` is read once at exec and
 frozen for the life of the process, so refreshing it means restarting the service — and it shows up
-in `systemctl show` and the journal. Left to `glab`, it is re-read from disk whenever the host
-refuses the one in hand, so `glab auth login` takes effect on the running server with no restart.
-That is the whole reason the credential resolution falls back to `glab` rather than requiring
-environment variables.
+in `systemctl show` and the journal. Left to the CLI, it is re-read whenever the host refuses the
+one in hand, so `glab auth login` or `gh auth login` takes effect on the running server with no
+restart. That is the whole reason the credential resolution falls back to those CLIs rather than
+requiring environment variables.
 
 **A user unit has no ssh agent.** Cloning uses whatever git credentials you already have, which over
 ssh means an agent your login session started and the unit does not inherit. Point `SSH_AUTH_SOCK`
@@ -144,10 +150,10 @@ review-mate-tui                             # against http://127.0.0.1:8765
 review-mate-tui --url http://127.0.0.1:9000
 ```
 
-It shows the review hub — your open reviews with their state, and your GitLab queue — with
-`j`/`k` to move, `enter` to start a review from the queue, `c` to close one, `r` to check the
-host for updates, `q` to quit. Both clients render state the server folds for them, so neither
-holds its own copy of the review model.
+It shows the review hub — your open reviews with their state, and your queue from every forge you
+are authenticated to — with `j`/`k` to move, `enter` to start a review from the queue, `c` to close
+one, `r` to check the host for updates, `q` to quit. Both clients render state the server folds
+for them, so neither holds its own copy of the review model.
 
 ## Attaching Claude
 
@@ -178,7 +184,7 @@ is the main reason to run it as a unit rather than starting it by hand.
 | `REVIEW_MATE_GITHUB_TOKEN` | GitHub API token (`GITHUB_TOKEN` also accepted) | from `gh` |
 | `REVIEW_MATE_GITHUB_USER` | Your username, used to build the review queue (`GITHUB_USER` also accepted) | from `gh` |
 | `REVIEW_MATE_GITHUB_URL` | API base URL for Enterprise, e.g. `https://github.example.com/api/v3` | `https://api.github.com` |
-| `REVIEW_MATE_GIT_PROTOCOL` | `ssh` or `https`, for cloning | `glab`'s `git_protocol`, else `https` |
+| `REVIEW_MATE_GIT_PROTOCOL` | `ssh` or `https`, for cloning | the forge CLI's own `git_protocol` (`glab`'s or `gh`'s), else `https` |
 | `REVIEW_MATE_HOME` | Where sessions, mirrors and the review KB live | `~/.review-mate` |
 | `REVIEW_MATE_BLOB_BUDGET_MB` | How much whole-file text is kept for unfolding, oldest version dropped first | `16` |
 | `REVIEW_MATE_URL` | Where a reviewer reads this server, for links an agent hands them | `http://127.0.0.1:8765` |
@@ -211,6 +217,14 @@ is the main reason to run it as a unit rather than starting it by hand.
 - **The UI calls an endpoint that 404s** — the browser reloaded but the server did not. Restart it.
 - **`glab auth status` reports an invalid token but everything else works** — some `glab` versions
   report a false negative for OAuth logins. Trust `glab api user` instead. Re-authenticating takes
-  effect on the running server: when the host refuses the token in hand, it is re-read from disk and
-  the request retried, so `glab auth login` needs no restart. A token pinned in the environment is
-  the exception — that one is read once at launch.
+  effect on the running server: when the host refuses the token in hand, it is re-read and the
+  request retried, so `glab auth login` needs no restart. The same holds for `gh auth login`. A
+  token pinned in the environment is the exception — that one is read once at launch.
+- **You are logged in to the forge's CLI, but there is no queue and no change will load** — the
+  server resolved your account and no token for it. Check with `gh auth status` / `glab auth
+  status`: if it says `(keyring)`, the token is not in the config file, and only the CLI can hand
+  it over. `gh auth token` should print one. If it does and review-mate still finds nothing, the
+  CLI is not on the server's `PATH` — a systemd unit does not inherit your shell's.
+- **It works in your terminal but not as a service** — a user unit reads neither `~/.bashrc` nor
+  your login shell's exports, so anything you set there is invisible to it. Prefer leaving the
+  credentials to the CLIs, which the unit can reach.
