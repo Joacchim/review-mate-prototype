@@ -1099,22 +1099,57 @@ function markReviewed(path, on) {
   post({ type: on ? "mark_file_reviewed" : "unmark_file_reviewed", path });
 }
 
-// Delegated from #diff rather than bound to the button, because the diff panel is rebuilt rather
-// than merged — deliberately, it is thousands of cells and measured — and any topic frame rebuilds
-// it, which the presence tick produces on its own every few seconds. A handler on the button is
-// lost when the press and the release fall either side of one of those: neither node sees a click.
-// The container survives, and a click whose two halves land on two different buttons still fires
-// on their nearest common ancestor, which is this one.
-let reviewedDelegated = false;
-function delegateReviewed() {
-  if (reviewedDelegated) return;
-  reviewedDelegated = true;
-  $("diff").addEventListener("click", (e) => {
-    const b = e.target.closest(".rvbtn");
-    if (!b) return;
-    e.preventDefault(); e.stopPropagation();
-    markReviewed(b.dataset.rvpath, b.dataset.rvon === "1");
-  });
+// The file header's controls are kept and re-used rather than built afresh each render.
+//
+// This panel is replaced wholesale rather than merged — deliberately, it is thousands of cells and
+// the trade was measured — and any topic frame replaces it, which the presence tick produces on
+// its own every few seconds. A button rebuilt with it is a *different node* from the one the
+// reviewer pressed, and a press and a release on two different nodes produce no click at all:
+// the browser fires mousedown and mouseup and then has no common ancestor to report a click on.
+// Verified rather than assumed — press, rebuild, release, and nothing happens.
+//
+// Delegating from the container does not help, because there is no click to delegate. Keeping the
+// node is what makes the press and the release land on the same element. Each render updates the
+// button it already has instead of replacing it.
+// `#diff` holds two children for the life of the page: the header, and the body that is
+// replaced. Both the header and each of its controls are made once and only ever updated, so a
+// press and the release that follows it land on the same, continuously-attached node.
+function diffParts() {
+  const root = $("diff");
+  let header = headerControls.header;
+  if (!header) {
+    // three regions, in order. `top` is whatever a diff view mode puts above the file — the commit
+    // picker, a since-last warning — and the header has to stay below it, so it cannot simply be
+    // first. Only `top` and `body` are emptied; the header is updated where it stands.
+    headerControls.top = document.createElement("div");
+    header = headerControls.header = document.createElement("div");
+    header.className = "fname";
+    headerControls.label = document.createElement("span");
+    header.appendChild(headerControls.label);
+    headerControls.body = document.createElement("div");
+    root.appendChild(headerControls.top);
+    root.appendChild(header);
+    root.appendChild(headerControls.body);
+  }
+  return headerControls;
+}
+
+const headerControls = {};
+function headerControl(key, label, className, onclick) {
+  let el = headerControls[key];
+  if (!el) {
+    el = headerControls[key] = btn(label, className, null);
+    headerControls.header.appendChild(el);   // appended once; never removed, only hidden
+  }
+  el.textContent = label;
+  el.className = className;
+  el.onclick = onclick;
+  el.hidden = false;
+  return el;
+}
+
+function hideHeaderControl(key) {
+  if (headerControls[key]) headerControls[key].hidden = true;
 }
 
 // "3 of 11 reviewed", counted over whatever the current diff view mode lists. A stale mark is
@@ -1350,10 +1385,22 @@ function activeFiles() {
 // never clamped and survives on its own — measured by removing a guard written for it and watching
 // nothing change. The rest survives deliberately: a drag is held outside the table, and unfolded
 // gaps in `expandedGaps`.
+//
+// What it does cost is any control inside it that someone is in the middle of pressing. A node
+// detached between the press and the release takes the click with it: both mouse events fire, and
+// the browser then reports no click at all, so neither a handler on the button nor one delegated
+// to an ancestor hears anything. Re-attaching the very same node does not help either — both
+// measured, not reasoned. So the file header sits outside the part that is replaced and is only
+// ever updated, which is why `renderDiff` empties a body element rather than `#diff` itself.
 function renderDiff() {
   if (SID) watchTopics(diffTopics());   // the open file decides what this page watches
-  const el = $("diff");
+  const parts = diffParts();
+  const el = parts.body;
+  parts.top.innerHTML = "";
   el.innerHTML = "";
+  parts.header.hidden = true;           // only the per-file diff shows it; the branches below say so
+  hideHeaderControl("md");
+  hideHeaderControl("reviewed");
   if (commitsMode) { renderCommitView(el); return; }
   if (sinceLast) { renderSinceLast(el); return; }
   if (viewingPath) { renderFileView(el, viewingPath); return; }
@@ -1428,14 +1475,14 @@ function renderCommitView(el) {
     chip.textContent = reviewed(i) ? "✓ reviewed" : "new since review";
     bar.appendChild(chip);
   }
-  el.appendChild(bar);
+  diffParts().top.appendChild(bar);
 
   const msg = document.createElement("div");
   msg.className = "commitmsg";
   const body = (c.message || c.title || "").trim();
   msg.innerHTML = `<div class="ct">${esc(c.title || "")}</div>` +
     (body && body !== (c.title || "").trim() ? `<div class="cb">${esc(body)}</div>` : "");
-  el.appendChild(msg);
+  diffParts().top.appendChild(msg);
 
   const view = listingView();
   if (!view || view.state === "loading") { el.appendChild(empty("loading commit…")); return; }
@@ -1485,34 +1532,34 @@ function renderFileDiff(el, files, suffix, interactive) {
   if (!file && files.length) { currentFile = files[0].path; file = files[0]; }
   if (!file) { el.innerHTML = '<div class="empty" style="padding:16px">select a file</div>'; return; }
   const isMd = interactive && /\.(md|markdown)$/i.test(file.path);   // full diff only (rendered = head)
-  const name = document.createElement("div");
-  name.className = "fname";
-  const label = document.createElement("span"); label.textContent = fileLabel(file) + suffix;
+  const parts = diffParts();
+  const name = parts.header;
+  name.hidden = false;
+  const label = parts.label;
+  label.textContent = fileLabel(file) + suffix;
   // the braces are compact but don't say which side is which — the tooltip spells the move out
-  if (file.old_path && file.old_path !== file.path) {
-    label.className = "renamed";
-    label.title = `renamed: ${file.old_path} → ${file.path}`;
-  }
-  name.appendChild(label);
-  if (isMd) name.appendChild(btn(mdRendered.has(file.path) ? "◱ show diff" : "◱ rendered",
-                                 "btn ghost fnbtn", () => toggleMd(file.path)));
+  const moved = file.old_path && file.old_path !== file.path;
+  label.className = moved ? "renamed" : "";
+  label.title = moved ? `renamed: ${file.old_path} → ${file.path}` : "";
+  // made whether or not this file is markdown, so the controls keep one order: a button created
+  // on the first file that happened to need it would otherwise sit wherever that put it
+  const md = headerControl("md", mdRendered.has(file.path) ? "◱ show diff" : "◱ rendered",
+                           "btn ghost fnbtn mdbtn", () => toggleMd(file.path));
+  md.hidden = !isMd;
   // in every diff view mode, because the mark is about the file and the modes differ only in
   // which of its lines they show. A stale mark offers to be made again rather than clearing
   // itself: the reviewer decides they have re-read it, nothing decides that for them.
-  delegateReviewed();
   const stale = !!file.reviewed_stale;
-  const toggle = btn(stale ? "✓! read again" : file.reviewed ? "✓ reviewed" : "mark reviewed",
-                     "btn ghost fnbtn rvbtn" + (stale ? " stale" : file.reviewed ? " on" : ""),
-                     null);
-  toggle.dataset.rvpath = file.path;
-  // what the click means, read off the button rather than captured when it was built — a stale
-  // mark is re-made, because re-reading is why you came back; a second press then clears it
-  toggle.dataset.rvon = stale || !file.reviewed ? "1" : "0";
+  // a stale mark is re-made, because re-reading is why you came back; a second press then clears it
+  const on = stale || !file.reviewed;
+  const toggle = headerControl(
+    "reviewed", stale ? "✓! read again" : file.reviewed ? "✓ reviewed" : "mark reviewed",
+    "btn ghost fnbtn rvbtn" + (stale ? " stale" : file.reviewed ? " on" : ""),
+    () => markReviewed(file.path, on));
   toggle.title = stale ? "you read this file, and it has changed since — marking it again records this version"
                        : file.reviewed ? "you have read this file — click to undo"
                                        : "record that you have finished reading this file";
-  name.appendChild(toggle);
-  el.appendChild(name);
+  // the header is already attached — nothing to append
   if (isMd && mdRendered.has(file.path)) { renderMarkdownDoc(el, file.path); return; }
   const hl = interactive ? highlightLines(file.path) : new Set();
   const hunks = topicHunks(file.path);
@@ -1655,12 +1702,12 @@ function renderSinceLast(el) {
       + "not a version the forge keeps. Comments still post against the latest code.";
     local.title = "This forge cannot version a merge request, so review-mate compares the head "
       + "against your own watermark. Another reviewer's \u201csince\u201d will differ from yours.";
-    el.appendChild(local);
+    diffParts().top.appendChild(local);
   }
   if (view.clean === false) {
     const warn = document.createElement("div"); warn.className = "sincenote";
     warn.textContent = "⚠ the replay conflicted — this diff may include target-branch changes";
-    el.appendChild(warn);
+    diffParts().top.appendChild(warn);
   }
   // fully interactive (highlight, comment, unfold) when head-aligned — the diff's new side is then
   // the head blob, so its line numbers anchor exactly like the full diff. A stale session (head

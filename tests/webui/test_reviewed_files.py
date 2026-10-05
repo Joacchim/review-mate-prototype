@@ -7,7 +7,7 @@ which files are done and which of them the author has changed underneath you.
 import pytest
 from playwright.sync_api import expect
 
-from webui.fixtures.scenarios import review_with_a_file_read, two_file_review
+from webui.fixtures.scenarios import markdown_review, review_with_a_file_read, two_file_review
 from webui.pages.diff import DiffPage
 
 CAPACITY = "capacity.py"
@@ -92,3 +92,55 @@ def test_the_other_file_is_untouched_by_any_of_it(diff, staged):
     diff.open_file(CONFIG)
     expect(diff.reviewed_button).to_have_text("mark reviewed")
     expect(diff.tick(CONFIG)).to_have_count(0)
+
+
+# --- the file header's controls survive the panel being rebuilt under them ---------------------
+#
+# The diff panel is replaced rather than merged, deliberately and on measurement, and any topic
+# frame replaces it — the presence tick alone produces one every few seconds. So a press and its
+# release can fall either side of a rebuild, and a handler bound to the button that was pressed
+# never hears about it. These drive exactly that: press, rebuild, release.
+
+def _press_rebuild_release(page, locator):
+    box = locator.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.evaluate("render()")          # the panel is torn down and rebuilt, as a frame would
+    page.mouse.up()
+
+
+def test_the_reviewed_toggle_survives_a_rebuild_between_press_and_release(diff, staged, page):
+    staged.put(two_file_review("s1"))
+    diff.load("s1")
+    _press_rebuild_release(page, diff.reviewed_button)
+    expect(diff.progress).to_have_text("1 of 2 reviewed")
+
+
+def test_the_markdown_toggle_survives_one_too(diff, staged, stub_host, page):
+    stub_host.files["README.md"] = "# Title\n\nsome *emphasis* here\n"
+    staged.put(markdown_review("s1"))
+    diff.load("s1")
+    expect(diff.markdown_view).to_have_count(0)
+    _press_rebuild_release(page, page.get_by_role("button", name="rendered"))
+    expect(diff.markdown_view).to_be_visible()
+
+
+def test_the_kept_header_still_sits_below_what_a_mode_puts_above_it(diff, staged, stub_host,
+                                                                    review_kb, page):
+    """Hoisting the header out of the replaced region put it above the commit picker, where it
+    had always been below. Only a screenshot caught that, which is too weak a net for an order
+    the reader relies on."""
+    from review_mate.session.state import ChangeType, FileEntry
+    from webui.fixtures.scenarios import COMMIT_DIFF
+    from webui.test_diff import stage_advanced_review
+    stage_advanced_review(staged, stub_host, review_kb)
+    stub_host.commit_files = {
+        "aaaa111": [FileEntry(path="first.py", change_type=ChangeType.MODIFIED, language="python",
+                              hunks=[{"diff": COMMIT_DIFF}])],
+    }
+    diff.load("s1")
+    diff.toggle_per_commit()
+    expect(diff.commit_bar).to_be_visible()
+    picker = diff.commit_bar.bounding_box()
+    header = page.locator(".fname").bounding_box()
+    assert picker["y"] < header["y"], (picker, header)   # the picker, then the file it is showing
