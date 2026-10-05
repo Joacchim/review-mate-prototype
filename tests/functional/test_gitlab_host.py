@@ -124,11 +124,31 @@ def test_glab_git_protocol_per_host_overrides_global(tmp_path, monkeypatch):
     cfgdir = tmp_path / "glab-cli"; cfgdir.mkdir()
     (cfgdir / "config.yml").write_text(
         "git_protocol: https\nhosts:\n    gitlab.com:\n        git_protocol: ssh\n        user: me\n")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("GLAB_CONFIG_DIR", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     assert _glab_git_protocol("gitlab.com") == "ssh"     # the host's own block wins
     assert _glab_git_protocol("other.host") == "https"   # no block → the global default
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "absent"))
     assert _glab_git_protocol("gitlab.com") is None      # no glab config → caller defaults to https
+
+
+def test_glab_config_found_where_glab_looks(tmp_path, monkeypatch):
+    from review_mate.host.config import _glab_git_protocol
+    def config(base, protocol):
+        (base / "glab-cli").mkdir(parents=True)
+        (base / "glab-cli" / "config.yml").write_text(f"git_protocol: {protocol}\n")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("GLAB_CONFIG_DIR", raising=False)
+    monkeypatch.setattr("sys.platform", "darwin")
+    config(home / "Library" / "Application Support", "ssh")
+    assert _glab_git_protocol(None) == "ssh"             # macOS default location
+    config(home / ".config", "https")
+    assert _glab_git_protocol(None) == "https"           # the legacy location wins, as in glab
+    monkeypatch.setenv("GLAB_CONFIG_DIR", str(tmp_path / "empty"))
+    assert _glab_git_protocol(None) is None              # GLAB_CONFIG_DIR is the only place looked
 
 
 @pytest.fixture

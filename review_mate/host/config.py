@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -48,11 +49,27 @@ def _glab_credentials() -> tuple[str | None, str | None, str | None]:
     return host, token, user
 
 
+def _glab_config_file() -> Path | None:
+    """glab's own lookup order: `GLAB_CONFIG_DIR` alone if set, else the legacy `~/.config`, else the
+    XDG config home — which on macOS defaults to `~/Library/Application Support`."""
+    if os.environ.get("GLAB_CONFIG_DIR"):
+        cfg = Path(os.environ["GLAB_CONFIG_DIR"]) / "config.yml"
+        return cfg if cfg.exists() else None
+    home = Path.home()
+    xdg = os.environ.get("XDG_CONFIG_HOME") or (
+        home / "Library" / "Application Support" if sys.platform == "darwin" else home / ".config")
+    for base in (home / ".config", Path(xdg)):
+        cfg = base / "glab-cli" / "config.yml"
+        if cfg.exists():
+            return cfg
+    return None
+
+
 def _glab_git_protocol(host: str | None) -> str | None:
     """The git access method the user configured in glab — per-host block wins over the global
     default. glab lets the user pick ssh or https; review-mate clones over whichever they chose."""
-    cfg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "glab-cli" / "config.yml"
-    if not cfg.exists():
+    cfg = _glab_config_file()
+    if cfg is None:
         return None
     text = cfg.read_text()
     if host:  # the host's own block (indented under `hosts:`) overrides the top-level default
@@ -66,8 +83,8 @@ def _glab_git_protocol(host: str | None) -> str | None:
 
 
 def _glab_config_credentials() -> tuple[str | None, str | None, str | None]:
-    cfg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "glab-cli" / "config.yml"
-    if not cfg.exists():
+    cfg = _glab_config_file()
+    if cfg is None:
         return None, None, None
     text = cfg.read_text()
     host = (re.search(r"^\s{2,}([\w.\-]+):\s*$", text, re.M) or [None, None])[1] \
