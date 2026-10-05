@@ -83,7 +83,7 @@ for `mcp`, where this has already cost an afternoon.
 | `review_mate/tui/` | The terminal client — a renderer over the view protocol |
 | `docs/` | Architecture, features, running it, glossary, surprising behaviours, testing method |
 | `tools/` | Documentation machinery — the screenshot generator |
-| `packaging/` | A systemd user unit |
+| `packaging/` | A systemd user unit, and a launchd agent for macOS |
 | `.claude/` | Claude Code skills (watching a fleet, reviewing your own branch), the worker agent, the startup hook |
 
 ## Reading the design first
