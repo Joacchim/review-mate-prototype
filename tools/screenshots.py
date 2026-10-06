@@ -269,6 +269,44 @@ def part_read(session_id: str = "s1") -> SessionState:
     return state
 
 
+# A hunk far enough into the file that its leading gap survives being opened from both ends —
+# below about forty lines the second step finishes the gap and there is no third control to show.
+FOLDING_DIFF = """@@ -60,4 +60,6 @@ class Scheduler:
+     def reserve(self, pu: ProcessingUnit) -> Reservation:
+-        queue = self._queues[pu.fleet]
++        queue = self._queues.get(pu.fleet)
++        if queue is None:
++            queue = self._legacy
+         return queue.take(pu.size)
+"""
+
+
+@shot("folding", "context opened around a hunk, and the band that puts it back",
+      shows="tr.expand.folded",
+      marks=(("tr.expand.folded td.ln", "1"), ("tr.expand.folded .exlink:nth-of-type(2)", "2"),
+             ("tr.expand:not(.folded) td.ln", "3")))
+def _folding(page, base, stage):
+    # unfolding reads the file itself, so the host has to have one — a gap revealed against a host
+    # with nothing behind it opens onto blank lines, which is a picture of a bug
+    HOST.files["scheduler/capacity.py"] = "\n".join(
+        [f"    def helper_{n}(self):" if n % 8 == 0 else f"        value_{n} = compute({n})"
+         for n in range(1, 60)]
+        + ["    def reserve(self, pu: ProcessingUnit) -> Reservation:",
+           "        queue = self._queues.get(pu.fleet)", "        if queue is None:",
+           "            queue = self._legacy", "        return queue.take(pu.size)"]
+        + [f"        trailing_{n} = {n}" for n in range(1, 30)])
+    state = showcase()
+    state.files = [FileEntry(path="scheduler/capacity.py", change_type=ChangeType.MODIFIED,
+                             language="python", hunks=[{"diff": FOLDING_DIFF}])]
+    stage(state)
+    _open(page, base)
+    # opened from both ends, which is the state that carries every control at once
+    for arrow in ("\u25bc", "\u25b2"):
+        page.locator("tr.expand:not(.folded) .exlink").filter(has_text=arrow).first.click()
+        page.wait_for_selector("tr.expand.folded")
+        page.wait_for_timeout(500)
+
+
 @shot("reviewed-files", "working through a change file by file",
       shows=".node.file.reviewed .rv",
       marks=((".treeprog", "1"), (".node.file.reviewed:not(.stale) .rv", "2"),

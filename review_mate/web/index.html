@@ -142,6 +142,8 @@
   tr.hh td{color:var(--accent);background:var(--panel2)}
   tr.expand td{background:var(--panel2);color:var(--fg2);user-select:none} tr.expand td.ln{color:var(--accent)}
   tr.expand .exlink{cursor:pointer;color:var(--accent)} tr.expand .exlink:hover{text-decoration:underline}
+  /* the inverse of an unfold band: same row, and the gutter says which way it goes */
+  tr.expand.folded td.ln{color:var(--fg2)}
   /* per-commit review */
   .commitbar{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
   .commitbar .cpos{font-size:12px;color:var(--fg2);white-space:nowrap}

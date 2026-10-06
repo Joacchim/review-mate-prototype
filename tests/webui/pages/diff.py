@@ -1,6 +1,8 @@
 """The review surface: the file tree, the rendered diff, and the highlight overlay on it."""
 from __future__ import annotations
 
+import re
+
 from playwright.sync_api import Page, expect
 
 
@@ -79,10 +81,37 @@ class DiffPage:
 
     @property
     def unfold_bands(self):
-        return self.page.locator("table.hunk tr.expand")
+        # not every band offers an unfold: a gap that has been opened carries one that puts it back
+        return self.page.locator("table.hunk tr.expand:not(.folded)")
+
+    @property
+    def fold_bands(self):
+        return self.page.locator("table.hunk tr.expand.folded")
+
+    # A band that still hides more than one step says "⋯ all N"; one that hides less says
+    # "⋯ show N lines", and one for a file whose length is not known yet says "show rest of file".
+    # All three open the gap completely, and which appears is a property of the gap, not the test.
+    _OPEN_IT_ALL = re.compile(r"all|show")
 
     def unfold_all(self) -> None:
-        self.page.locator("table.hunk tr.expand .exlink").filter(has_text="all").first.click()
+        # scoped away from the fold band, whose "fold all" would otherwise match first
+        self.unfold_bands.locator(".exlink").filter(has_text=self._OPEN_IT_ALL).first.click()
+
+    def unfold(self, arrow: str) -> None:
+        """One step of the unfold band: ▼ reveals downward from the top, ▲ upward from the end."""
+        self.unfold_bands.locator(".exlink").filter(has_text=arrow).first.click()
+
+    def fold(self, text: str = "fold") -> None:
+        """The fold band: ⤴ steps the top run back, ⤵ the bottom. The whole-gap control reads
+        "fold all N" while part of the gap is still shut and "fold N lines back" once it is open
+        all the way, so the default matches the word both of them share."""
+        self.fold_bands.locator(".exlink").filter(has_text=text).first.click()
+
+    def gaps_held(self) -> dict:
+        """What the page is still holding unfolded, by file — the state the bands are built from."""
+        return self.page.evaluate(
+            "() => Object.fromEntries(Object.entries(expandedGaps)"
+            ".map(([p, m]) => [p, Object.fromEntries(m)]))")
 
     # --- asking about lines --------------------------------------------------
 

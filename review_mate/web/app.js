@@ -1646,9 +1646,45 @@ function renderGap(table, path, from, to, lines, exp, hl) {
     tr.innerHTML = `<td class="ln">${n}</td><td class="code" data-line="${n}">${code}</td>`;
     table.appendChild(tr);
   };
-  if ((g.all || g.top + g.bot >= size) && lines) { for (let n = from; n <= to; n++) ctxRow(n); return; }
+  // One fold control per gap, always at its top edge — where the `⋯` was before it was opened, so
+  // it is where the reviewer already looks. It puts the whole gap back rather than undoing one
+  // step: "I have read around this hunk, close it again" is the thing being asked for.
+  // The unfold band's controls, reversed, in their own family of glyph. Unfolding uses the solid
+  // triangles; folding uses curved arrows that finish in the direction the content retreats —
+  // `⤴` takes back what `▼` revealed, `⤵` takes back what `▲` did. Sharing the triangles would
+  // have put the same mark in two bands meaning opposite things, close enough together to pick
+  // the wrong one, which is exactly what happened while this was being built.
+  // A gap opened all the way has nothing to step back through, so it offers one control.
+  const foldLink = (txt, kind) => {
+    const s = document.createElement("span");
+    s.className = "exlink"; s.textContent = txt;
+    s.onclick = () => foldGap(path, from, kind);
+    return s;
+  };
+  const foldBand = (topShown, botShown, whole) => {
+    const tr = document.createElement("tr"); tr.className = "expand folded";
+    const ln = document.createElement("td"); ln.className = "ln"; ln.textContent = "⤺";
+    const cell = document.createElement("td"); cell.className = "code exp";
+    if (whole) {
+      cell.appendChild(foldLink(`⤺ fold ${whole} line${whole > 1 ? "s" : ""} back`, "all"));
+    } else {
+      if (topShown) cell.appendChild(foldLink(`⤴ ${Math.min(UNFOLD_CHUNK, topShown)}`, "top"));
+      if (topShown) cell.append(" · ");
+      cell.appendChild(foldLink(`⤺ fold all ${topShown + botShown}`, "all"));
+      if (botShown) cell.append(" · ");
+      if (botShown) cell.appendChild(foldLink(`⤵ ${Math.min(UNFOLD_CHUNK, botShown)}`, "bot"));
+    }
+    tr.appendChild(ln); tr.appendChild(cell); table.appendChild(tr);
+  };
+
+  if ((g.all || g.top + g.bot >= size) && lines) {
+    foldBand(0, 0, size);
+    for (let n = from; n <= to; n++) ctxRow(n);
+    return;
+  }
   const topN = Math.min(g.top, size);
   const botN = Math.min(g.bot, size - topN);
+  if (topN + botN > 0 && lines) foldBand(topN, botN, 0);
   if (lines) for (let n = from; n < from + topN; n++) ctxRow(n);          // revealed near the previous hunk
   const mFrom = from + topN, mTo = to - botN, mSize = mTo - mFrom + 1;    // still-collapsed middle
   if (mSize > 0) {
@@ -1666,6 +1702,25 @@ function renderGap(table, path, from, to, lines, exp, hl) {
     tr.appendChild(ln); tr.appendChild(cell); table.appendChild(tr);
   }
   if (lines) for (let n = to - botN + 1; n <= to; n++) ctxRow(n);          // revealed near the next hunk
+}
+
+// Put a gap back the way it was. `expandedGaps` only ever grew before this, so a file opened up to
+// read around one hunk stayed open for the rest of the session.
+function foldGap(path, from, kind) {
+  const m = expandedGaps[path];
+  if (!m) return;
+  const g = m.get(from);
+  if (kind === "all" || !g) {
+    m.delete(from);
+  } else {
+    // stepping back from a gap opened all the way would have nothing to step through, so `all`
+    // is cleared first and the run it stood for is what the step comes off
+    if (kind === "top") g.top = Math.max(0, g.top - UNFOLD_CHUNK);
+    if (kind === "bot") g.bot = Math.max(0, g.bot - UNFOLD_CHUNK);
+    if (!g.top && !g.bot) m.delete(from); else m.set(from, g);
+  }
+  if (!m.size) delete expandedGaps[path];
+  renderDiff();
 }
 
 function expandGap(path, from, kind) {

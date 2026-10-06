@@ -236,3 +236,68 @@ def test_a_since_view_the_forge_versioned_claims_nothing_of_the_kind(
     diff.show_since_last()
     expect(diff.table).to_contain_text("added since you last looked")
     expect(page.locator(".sincenote.local")).to_have_count(0)
+
+
+# --- putting unfolded context back -------------------------------------------------------------
+#
+# `expandedGaps` only ever grew: a file opened up to read around one hunk stayed open for the rest
+# of the session, and a long file stayed long. What these hold is that it comes back, and that the
+# state behind it comes back with it rather than leaving a gap that is open but says it is shut.
+
+def test_a_gap_that_has_been_opened_offers_to_close_again(diff, staged, stub_host):
+    stub_host.files["scheduler/capacity.py"] = CAPACITY_BODY
+    staged.put(two_file_review("s1"))
+    diff.load("s1")
+    expect(diff.fold_bands).to_have_count(0)        # nothing is open, so nothing offers to close
+    diff.unfold_all()
+    expect(diff.table).to_contain_text("# line 1")
+    expect(diff.fold_bands).to_have_count(1)
+
+
+def test_folding_puts_the_file_back_the_way_it_was(diff, staged, stub_host):
+    stub_host.files["scheduler/capacity.py"] = CAPACITY_BODY
+    staged.put(two_file_review("s1"))
+    diff.load("s1")
+    before = diff.unfold_bands.first.inner_text()
+    diff.unfold_all()
+    expect(diff.table).to_contain_text("# line 43")
+    diff.fold()
+    expect(diff.table).not_to_contain_text("# line 43")
+    expect(diff.fold_bands).to_have_count(0)
+    assert diff.unfold_bands.first.inner_text() == before   # the same band, offering the same steps
+    assert diff.gaps_held() == {}                           # and nothing left holding it open
+
+
+def test_the_steps_come_back_one_at_a_time_from_the_end_they_were_taken(diff, staged, stub_host):
+    """⤴ takes back what ▼ revealed, ⤵ what ▲ did — each from its own end of the gap."""
+    stub_host.files["scheduler/capacity.py"] = CAPACITY_BODY
+    staged.put(two_file_review("s1"))
+    diff.load("s1")
+    diff.unfold("▼")                                  # 20 from the top
+    diff.unfold("▲")                                  # 20 from the bottom
+    expect(diff.table).to_contain_text("# line 1")    # the first revealed from the top
+    expect(diff.table).to_contain_text("# line 43")   # ... and the last from the bottom
+    assert diff.gaps_held() == {"scheduler/capacity.py": {"1": {"top": 20, "bot": 20, "all": False}}}
+
+    diff.fold("⤴")
+    expect(diff.table).not_to_contain_text("# line 1")
+    expect(diff.table).to_contain_text("# line 43")   # the other end is untouched
+    assert diff.gaps_held() == {"scheduler/capacity.py": {"1": {"top": 0, "bot": 20, "all": False}}}
+
+    diff.fold("⤵")
+    expect(diff.table).not_to_contain_text("# line 43")
+    assert diff.gaps_held() == {}                     # the last step out leaves no entry behind
+
+
+def test_folding_one_gap_leaves_the_others_alone(diff, staged, stub_host):
+    stub_host.files["scheduler/capacity.py"] = CAPACITY_BODY
+    staged.put(two_file_review("s1"))
+    diff.load("s1")
+    diff.unfold_all()                                 # the leading gap
+    expect(diff.fold_bands).to_have_count(1)          # landed, before asking for the next one
+    diff.unfold_all()                                 # and the trailing one
+    expect(diff.fold_bands).to_have_count(2)
+    diff.fold()                                       # closes the first only
+    expect(diff.fold_bands).to_have_count(1)
+    expect(diff.table).to_contain_text("# tail 1")    # the trailing gap is still open
+    expect(diff.table).not_to_contain_text("# line 1")

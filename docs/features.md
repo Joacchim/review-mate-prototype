@@ -61,7 +61,16 @@ A change is read in three panels, side by side.
 The review panel stays put while you move between files, so what you have collected does not
 scroll away with the code. The diff has syntax highlighting, and the context between hunks can be
 unfolded a screen at a time or all at once — or you can open the rest of the file, read at the
-merge request's head.
+merge request's head. Whatever you open, you can close again.
+
+![Folding opened context back](images/folding.png)
+
+> ① what was opened, offering to go back · ② a step at a time from either end, or the whole gap
+> at once · ③ what is still folded, offering to open
+
+Reading around a hunk and then putting it back is the common shape of it, so folding steps back
+the way unfolding stepped out: `⤴` takes back what `▼` revealed, `⤵` what `▲` did. The curve says
+fold and the triangle says unfold, so the two bands never share a mark.
 
 There is more here than a diff normally gives you. Files the change did not touch are browsable —
 the whole repository tree, not only what moved. Markdown renders as text rather than as a diff. A

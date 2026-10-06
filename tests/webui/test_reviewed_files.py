@@ -140,7 +140,10 @@ def test_the_kept_header_still_sits_below_what_a_mode_puts_above_it(diff, staged
     }
     diff.load("s1")
     diff.toggle_per_commit()
+    # both, before measuring either: a box is None while its element is still hidden, and the
+    # header is hidden for as long as a mode that does not show a file is the one rendering
     expect(diff.commit_bar).to_be_visible()
+    expect(page.locator(".fname")).to_be_visible()
     picker = diff.commit_bar.bounding_box()
     header = page.locator(".fname").bounding_box()
     assert picker["y"] < header["y"], (picker, header)   # the picker, then the file it is showing
