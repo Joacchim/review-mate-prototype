@@ -81,7 +81,8 @@ troubleshooting: **[running it →](docs/running.md)**.
    review queue below. Click an entry to open it, or **Track** it to start its session and keep
    triaging. You can also paste an MR URL or `group/project!iid` into the toolbar box.
 2. **Read the diff.** Toggle the file tree (◧), the context panel (◨), unified/side-by-side (⇄), and
-   per-commit review (⑃) from the header. Click the bands between hunks to unfold context.
+   per-commit review (⑃) from the header. Click the bands between hunks to unfold context, and
+   the band that leaves behind to fold it away again.
 3. **Mark what you want to know about.** Hold the left mouse button and drag across the lines. It
    appears in the panel on the right, already carrying what the host knows about those lines — who
    last touched them, and any issue that references them.
