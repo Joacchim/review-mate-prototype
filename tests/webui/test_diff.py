@@ -301,3 +301,76 @@ def test_folding_one_gap_leaves_the_others_alone(diff, staged, stub_host):
     expect(diff.fold_bands).to_have_count(1)
     expect(diff.table).to_contain_text("# tail 1")    # the trailing gap is still open
     expect(diff.table).not_to_contain_text("# line 1")
+
+
+# --- code a later commit rewrites -------------------------------------------------------------
+#
+# Reading commit N, the reviewer cannot otherwise see that commit N+2 writes over the lines in
+# front of them. The marker is about survival: these lines are not what the branch ends up with.
+
+SUP_DIFF = ("@@ -40,2 +40,6 @@ class Scheduler:\n     def reserve(self, pu):\n"
+            "-        return old\n+        queue = self._queues.get(pu.fleet)\n"
+            "+        while True:\n+            return queue.take(pu.size)\n     def release(self):\n")
+
+
+def stage_superseded(staged, stub_host, stub_workspace, review_kb, ranges=None):
+    from review_mate.session.state import ChangeType, FileEntry
+    stage_advanced_review(staged, stub_host, review_kb)
+    stub_host.commit_files = {"aaaa111": [
+        FileEntry(path="scheduler/capacity.py", change_type=ChangeType.MODIFIED,
+                  language="python", hunks=[{"diff": SUP_DIFF}])]}
+    stub_workspace.superseded_by_commit = {"aaaa111": {"scheduler/capacity.py": ranges}} \
+        if ranges is not None else {}
+    return "s1"
+
+
+def test_lines_a_later_commit_rewrites_are_marked(diff, staged, stub_host, stub_workspace, review_kb):
+    stage_superseded(staged, stub_host, stub_workspace, review_kb,
+                     [{"start": 41, "end": 42, "sha": "bbbb222"}])
+    diff.load("s1")
+    diff.toggle_per_commit()
+    expect(diff.table).to_contain_text("while True")
+    expect(diff.superseded_rows).to_have_count(2)
+    expect(diff.file_header).to_contain_text("2 lines rewritten later")
+
+
+def test_the_marker_names_the_commit_that_rewrites_them(diff, staged, stub_host, stub_workspace,
+                                                        review_kb):
+    """A warning leaves the reviewer to find it; the picker to find it with is on the same screen."""
+    stage_superseded(staged, stub_host, stub_workspace, review_kb,
+                     [{"start": 41, "end": 41, "sha": "bbbb222"}])
+    diff.load("s1")
+    diff.toggle_per_commit()
+    expect(diff.superseded_rows.first.locator("td.code")).to_have_attribute(
+        "title", "rewritten in bbbb222 — second commit · click to read it there")
+    diff.superseded_rows.first.locator("td.code").click()
+    expect(diff.commit_bar).to_contain_text("commit 2/2")      # it took us to that commit
+
+
+def test_only_what_the_commit_wrote_can_be_marked(diff, staged, stub_host, stub_workspace, review_kb):
+    """Line 40 is context the commit sits beside, 43 is context after it. Neither is its work."""
+    stage_superseded(staged, stub_host, stub_workspace, review_kb,
+                     [{"start": 40, "end": 43, "sha": "bbbb222"}])
+    diff.load("s1")
+    diff.toggle_per_commit()
+    expect(diff.superseded_rows).to_have_count(3)             # 41, 42, 43 are the + lines
+    expect(diff.file_header).to_contain_text("3 lines rewritten later")
+
+
+def test_a_commit_whose_work_all_survives_is_not_marked(diff, staged, stub_host, stub_workspace,
+                                                        review_kb):
+    stage_superseded(staged, stub_host, stub_workspace, review_kb, ranges=None)
+    diff.load("s1")
+    diff.toggle_per_commit()
+    expect(diff.table).to_contain_text("while True")
+    expect(diff.superseded_rows).to_have_count(0)
+    expect(diff.file_header).not_to_contain_text("rewritten later")
+
+
+def test_the_file_list_says_so_before_a_file_is_opened(diff, staged, stub_host, stub_workspace,
+                                                       review_kb):
+    stage_superseded(staged, stub_host, stub_workspace, review_kb,
+                     [{"start": 41, "end": 42, "sha": "bbbb222"}])
+    diff.load("s1")
+    diff.toggle_per_commit()
+    expect(diff.files.filter(has_text="capacity.py").locator(".rv.sup")).to_have_text("2↷")

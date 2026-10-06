@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -175,6 +176,56 @@ class WorkspaceManager:
                 except RuntimeError:
                     shutil.rmtree(wt, ignore_errors=True)
 
+    # How many commits are worth attributing one by one. Past this, the marker still appears but
+    # says only that the lines change again, because the walk is one git call per commit and a
+    # branch with hundreds of them would spend seconds saying what one call already said.
+    ATTRIBUTE_LIMIT = 40
+
+    async def superseded(self, repo: RepoRef, sha: str, head: str) -> dict[str, list[dict]]:
+        """Which of a commit's own lines are not what the branch ends up with, and which commit
+        first changed them.
+
+        *Not what ends up at head* is the whole test. A line some later commit rewrote and another
+        put back is not marked: the code survives, and the reviewer reading it here is reading what
+        merges. Churn is a different question and this does not answer it.
+
+        Numbered in that commit's coordinates — the old side of `sha..head` is its tree, so these
+        line numbers are the ones its own diff shows. That is why this comes from the clone rather
+        than from per-commit diffs, which arrive in their own coordinates and would have to be
+        mapped back commit by commit to say anything about the lines in front of the reviewer.
+
+        Detection is one diff, and the result is built from it: the walk that follows only *names*
+        a commit for lines that diff already found, and nothing it discovers can add a line. The
+        intersections inside the walk are there to keep it small, not to keep it honest — that is
+        the shape of the answer, not a filter on it. Returns {path: [{"start", "end", "sha"}]},
+        `sha` empty when no commit was named.
+        """
+        mirror = await self._ensure_mirror(repo)
+        for commit in (sha, head):
+            await self._ensure_commit(mirror, commit)
+        if sha == head:
+            return {}                      # the tip: nothing comes after it
+        net = _old_side_lines(await self._git("-C", str(mirror), "diff", "-U0", sha, head))
+        if not net:
+            return {}                      # everything this commit left behind survives
+
+        named: dict[str, dict[int, str]] = {}
+        later = (await self._git("-C", str(mirror), "rev-list", "--reverse",
+                                 f"{sha}..{head}")).split()
+        if len(later) <= self.ATTRIBUTE_LIMIT:
+            for commit in later:
+                step = _old_side_lines(
+                    await self._git("-C", str(mirror), "diff", "-U0", sha, commit))
+                for path, lines in step.items():
+                    survives = net.get(path)
+                    if not survives:
+                        continue           # this file ends up as this commit left it
+                    seen = named.setdefault(path, {})
+                    for line in lines & survives:
+                        seen.setdefault(line, commit)   # the first step to diverge owns it
+        return {path: _ranges({line: named.get(path, {}).get(line, "") for line in lines})
+                for path, lines in net.items() if lines}
+
     # --- internals ----------------------------------------------------------
 
     def mirror_path(self, repo: RepoRef) -> Path:
@@ -247,6 +298,42 @@ class WorkspaceManager:
         if proc.returncode != 0:
             raise RuntimeError(f"git {' '.join(args)} failed: {err.decode().strip()}")
         return out.decode()
+
+
+_HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? ", re.M)
+_OLD_PATH = re.compile(r"^--- (?:a/)?(.+)$", re.M)
+
+
+def _old_side_lines(diff: str) -> dict[str, set[int]]:
+    """The old-side line numbers a diff changes, per old-side path.
+
+    Read from the hunk headers alone, which `-U0` makes exact: with no context, a hunk's old range
+    *is* the lines it removes or rewrites. A header with a zero-length old range is a pure
+    insertion — it adds lines between two that both survive, and neither is superseded by it.
+    """
+    out: dict[str, set[int]] = {}
+    for section in diff.split("\ndiff --git ")[0:] if diff else []:
+        path_match = _OLD_PATH.search(section)
+        if path_match is None or path_match.group(1) == "/dev/null":
+            continue
+        lines = out.setdefault(path_match.group(1), set())
+        for start, count in _HUNK.findall(section):
+            length = int(count) if count else 1
+            if length:
+                lines.update(range(int(start), int(start) + length))
+    return out
+
+
+def _ranges(by_line: dict[int, str]) -> list[dict]:
+    """Consecutive lines attributed to the same commit, as closed ranges."""
+    out: list[dict] = []
+    for line in sorted(by_line):
+        sha = by_line[line]
+        if out and out[-1]["sha"] == sha and out[-1]["end"] == line - 1:
+            out[-1]["end"] = line
+        else:
+            out.append({"start": line, "end": line, "sha": sha})
+    return out
 
 
 def _key(repo: RepoRef) -> str:

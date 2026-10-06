@@ -1221,7 +1221,8 @@ function renderTree() {
   const diffPaths = new Set(files.map((f) => f.path));
   const entries = files.map((f) => ({ path: f.path, old_path: f.old_path,
                                      change_type: f.change_type, diff: true,
-                                     reviewed: f.reviewed, reviewed_stale: f.reviewed_stale }));
+                                     reviewed: f.reviewed, reviewed_stale: f.reviewed_stale,
+                                     superseded: f.superseded_lines || 0 }));
   if (!inSince && !inCommits && showAll) {
     repoPaths().forEach((p) => { if (!diffPaths.has(p)) entries.push({ path: p, diff: false }); });
   }
@@ -1268,7 +1269,11 @@ function renderNode(node, path, depth, out) {
     const shown = oldName && oldName !== name ? `{${oldName},${name}}` : name;
     const tick = entry.reviewed
       ? `<span class="rv" title="${entry.reviewed_stale ? "you read this, and it has changed since" : "you have read this"}">✓</span>`
-      : "";
+      : entry.superseded
+        // in a commit that is not the tip: how much of what it wrote the branch rewrites later,
+        // so the file list says which files are worth reading closely before any of them is opened
+        ? `<span class="rv sup" title="${entry.superseded} line${entry.superseded > 1 ? "s" : ""} here are rewritten by a later commit">${entry.superseded}↷</span>`
+        : "";
     row.innerHTML = `<span class="ct ${entry.change_type || ""}">${c}</span>${esc(shown)}${tick}`;
     if (moved) row.title = `renamed: ${entry.old_path} → ${entry.path}`;
     row.onclick = () => selectFile(entry);
@@ -1495,9 +1500,13 @@ function renderCommitView(el) {
   // are at that commit, so a highlight/comment would anchor to the wrong line at head.
   const short = c.short_id || c.sha.slice(0, 8);
   const isTip = !!(state.mr && c.sha === state.mr.sha);
+  const rewritten = (activeFiles().find((f) => f.path === currentFile) || {}).superseded_lines || 0;
+  // said in the header as well as in the gutter: a reviewer who has not hovered the right line
+  // should still know before reading that part of this commit does not survive the branch
+  const later = rewritten ? `  ·  ${rewritten} line${rewritten > 1 ? "s" : ""} rewritten later` : "";
   renderFileDiff(el, files,
     isTip ? `  ·  in ${short} (latest — click/drag to highlight)`
-          : `  ·  in ${short} · older commit (read-only; use the full diff to comment)`,
+          : `  ·  in ${short} · older commit (read-only; use the full diff to comment)${later}`,
     isTip);
 }
 
@@ -1527,6 +1536,38 @@ function fileLabel(file) {
 // per-file since-last view. interactive=false → read-only (no highlight overlay, no line selection,
 // no unfold), used for a since-last diff whose new side sits on coordinates that don't match the head
 // blob (a stale session, before refresh) and so can't anchor highlights or reveal head context.
+// The commit@ file topic carries the ranges a later commit rewrites; the rows want them per line.
+// An empty sha means the walk was skipped (too many commits to attribute one by one) — the line is
+// still superseded, there is just no commit to name, which the row renders as a mark with no link.
+// A marker that only warns leaves the reviewer to find the commit themselves, and the picker to
+// do it with is on the same screen. Delegated from the table, which is rebuilt on every frame.
+function wireSuperseded(table) {
+  // the commit is named here rather than in the row markup: the rows know a sha, and what the
+  // reviewer wants is the commit's own words, which the commits topic already carries
+  const byCommit = new Map(commitRows().map((c) => [c.sha, c]));
+  table.querySelectorAll("td.code[data-sup]").forEach((cell) => {
+    const c = byCommit.get(cell.dataset.sup);
+    cell.title = c ? `rewritten in ${c.short_id || c.sha.slice(0, 8)} — ${c.title} · click to read it there`
+                   : "rewritten by a later commit";
+  });
+  table.querySelectorAll("tr.line.sup td.code:not([data-sup])").forEach((cell) => {
+    cell.title = "rewritten by a later commit";
+  });
+  table.onclick = (e) => {
+    const cell = e.target.closest("td.code[data-sup]");
+    if (cell) selectCommit(cell.dataset.sup);
+  };
+}
+
+function supersededLines(path) {
+  const view = topicViews[`diff:${SID}:${diffMode()}:${path}`];
+  const ranges = (view && view.superseded) || [];
+  if (!ranges.length) return null;
+  const out = new Map();
+  ranges.forEach((r) => { for (let n = r.start; n <= r.end; n++) out.set(n, r.sha || ""); });
+  return out;
+}
+
 function renderFileDiff(el, files, suffix, interactive) {
   let file = files.find((f) => f.path === currentFile);
   if (!file && files.length) { currentFile = files[0].path; file = files[0]; }
@@ -1571,8 +1612,10 @@ function renderFileDiff(el, files, suffix, interactive) {
     // head-aligned since-last diff — its new side is the head blob the bands reveal from)
     renderUnifiedUnfoldable(table, hunks, file.path, hl);
   } else {
-    table.innerHTML = (splitMode ? splitRowsHtml : unifiedRowsHtml)(hunks, hl);
+    table.innerHTML = splitMode ? splitRowsHtml(hunks, hl)
+                                : unifiedRowsHtml(hunks, hl, supersededLines(file.path));
   }
+  if (!interactive) wireSuperseded(table);
   if (interactive) wireSelection(table, file.path);
   el.appendChild(table);
   if (interactive) overlayThreadAnchors(table, file.path);   // mark host-discussion lines (head coords)

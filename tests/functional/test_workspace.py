@@ -181,3 +181,88 @@ async def test_seed_clone_is_not_modified(tmp_path, source_repo):  # AC-4
     handle = await wm.materialize(_repo(src), sha)
     assert (Path(handle.path) / "hello.py").exists()
     assert sorted(p.name for p in seed.iterdir()) == before  # seed untouched
+
+
+# --- which of a commit's lines do not survive to the head ---------------------------------------
+#
+# Survival, not churn: a line some later commit rewrote and another put back is what the branch
+# ends up with, so it is not superseded. The distinction matters because the two are easy to
+# conflate and only one of them tells a reviewer whether the code in front of them is worth
+# reading closely.
+
+@pytest.fixture
+def churn_repo(tmp_path):
+    """A → three lines; B → rewrites line 2; C → puts line 2 back exactly; D → appends a line."""
+    src = tmp_path / "churn"
+    src.mkdir()
+    _git("init", "-b", "main", cwd=src)
+    f = src / "f.txt"
+    for message, body in (("A", "alpha\nbravo\ncharlie\n"),
+                          ("B", "alpha\nBRAVO\ncharlie\n"),
+                          ("C", "alpha\nbravo\ncharlie\n"),
+                          ("D", "alpha\nbravo\ncharlie\ndelta\n")):
+        f.write_text(body)
+        _git("add", ".", cwd=src)
+        _git("commit", "-m", message, cwd=src)
+    return src
+
+
+async def test_a_line_a_later_commit_rewrites_is_superseded(wm, churn_repo):
+    out = await wm.superseded(_repo(churn_repo), _rev(churn_repo, "HEAD~2"), _rev(churn_repo))
+    assert out == {"f.txt": [{"start": 2, "end": 2, "sha": _rev(churn_repo, "HEAD~1")}]}
+
+
+async def test_a_line_put_back_exactly_is_not_superseded(wm, churn_repo):
+    """B rewrote line 2 and C restored it, so what A wrote is what merges. Churn, not supersession —
+    and the answer must not depend on whether something unrelated changed elsewhere in the file."""
+    a = _rev(churn_repo, "HEAD~3")
+    assert await wm.superseded(_repo(churn_repo), a, _rev(churn_repo, "HEAD~1")) == {}
+    assert await wm.superseded(_repo(churn_repo), a, _rev(churn_repo)) == {}   # D appended a line
+
+
+async def test_the_tip_has_nothing_after_it(wm, churn_repo):
+    head = _rev(churn_repo)
+    assert await wm.superseded(_repo(churn_repo), head, head) == {}
+
+
+async def test_an_insertion_supersedes_nothing(wm, tmp_path):
+    """Lines added between two that both survive replace neither of them."""
+    src = tmp_path / "ins"
+    src.mkdir()
+    _git("init", "-b", "main", cwd=src)
+    (src / "f.txt").write_text("one\ntwo\n")
+    _git("add", ".", cwd=src); _git("commit", "-m", "first", cwd=src)
+    first = _rev(src)
+    (src / "f.txt").write_text("one\ninserted\ntwo\n")
+    _git("commit", "-am", "insert between", cwd=src)
+    assert await wm.superseded(_repo(src), first, _rev(src)) == {}
+
+
+async def test_a_file_deleted_later_has_all_its_lines_superseded(wm, tmp_path):
+    src = tmp_path / "del"
+    src.mkdir()
+    _git("init", "-b", "main", cwd=src)
+    (src / "f.txt").write_text("one\ntwo\nthree\n")
+    (src / "keep.txt").write_text("kept\n")
+    _git("add", ".", cwd=src); _git("commit", "-m", "first", cwd=src)
+    first = _rev(src)
+    (src / "f.txt").unlink()
+    _git("add", "-A", cwd=src); _git("commit", "-m", "drop it", cwd=src)
+    out = await wm.superseded(_repo(src), first, _rev(src))
+    assert out == {"f.txt": [{"start": 1, "end": 3, "sha": _rev(src)}]}
+
+
+async def test_too_many_commits_to_attribute_still_says_what_is_superseded(wm, tmp_path, monkeypatch):
+    """Past the limit the walk is skipped — the marker survives, the name it would carry does not."""
+    src = tmp_path / "many"
+    src.mkdir()
+    _git("init", "-b", "main", cwd=src)
+    (src / "f.txt").write_text("original\n")
+    _git("add", ".", cwd=src); _git("commit", "-m", "first", cwd=src)
+    first = _rev(src)
+    for n in range(3):
+        (src / "f.txt").write_text(f"rewritten {n}\n")
+        _git("commit", "-am", f"rewrite {n}", cwd=src)
+    monkeypatch.setattr(WorkspaceManager, "ATTRIBUTE_LIMIT", 1)
+    out = await wm.superseded(_repo(src), first, _rev(src))
+    assert out == {"f.txt": [{"start": 1, "end": 1, "sha": ""}]}   # superseded, by nobody named

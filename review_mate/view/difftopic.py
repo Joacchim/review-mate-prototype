@@ -106,8 +106,22 @@ class FileRow(BaseModel):
     additions: int = 0
     deletions: int = 0
     has_diff: bool = True
+    superseded_lines: int = 0      # how many of this file's lines a later commit changes again
     reviewed: bool = False         # the reviewer has finished reading this file
     reviewed_stale: bool = False   # ... and it has changed since they did
+
+
+def _within(ranges, lines: set[int]) -> list[dict]:
+    """The parts of `ranges` that fall on `lines`, re-split where they no longer run together."""
+    kept: dict[int, str] = {line: r["sha"] for r in ranges
+                            for line in range(r["start"], r["end"] + 1) if line in lines}
+    out: list[dict] = []
+    for line in sorted(kept):
+        if out and out[-1]["sha"] == kept[line] and out[-1]["end"] == line - 1:
+            out[-1]["end"] = line
+        else:
+            out.append({"start": line, "end": line, "sha": kept[line]})
+    return out
 
 
 def _reviewed(snapshot) -> dict:
@@ -148,11 +162,18 @@ class FileView(BaseModel):
     reviewed: bool = False
     reviewed_stale: bool = False
     reviewed_sha: str | None = None   # which version they read, for a mark that has gone stale
+    # In `commit@`, the lines of this commit that a later one changes again, each naming the commit
+    # that does it: [{"start", "end", "sha"}]. Empty everywhere else — `full` and `since` already
+    # show the latest state, so nothing in them is superseded by definition.
+    superseded: list[dict] = Field(default_factory=list)
     state: str = "ready"       # ready | loading | unknown-session | unknown-file
                                # | unsupported-mode | malformed-name | unavailable | error
     error: str = ""
     head_aligned: bool = True
     hunks: list[dict] = Field(default_factory=list)
+
+
+_HUNK_NEW = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)")
 
 
 def _counts(diff_text: str) -> tuple[int, int]:
@@ -164,6 +185,23 @@ def _counts(diff_text: str) -> tuple[int, int]:
         elif line.startswith("-") and not line.startswith("---"):
             deletions += 1
     return additions, deletions
+
+
+def _added_lines(diff_text: str) -> set[int]:
+    """The new-side line numbers a diff adds — walked from the hunk headers, which carry where the
+    new side starts, and advanced past context so that only the `+` rows are collected."""
+    out: set[int] = set()
+    line_no = 0
+    for row in (diff_text or "").split("\n"):
+        header = _HUNK_NEW.match(row)
+        if header:
+            line_no = int(header.group(1))
+        elif row.startswith("+") and not row.startswith("+++"):
+            out.add(line_no)
+            line_no += 1
+        elif not row.startswith("-") and not row.startswith("\\"):
+            line_no += 1
+    return out
 
 
 def _diff_text(entry) -> str:
@@ -186,6 +224,7 @@ class DiffTopics:
         self._aligned: dict[tuple, bool] = {}
         self._local: dict[tuple, bool] = {}
         self._clean: dict[tuple, bool] = {}
+        self._superseded: dict[tuple, dict] = {}   # commit@ only: path -> ranges, see FileView
         self._tasks: dict[tuple, asyncio.Task] = {}
 
     # --- diff:<sid>:<mode>[:<path>] ---------------------------------------
@@ -210,15 +249,18 @@ class DiffTopics:
                             mr=snapshot.mr.model_dump(mode="json") if snapshot.mr else {},
                             ).model_dump(mode="json")
         marks = _reviewed(snapshot)
+        superseded = self._superseded.get((session_id, mode, self._head(snapshot)), {})
         rows = []
         for entry in files:
             additions, deletions = _counts(_diff_text(entry))
             mark, stale = marks.get(entry.path, (None, False))
+            touched = sum(r["end"] - r["start"] + 1 for r in superseded.get(entry.path, ()))
             rows.append(FileRow(path=entry.path, old_path=entry.old_path,
                                 change_type=getattr(entry.change_type, "value", "") or "",
                                 language=entry.language, additions=additions, deletions=deletions,
                                 has_diff=bool(_diff_text(entry).strip()),
-                                reviewed=mark is not None, reviewed_stale=stale))
+                                reviewed=mark is not None, reviewed_stale=stale,
+                                superseded_lines=touched))
         mr = snapshot.mr.model_dump(mode="json") if snapshot.mr else {}
         key = (session_id, mode, self._head(snapshot))
         return DiffView(session=session_id, mode=mode, mr=mr, files=rows,
@@ -242,11 +284,13 @@ class DiffTopics:
                             state="unknown-file").model_dump(mode="json")
         hunks = build_hunks(_diff_text(entry), entry.path, entry.language)
         mark, stale = _reviewed(snapshot).get(entry.path, (None, False))
+        superseded = self._superseded.get((session_id, mode, self._head(snapshot)), {}) \
+                         .get(entry.path, [])
         return FileView(session=session_id, mode=mode, path=entry.path, old_path=entry.old_path,
                         change_type=getattr(entry.change_type, "value", "") or "",
                         language=entry.language,
                         reviewed=mark is not None, reviewed_stale=stale,
-                        reviewed_sha=mark.sha if mark else None,
+                        reviewed_sha=mark.sha if mark else None, superseded=list(superseded),
                         head_aligned=self._aligned.get((session_id, mode, self._head(snapshot)), True),
                         hunks=[hunk.model_dump(mode="json") for hunk in hunks]).model_dump(mode="json")
 
@@ -323,9 +367,18 @@ class DiffTopics:
         session_id = key[0]
         try:
             if mode.startswith(COMMIT_PREFIX):
-                files = await self._forge(snapshot).commit_diff(ref_of(snapshot),
-                                                                mode[len(COMMIT_PREFIX):])
+                sha = mode[len(COMMIT_PREFIX):]
+                files = await self._forge(snapshot).commit_diff(ref_of(snapshot), sha)
                 self._resolved[key] = list(files)
+                # only what this commit wrote: a context line it merely sits next to is not its
+                # work, and marking it would report the file's churn as the commit's
+                ranges = await self._superseded_in(snapshot, sha)
+                self._superseded[key] = {
+                    entry.path: kept
+                    for entry in self._resolved[key]
+                    if (kept := _within(ranges.get(entry.path, ()),
+                                        _added_lines(_diff_text(entry))))
+                }
             else:
                 (self._resolved[key], self._aligned[key], self._clean[key],
                  self._local[key]) = await self._since(snapshot)
@@ -335,6 +388,28 @@ class DiffTopics:
             self._failed[key] = (f"{type(exc).__name__}: {exc}", monotonic())
         if self._publish is not None:
             await self._publish(session_id, mode)
+
+    async def _superseded_in(self, snapshot, sha: str) -> dict:
+        """Which of this commit's lines a later one changes again, per file.
+
+        Read from the clone rather than from the forge: the answer is a diff between two trees the
+        reviewer is not looking at, and every forge can be asked for a commit's own diff while none
+        is asked for this. A session with no workspace — or a repository that would not clone —
+        simply has no markers, the way a forge that cannot version a diff has no `since`.
+
+        Never fails the view. A commit the reviewer can read without the marker is worth more than
+        an error where the diff should be.
+        """
+        mr = snapshot.mr
+        if self._workspace is None or mr is None or not mr.sha or not mr.clone_url:
+            return {}
+        if sha == mr.sha:
+            return {}                      # the tip is the head; nothing comes after it
+        repo = RepoRef(host=mr.host, project=mr.project, clone_url=mr.clone_url)
+        try:
+            return await self._workspace.superseded(repo, sha, mr.sha)
+        except Exception:
+            return {}
 
     async def _since(self, snapshot) -> tuple[list, bool, bool, bool]:
         """The author's work since the reviewer's watermark, as ordinary per-file diffs.
@@ -430,7 +505,7 @@ class DiffTopics:
         for task in [t for key, t in self._tasks.items() if key[0] == session_id]:
             task.cancel()                       # nobody is left to publish the answer to
         for store in (self._resolved, self._failed, self._aligned, self._local, self._clean,
-                      self._tasks):
+                      self._superseded, self._tasks):
             for key in [k for k in store if k[0] == session_id]:
                 del store[key]
 
@@ -441,6 +516,7 @@ class DiffTopics:
         self._aligned.clear()
         self._local.clear()
         self._clean.clear()
+        self._superseded.clear()
 
     # --- internals ---------------------------------------------------------
 

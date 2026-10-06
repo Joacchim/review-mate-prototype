@@ -47,8 +47,12 @@ function hunkHeader(hunk, cells) {
 }
 
 // unified: one row per diff line, new-side numbering, deletions unnumbered and unselectable
-function unifiedRowsHtml(hunks, highlighted) {
+// `superseded` is a Map of this commit's line numbers to the commit that changes them again, or
+// null everywhere but `commit@`. A line in it is code that does not survive the branch, which is
+// worth knowing before reading it closely and worth knowing before commenting on it.
+function unifiedRowsHtml(hunks, highlighted, superseded) {
   const hl = highlighted || new Set();
+  const sup = superseded || null;
   let out = "";
   for (const hunk of hunks || []) {
     out += hunkHeader(hunk, 2);
@@ -56,11 +60,12 @@ function unifiedRowsHtml(hunks, highlighted) {
       const kind = KIND[line.side] || "ctx";
       const selectable = line.side !== "removed";
       const marked = selectable && line.new != null && hl.has(line.new);
+      const by = sup && selectable && line.new != null ? sup.get(line.new) : undefined;
       const body = escHtml(MARK[line.side] || " ") + tokenSpans(line.text, line.tokens);
       const attr = selectable && line.new != null ? ` data-line="${line.new}"` : "";
-      out += `<tr class="line ${kind}${marked ? " hl" : ""}">`
+      out += `<tr class="line ${kind}${marked ? " hl" : ""}${by !== undefined ? " sup" : ""}">`
            + `<td class="ln">${selectable && line.new != null ? line.new : ""}</td>`
-           + `<td class="code"${attr}>${body}</td></tr>`;
+           + `<td class="code"${attr}${by ? ` data-sup="${escHtml(by)}"` : ""}>${body}</td></tr>`;
     }
   }
   return out;

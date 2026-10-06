@@ -59,6 +59,15 @@ class DiffPage:
         return self.page.locator("table.hunk")
 
     @property
+    def file_header(self):
+        return self.page.locator(".fname")
+
+    @property
+    def superseded_rows(self):
+        """Lines of the commit being read that the branch does not end up with."""
+        return self.page.locator("table.hunk tr.line.sup")
+
+    @property
     def rows(self):
         return self.page.locator("table.hunk tr.line")
 

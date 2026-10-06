@@ -33,9 +33,11 @@ from review_mate.session.state import (  # noqa: E402
 )
 from webui.fixtures.host import StubHost  # noqa: E402
 from webui.fixtures.manager import FakeManager  # noqa: E402
+from webui.fixtures.scenarios import StubWorkspace  # noqa: E402
 
 IMAGES = ROOT / "docs" / "images"
 HOST = StubHost()          # shots that need host-computed context set it here
+WORKSPACE = StubWorkspace()   # ... and the clone-derived ones, which the forge cannot answer
 
 # what is waiting on the reviewer, so the landing page shows a queue rather than an empty heading
 QUEUE = [
@@ -182,6 +184,9 @@ def showcase(session_id: str = "s1") -> SessionState:
             title="reserve scheduler capacity per fleet", source_branch="feat/fleet-capacity",
             target_branch="main", sha="abc123def", author="luigi",
             url="https://gitlab.example/mr/137",
+            # the clone-derived surfaces say nothing without it, so a showcase that omits it
+            # photographs them as unavailable
+            clone_url="https://gitlab.example/platform/virtu/control-plane.git",
             capabilities={"threads": True, "approvals": True, "commits": True,
                           "diff_versions": True, "inline_comments": True},
             diff_refs={"base_sha": "0ldbase", "head_sha": "abc123def"}),
@@ -267,6 +272,31 @@ def part_read(session_id: str = "s1") -> SessionState:
                      fingerprint="read-against-an-earlier-version"),
     ]
     return state
+
+
+@shot("superseded", "reading a commit whose work a later one writes over",
+      shows="tr.line.sup",
+      marks=((".fname", "1"), ("tr.line.sup td.code", "2"),
+             (".commitbar select", "3")))
+def _superseded(page, base, stage):
+    state = showcase()
+    state.mr.capabilities = {**state.mr.capabilities, "commits": True}
+    stage(state)
+    HOST.commit_list = [
+        {"sha": "9f3c1ab", "short_id": "9f3c1ab", "title": "reserve per fleet, falling back to legacy",
+         "message": ""},
+        {"sha": "abc123def", "short_id": "abc123d", "title": "bound the retry loop", "message": ""},
+    ]
+    HOST.commit_files = {"9f3c1ab": [
+        FileEntry(path="scheduler/capacity.py", change_type=ChangeType.MODIFIED,
+                  language="python", hunks=[{"diff": CAPACITY}])]}
+    # the unbounded retry this commit wrote is what the next one fixes
+    WORKSPACE.superseded_by_commit = {
+        "9f3c1ab": {"scheduler/capacity.py": [{"start": 42, "end": 46, "sha": "abc123def"}]}}
+    _open(page, base)
+    page.locator("#t-commits").click()
+    page.wait_for_selector("tr.line.sup")
+    page.wait_for_timeout(500)
 
 
 # A hunk far enough into the file that its leading gap survives being opened from both ends —
@@ -504,6 +534,9 @@ def _open(page, base):
 def main() -> int:
     IMAGES.mkdir(parents=True, exist_ok=True)
     manager = FakeManager()
+    # the surfaces that read the repository rather than the forge answer through this; a shot of
+    # one taken without it would be a picture of the feature being unavailable
+    manager._workspace = WORKSPACE
     app = create_app(manager=manager, provider=HOST, with_mcp=False,
                      resolve_ref=lambda raw: MRRef(host="gitlab", project="p", iid=1))
     config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error")
@@ -524,6 +557,12 @@ def main() -> int:
                              "summary": "split the queue per fleet"}]
         HOST.issues = [{"iid": 402, "title": "scheduler starves the legacy fleet",
                         "url": "https://gitlab.example/issues/402"}]
+        # the stubs are shared across shots, so what one sets another would inherit — and a
+        # picture that depends on the order the shots happen to run in is not a picture of the
+        # product. Everything a shot sets for itself is cleared here.
+        HOST.commit_files = {}
+        WORKSPACE.superseded_by_commit = {}
+        app.state.diff_topics.reset()      # resolved views are cached per session, mode and head
         app.state.annotations_topic.reset()
         manager.put(state)
 

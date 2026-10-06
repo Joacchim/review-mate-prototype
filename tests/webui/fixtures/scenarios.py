@@ -27,7 +27,11 @@ def mr(project="platform/virtu/control-plane", iid=137, title="reserve Scheduler
        sha="abc123") -> MRMetadata:
     return MRMetadata(host="gitlab", project=project, iid=iid, title=title,
                       source_branch="feat/x", target_branch="main", sha=sha, author="luigi",
-                      url=f"https://gitlab.example/mr/{iid}")
+                      url=f"https://gitlab.example/mr/{iid}",
+                      # a real change can be cloned, and the surfaces that read the repository
+                      # rather than the forge — per-commit supersession, since-last — say nothing
+                      # without it, which a fixture that omits it quietly tests instead
+                      clone_url=f"https://gitlab.example/{project}.git")
 
 
 def session(session_id="s1", files=None, drafts=None, **kwargs) -> SessionState:
@@ -138,11 +142,18 @@ def reviewed_then_advanced(session_id="s1") -> SessionState:
 class StubWorkspace:
     """since_diff, as the workspace would answer it."""
 
-    def __init__(self, diff=SINCE_DIFF, clean=True):
+    def __init__(self, diff=SINCE_DIFF, clean=True, superseded=None):
         self.calls = []
         self.diff = diff
         self.clean = clean
+        # {sha: {path: [{"start", "end", "sha"}]}} — what a later commit rewrites, per commit read
+        self.superseded_by_commit = superseded or {}
+        self.superseded_calls = []
 
     async def since_diff(self, repo, old_base, old_head, new_base, new_head):
         self.calls.append((old_base, old_head, new_base, new_head))
         return {"diff": self.diff, "clean": self.clean}
+
+    async def superseded(self, repo, sha, head):
+        self.superseded_calls.append((sha, head))
+        return dict(self.superseded_by_commit.get(sha, {}))

@@ -124,6 +124,7 @@
   .node.file.reviewed.stale{color:inherit;opacity:1}
   .node .rv{margin-left:auto;padding-left:8px;font-size:12px;line-height:1;color:var(--ok)}
   .node.file.stale .rv{color:var(--fg2);opacity:.8}
+  .node .rv.sup{color:var(--warn)}
   .btn.fnbtn.on{color:var(--addfg);border-color:var(--addfg)}
   .btn.fnbtn.stale{color:var(--warn);border-color:var(--warn)}
   /* diff */
@@ -165,6 +166,12 @@
   td.code.delc{background:var(--del);color:var(--delfg)} td.ln.delln{background:var(--delln)}
   td.code.addc{background:var(--add);color:var(--addfg)} td.ln.addln{background:var(--addln)}
   td.code.hlc{box-shadow:inset 3px 0 0 var(--accent)}
+  /* code a later commit writes over: still readable, visibly not the last word on itself. The
+     stripe is the highlight's, in the colour that means "read this differently" rather than
+     "something is wrong" — the lines are fine, they are just not where the change ends up. */
+  tr.line.sup td.code{box-shadow:inset 3px 0 0 var(--warn);opacity:.62}
+  tr.line.sup td.ln{color:var(--warn)}
+  tr.line.sup td.code[data-sup]{cursor:pointer}
   /* annotations — a compact, filterable index of highlights */
   .ann h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg2);margin:6px 0 8px}
   .anntools{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}

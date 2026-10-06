@@ -87,6 +87,20 @@ how work that arrived in several passes is easiest to follow.
 
 > ① switch into per-commit reading · ② the commits, in order, with the diff showing one at a time
 
+Reading a commit from the middle of a branch, the risk is spending attention on code the branch
+does not keep. Lines a later commit writes over are marked, and the marker names the commit that
+does it — one click away in the picker you are already using.
+
+![Code a later commit rewrites](images/superseded.png)
+
+> ① how much of this commit the branch rewrites · ② the lines themselves, receding rather than
+> hidden · ③ which commit to read them in
+
+The test is survival, not churn: a line some later commit rewrote and another put back is what
+merges, so it is not marked. Only what the commit itself wrote can be — context it merely sits
+beside is the file's history, not this commit's work. It needs the repository rather than the
+forge, so a session with no local clone simply shows no markers.
+
 **Since your last review.** Mark a baseline, come back later, and see a normal per-file diff of what
 the author changed since — with target-branch noise excluded, so a rebase does not read as a hundred
 new files.
