@@ -9,10 +9,13 @@ import pytest
 from conftest import HostStub
 from review_mate.contracts import MRRef
 from review_mate.session.commands import (
-    AddHighlight, ApplyFiles, DecideAccess, PostMessage, RequestAccess, RequestContext, SaveDraft,
+    AddHighlight, ApplyFiles, DecideAccess, PostMessage, RequestAccess, RequestCheck,
+    RequestContext, SaveDraft,
 )
 from review_mate.session.manager import SessionManager
-from review_mate.session.state import ChangeType, FileEntry, LineRange, Origin, Side
+from review_mate.session.state import (
+    ChangeType, FileEntry, LineRange, Origin, Side, Subject, SubjectKind,
+)
 from review_mate.view.access import AccessTopic
 from review_mate.view.agent import AgentView
 from review_mate.view.chat import ChatTopics
@@ -162,3 +165,40 @@ async def test_a_file_that_is_not_in_the_change_is_named(agent):
     manager, sid, view = await agent()
     await with_files(manager, sid)
     assert (await view.diff(sid, path="nope.py"))["state"] == "unknown-file"
+
+
+async def test_a_draft_reaches_the_agent_only_when_the_reviewer_asks_it_to_be_checked(agent):
+    """A draft is private prose and this view carries none of them. Handing one over to be
+    double-checked is the exception, and it is the reviewer's to make — the words travel as the
+    ask's note, because they are what there is to verify."""
+    import json
+
+    manager, sid, view = await agent()
+    writer = manager.get(sid)
+    highlight = await mark(writer)
+    await writer.submit(SaveDraft(highlight_id=highlight.id, body="this retry is unbounded"),
+                        Origin.BROWSER)
+    assert "this retry is unbounded" not in json.dumps(await view.build(sid))
+
+    await writer.submit(RequestCheck(subject=Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id),
+                                     note="this retry is unbounded"), Origin.BROWSER)
+    asks = (await view.build(sid))["chat"]["agent"]["asks"]
+    assert [a["kind"] for a in asks] == ["check"]
+    assert asks[0]["note"] == "this retry is unbounded"
+    assert asks[0]["subject"]["id"] == highlight.id      # where the answer belongs
+
+
+async def test_the_other_drafts_stay_private_when_one_is_handed_over(agent):
+    """Handing over a comment is per comment: the rest are still prose nobody asked to read."""
+    import json
+
+    manager, sid, view = await agent()
+    writer = manager.get(sid)
+    checked, private = await mark(writer, line=1), await mark(writer, line=5)
+    for highlight, body in ((checked, "the one I asked about"), (private, "the one I did not")):
+        await writer.submit(SaveDraft(highlight_id=highlight.id, body=body), Origin.BROWSER)
+    await writer.submit(RequestCheck(subject=Subject(kind=SubjectKind.HIGHLIGHT, id=checked.id),
+                                     note="the one I asked about"), Origin.BROWSER)
+    built = json.dumps(await view.build(sid))
+    assert "the one I asked about" in built
+    assert "the one I did not" not in built

@@ -295,7 +295,9 @@ what the map is for. One file's unified diff text is still reachable by path, fo
 checkout failed to materialize and is running over the host API alone.
 And the reviewer's unposted drafts are absent at every stage: a draft is private prose until they
 post it, at which point it is a discussion and the agent reads it in `threads` like everyone else.
-No filter enforces that; the review topic is simply not part of the agent's view.
+No filter enforces that; the review topic is simply not part of the agent's view. The exception is
+the reviewer's own doing — asking for a draft to be double-checked sends its words as the ask's
+`note`, since they are what there is to verify.
 
 ### The agent does not know what the reviewer is looking at
 

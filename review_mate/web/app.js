@@ -2609,6 +2609,17 @@ function draftEditor(key, anchor, draft) {
     else { suggOpen[key] = true; }
     renderAnnotations();
   }));
+  // Asking Claude to check your own words. A draft is private prose and the agent's view does not
+  // carry one — this is the exception, and it is one the reviewer makes: the words travel with the
+  // ask, because they are what there is to verify. Read from the box on screen, so what is checked
+  // is what is being looked at rather than the last thing saved.
+  if (draft) row.appendChild(btn("Double-check it", "btn ghost", (e) => {
+    const onscreen = e.currentTarget.closest(".draft");
+    const prose = onscreen && onscreen.querySelector("textarea.draftbox:not(.suggbox)");
+    const claim = ((prose || ta).value || "").trim();
+    if (!claim) return;
+    post({ type: "request_check", subject: subjectAnchor(selected), note: claim });
+  }));
   if (draft) row.appendChild(btn("Remove", "btn ghost", () => {
     post({ type: "remove_draft", highlight_id: anchor });
     delete draftBuffers[key]; delete suggBuf[key]; suggOpen[key] = false;

@@ -820,7 +820,15 @@ class DiffScreen:
         subject = self.subject()
         if subject is None:
             return None
-        return {"type": "request_check", "subject": subject}
+        # What there is to verify travels with the ask: a comment is not a subject the protocol
+        # knows, so the words go as a note or the agent is told only that something is owed. The
+        # reviewer's own prepared comment comes first — doubting your own wording is the common
+        # reason to press this, and the agent's view carries no drafts otherwise.
+        row = self.annotation_row() if self.focus == "annotations" else None
+        card = (row or {}).get("data", {}).get("card") if (row or {}).get("kind") == "highlight" \
+            else (row or {}).get("data") if (row or {}).get("kind") == "insight" else None
+        note = self.draft_body() or (card or {}).get("body", "") or ""
+        return {"type": "request_check", "subject": subject, "note": note}
 
     def cancel_selection(self) -> None:
         self.anchor = None

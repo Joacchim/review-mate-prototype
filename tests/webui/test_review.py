@@ -390,3 +390,44 @@ def test_the_box_follows_the_session_once_the_save_has_landed(
     page.evaluate("renderAnnotations()")                    # the render that releases it
     page.wait_for_function("() => Object.keys(draftBuffers).length === 0")
     expect(detail.draft_box).to_have_value("first thoughts")
+
+
+def test_a_drafted_comment_can_be_handed_to_claude_to_check(
+        diff, annotations, detail, staged, page):
+    """Claude's view of a session carries no drafts — prose written expecting no reader. This is
+    the one way one reaches it, and the reviewer is the one who does it."""
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    annotations.index_rows.first.click()
+    detail.tab("Review").click()
+    detail.save_draft("the retry loop here is unbounded")
+    _draft_lands(page, "the retry loop here is unbounded")
+
+    page.locator("#detail .draftbtns .btn", has_text="Double-check it").click()
+    page.wait_for_function(
+        "() => (state.checks || []).some((c) => c.note === 'the retry loop here is unbounded')")
+
+
+def test_what_is_checked_is_what_is_in_the_box(diff, annotations, detail, staged, page):
+    """Edited and not yet saved is still what the reviewer is looking at, and what they mean."""
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    annotations.index_rows.first.click()
+    detail.tab("Review").click()
+    detail.save_draft("first wording")
+    _draft_lands(page, "first wording")
+
+    detail.draft_box.fill("the wording I actually want checked")
+    page.locator("#detail .draftbtns .btn", has_text="Double-check it").click()
+    page.wait_for_function(
+        "() => (state.checks || []).some((c) => c.note === 'the wording I actually want checked')")
+
+
+def test_nothing_is_offered_to_check_before_a_comment_exists(diff, annotations, detail, staged, page):
+    """There is nothing to verify until there are words, so the control is not there to press."""
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    annotations.index_rows.first.click()
+    detail.tab("Review").click()
+    expect(detail.draft_box).to_have_value("")
+    expect(page.locator("#detail .draftbtns .btn", has_text="Double-check it")).to_have_count(0)

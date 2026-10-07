@@ -19,6 +19,10 @@ different clock, and sending it with every read of the session was most of the p
 written expecting no reader; once posted it is a discussion, and the agent reads it there like
 everyone else. That is the whole rule, and it needs no filter: the review topic simply is not part
 of this view.
+
+The one way a draft reaches the agent is the reviewer handing it over: asking for it to be
+double-checked sends the words as the ask's `note`, because they are what there is to verify. That
+is not a hole in the rule — it is the reviewer deciding, per comment, that this one has a reader.
 """
 from __future__ import annotations
 

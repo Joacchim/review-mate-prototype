@@ -183,6 +183,9 @@ async def test_a_doubt_the_agent_has_not_spoken_to_is_an_ask(session):
     asks = (await chat_for(manager, ATTACHED).build(sid))["agent"]["asks"]
     assert [a["kind"] for a in asks] == ["check"]
     assert asks[0]["subject"]["id"] == highlight.id
+    # what to verify travels with it: a comment is not a subject, so being told only which subject
+    # is owed an answer leaves the agent knowing something is wanted and not what
+    assert asks[0]["note"] == "claims the queue is single-threaded"
 
 
 async def test_the_agent_speaking_on_the_subject_closes_the_doubt(session):

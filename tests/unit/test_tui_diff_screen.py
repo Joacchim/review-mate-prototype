@@ -451,8 +451,10 @@ def test_claudes_own_finding_can_be_double_checked_from_the_terminal():
     """The asymmetry this closes: the browser could doubt an insight and the terminal could not."""
     screen = screen_with([hl(n=1)], [insight()])
     screen.focus = "annotations"
-    assert screen.check_command() == {"type": "request_check",
-                                      "subject": {"kind": "insight", "id": "c1"}}
+    command = screen.check_command()
+    assert command["subject"] == {"kind": "insight", "id": "c1"}
+    # the claim travels with the doubt; without it the agent is told only that something is owed
+    assert command["note"] == "Three call sites still assume a single queue."
 
 
 def test_an_insight_is_not_something_to_escalate():
@@ -474,8 +476,37 @@ def test_an_insights_conversation_is_the_one_the_screen_watches():
 def test_a_doubt_is_raised_about_whatever_the_cursor_is_on():
     screen = screen_with([hl(n=1)])
     screen.focus = "annotations"
-    assert screen.check_command() == {"type": "request_check",
+    assert screen.check_command() == {"type": "request_check", "note": "",
                                       "subject": {"kind": "highlight", "id": "h1"}}
+
+
+def test_doubting_your_own_comment_hands_its_words_over():
+    """Claude's view of a session carries no drafts. Asking for one to be checked is how a reviewer
+    gives it a reader, so the words go with the ask — there is nothing else to verify."""
+    screen = screen_with([hl(n=1)])
+    screen.focus = "annotations"
+    screen.client.views["review:s1"] = {
+        "session": "s1", "state": "ready", "pending": 1, "posted": 0,
+        "drafts": [{"id": "d1", "highlight_id": "h1", "body": "this retry is unbounded",
+                    "status": "draft"}]}
+    command = screen.check_command()
+    assert command["subject"] == {"kind": "highlight", "id": "h1"}
+    assert command["note"] == "this retry is unbounded"
+
+
+def test_your_own_words_are_what_gets_checked_when_there_are_also_Claudes():
+    """A highlight can carry both an answer from Claude and a comment from the reviewer. Pressing
+    this with your own comment written means check *mine* — the card is already an answer, and
+    doubting one is what pressing it on an insight does."""
+    screen = screen_with([hl(n=1, card={"id": "c9", "body": "the loop is bounded by the caller",
+                                        "citations": [], "status": "", "created_at": "",
+                                        "label": None})])
+    screen.focus = "annotations"
+    screen.client.views["review:s1"] = {
+        "session": "s1", "state": "ready", "pending": 1, "posted": 0,
+        "drafts": [{"id": "d1", "highlight_id": "h1", "body": "mine, and the one I doubt",
+                    "status": "draft"}]}
+    assert screen.check_command()["note"] == "mine, and the one I doubt"
 
 
 def test_the_review_as_a_whole_is_not_something_to_double_check():

@@ -23,9 +23,14 @@ STALE_AFTER = 300.0
 
 class Ask(BaseModel):
     """One thing the agent owes an answer on."""
-    kind: str                          # chat | context | insights
+    kind: str                          # chat | context | insights | check
     subject: Subject | None = None     # where the answer belongs; None = the review as a whole
     since: str = ""                    # when it was asked — the oldest ask ages the indicator
+    # What to verify, for a check. A comment is not a subject the protocol knows, so a doubt about
+    # one is recorded against the subject it sits on and carries the words themselves. Without
+    # them the agent is told that something is owed and never what — which is what it was being
+    # told, because this was recorded and then not published.
+    note: str = ""
 
 
 class AgentState(BaseModel):
@@ -76,7 +81,8 @@ def outstanding(snapshot) -> list[Ask]:
 
     for check in snapshot.checks:
         if not _answered(snapshot, check):
-            asks.append(Ask(kind="check", subject=check.subject, since=check.requested_at))
+            asks.append(Ask(kind="check", subject=check.subject, since=check.requested_at,
+                            note=check.note))
 
     return sorted(asks, key=lambda a: a.since or "")
 

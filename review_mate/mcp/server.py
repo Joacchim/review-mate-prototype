@@ -49,7 +49,8 @@ def build_mcp_server(bridge: AgentBridge, *, mountable: bool = False) -> FastMCP
 
         `chat.asks` is your backlog — what the reviewer is waiting on you for, already worked out.
         Do not re-derive it from the highlights and messages; that predicate lives in one place and
-        this is it.
+        this is it. An ask of kind `check` carries a `note`: the words to verify, which are the
+        reviewer's own comment or something you said. Answer it in the chat on its subject.
 
         `checkout_path` is the on-disk worktree of the merge request — the root for Read, Grep, LSP
         and the code-graph CLI. The diff is not here: `get_diff` has it.
