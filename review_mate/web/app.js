@@ -2554,6 +2554,14 @@ function draftEditor(key, anchor, draft) {
       draft.url ? ` · <a href="${esc(draft.url)}" target="_blank" rel="noopener">view</a>` : ""}</div>`;
     return wrap;
   }
+  // The buffer holds what the reviewer has typed, and it is dropped when the saved draft says the
+  // same thing — not when Save was pressed. Saving is a round trip, and any render in the middle
+  // of one would otherwise repaint the box from a draft the server has not updated yet, replacing
+  // the words that were just sent with the words they replaced. A save that never lands now keeps
+  // the text instead of losing it.
+  if (draft && draftBuffers[key] === draft.body) delete draftBuffers[key];
+  if (draft && suggBuf[key] === draft.suggestion) { delete suggBuf[key]; suggOpen[key] = false; }
+
   const ta = draftBox();
   ta.placeholder = anchor === null
     ? "write an MR-level review comment — a summary posted as a general note on the MR"
@@ -2581,12 +2589,20 @@ function draftEditor(key, anchor, draft) {
 
   const row = document.createElement("div");
   row.className = "draftbtns";
-  row.appendChild(btn(draft ? "Update" : "Save", "btn", () => {
-    const body = ta.value.trim();
-    const suggestion = sugActive ? (suggBuf[key] != null ? suggBuf[key] : "") : null;
+  // Read from the boxes on screen, not from the ones this render built. The panel is merged
+  // rather than replaced, so the textarea the reviewer has been typing into is the one an earlier
+  // render made: the node captured here was discarded on the way in, and still holds whatever the
+  // draft said when it was built. Reading it saves the words the edit replaced.
+  row.appendChild(btn(draft ? "Update" : "Save", "btn", (e) => {
+    const onscreen = e.currentTarget.closest(".draft");
+    const prose = onscreen && onscreen.querySelector("textarea.draftbox:not(.suggbox)");
+    const sug = onscreen && onscreen.querySelector("textarea.suggbox");
+    const body = (prose || ta).value.trim();
+    const suggestion = sugActive ? (sug ? sug.value : (suggBuf[key] != null ? suggBuf[key] : "")) : null;
     if (!body && !(suggestion && suggestion.trim())) return;   // need prose or a suggestion
+    draftBuffers[key] = body;                 // what was sent, until the session says it arrived
+    if (suggestion !== null) suggBuf[key] = suggestion;
     post({ type: "save_draft", highlight_id: anchor, body, suggestion: suggestion });
-    delete draftBuffers[key]; delete suggBuf[key]; suggOpen[key] = false;
   }));
   if (canSuggest) row.appendChild(btn(sugActive ? "Drop suggestion" : "＋ Suggest a change", "btn ghost", () => {
     if (sugActive) { suggOpen[key] = false; delete suggBuf[key]; }

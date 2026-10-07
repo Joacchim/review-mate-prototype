@@ -328,3 +328,65 @@ def test_a_comment_box_keeps_the_cursor_where_it_was(diff, annotations, detail, 
     assert "draftbox" in detail.page.evaluate("() => document.activeElement.className")
     assert detail.draft_box.evaluate("el => el.selectionStart") == 9
     assert detail.draft_box.input_value() == "the first half and the second half"
+
+
+# --- editing one, which is a round trip and a merged panel at the same time ---------------------
+
+def _draft_lands(page, body: str) -> None:
+    """Wait for the session to carry this body — the box holding it proves nothing, since the box
+    is local and the save is a round trip."""
+    page.wait_for_function("(want) => (state.drafts[0] || {}).body === want", arg=body)
+
+
+def test_updating_a_draft_sends_what_is_in_the_box(diff, annotations, detail, review, staged, page):
+    """The panel is merged, so the box on screen is one an earlier render built. A handler reading
+    the box *this* render built reads a node that was discarded on the way in — and what it still
+    holds is the draft as it was, which is the text the edit replaced."""
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    annotations.index_rows.first.click()
+    detail.tab("Review").click()
+    detail.save_draft("first thoughts")
+    _draft_lands(page, "first thoughts")
+
+    detail.draft_box.fill("second thoughts, which are better")
+    page.locator("#detail .draftbtns .btn").first.click()
+    _draft_lands(page, "second thoughts, which are better")
+    expect(detail.draft_box).to_have_value("second thoughts, which are better")
+
+
+def test_an_edit_in_flight_is_not_replaced_by_what_it_replaced(
+        diff, annotations, detail, review, staged, page):
+    """Saving is a round trip, and a frame arrives every few seconds on its own. A render between
+    the two must not repaint the box from a draft the server has not updated yet."""
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    annotations.index_rows.first.click()
+    detail.tab("Review").click()
+    detail.save_draft("first thoughts")
+    _draft_lands(page, "first thoughts")
+
+    held = []
+    page.route("**/api/sessions/**/commands", lambda route: held.append(route))
+    try:
+        detail.draft_box.fill("second thoughts, which are better")
+        page.locator("#detail .draftbtns .btn").first.click()
+        page.wait_for_timeout(200)
+        page.evaluate("renderAnnotations()")                # ... and a frame lands meanwhile
+        expect(detail.draft_box).to_have_value("second thoughts, which are better")
+    finally:
+        page.unroute("**/api/sessions/**/commands")   # which lets the held request go
+
+
+def test_the_box_follows_the_session_once_the_save_has_landed(
+        diff, annotations, detail, review, staged, page):
+    """And the held text is let go of again, so the box is not pinned to one render's words."""
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    annotations.index_rows.first.click()
+    detail.tab("Review").click()
+    detail.save_draft("first thoughts")
+    _draft_lands(page, "first thoughts")
+    page.evaluate("renderAnnotations()")                    # the render that releases it
+    page.wait_for_function("() => Object.keys(draftBuffers).length === 0")
+    expect(detail.draft_box).to_have_value("first thoughts")
