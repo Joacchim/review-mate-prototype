@@ -44,6 +44,12 @@ class Writeback:
             "head_sha": refs.get("head_sha"),
             "start_sha": refs.get("start_sha"),
             "sha": snap.mr.sha if snap.mr else None,  # fallback when diff_refs absent
+            # A mark made while reading an intermediate commit is about that commit, and its line
+            # numbers are that commit's. Posting it against the head would land on whatever is at
+            # that number now, which is the wrong line and sometimes someone else's code. The
+            # forges express "on this commit" differently, so the position says which commit and
+            # each adapter decides how to say it.
+            "commit_sha": hl.commit_sha,
         }
         return await self._for(ref).post_comment(ref, position, body)
 

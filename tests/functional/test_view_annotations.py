@@ -443,3 +443,30 @@ async def test_the_agent_can_fix_its_own_finding(session):
     await writer.submit(RecordAddressed(subject=Subject(kind=SubjectKind.INSIGHT, id=cid),
                                        sha="ccc333"), Origin.AGENT)
     assert (await topic.build(sid))["insights"][0]["addressed"]["sha"] == "ccc333"
+
+
+async def test_a_mark_aimed_at_a_commit_does_not_go_stale_when_the_head_moves(tmp_path):
+    """Stale means an anchor that drifted by accident. One made deliberately while reading an
+    earlier commit is *about* that commit: its code does not move, so neither does the mark — and
+    warning about it would be telling the reviewer something they chose."""
+    from review_mate.session.commands import ApplyMRMetadata
+
+    provider = BlameHost()
+    manager = SessionManager(root=tmp_path / "sessions", mr_source=provider)
+    sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
+    writer = manager.get(sid)
+    await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
+                                     line_range=LineRange(start=1, end=1),
+                                     commit_sha="older7"), Origin.BROWSER)
+    await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
+                                     line_range=LineRange(start=5, end=5)), Origin.BROWSER)
+
+    moved = writer.snapshot().mr.model_copy(update={"sha": "moved-on"})
+    await writer.submit(ApplyMRMetadata(mr=moved), Origin.SYSTEM)
+
+    rows = (await AnnotationsTopic(manager, provider=provider).build(sid))["highlights"]
+    aimed = next(h for h in rows if h["commit_sha"] == "older7")
+    ordinary = next(h for h in rows if h["commit_sha"] is None)
+    assert aimed["stale"] is False        # about a commit, which has not moved
+    assert ordinary["stale"] is True      # about the change, whose head has
+    await manager.shutdown()

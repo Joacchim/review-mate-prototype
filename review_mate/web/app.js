@@ -1500,14 +1500,19 @@ function renderCommitView(el) {
   // are at that commit, so a highlight/comment would anchor to the wrong line at head.
   const short = c.short_id || c.sha.slice(0, 8);
   const isTip = !!(state.mr && c.sha === state.mr.sha);
+  // an older commit is readable either way; whether it can be *commented on* is the forge's to
+  // say, so the words change rather than the affordance appearing and then failing
+  const commentable = canCommentOnCommits();
   const rewritten = (activeFiles().find((f) => f.path === currentFile) || {}).superseded_lines || 0;
   // said in the header as well as in the gutter: a reviewer who has not hovered the right line
   // should still know before reading that part of this commit does not survive the branch
   const later = rewritten ? `  ·  ${rewritten} line${rewritten > 1 ? "s" : ""} rewritten later` : "";
   renderFileDiff(el, files,
     isTip ? `  ·  in ${short} (latest — click/drag to highlight)`
-          : `  ·  in ${short} · older commit (read-only; use the full diff to comment)${later}`,
-    isTip);
+          : commentable
+            ? `  ·  in ${short} · an earlier commit — what you mark here is about this commit${later}`
+            : `  ·  in ${short} · older commit (read-only; use the full diff to comment)${later}`,
+    isTip || commentable);
 }
 
 // A renamed file's header, as a brace divergence over the parts of the path that actually moved:
@@ -1855,11 +1860,26 @@ function wireSelection(table, path) {
   });
 }
 
+// Which commit the lines being marked belong to, when that is not the head. The mark, and the
+// comment that comes of it, are then about that commit: the author is being asked to fix it where
+// it is written, or told something worth knowing even though the code has moved on.
+function readingCommit() {
+  if (!commitsMode) return null;
+  const sha = currentCommitSha();
+  if (!sha || !state.mr || sha === state.mr.sha) return null;      // the tip is the head
+  return canCommentOnCommits() ? sha : null;
+}
+
+function canCommentOnCommits() {
+  return !state.mr || (state.mr.capabilities || {}).commit_comments === true;
+}
+
 function commitSelection(path, a, b) {
   const lo = Math.min(a, b), hi = Math.max(a, b);
   const existing = highlightExact(path, lo, hi);
   if (existing) post({ type: "remove_highlight", highlight_id: existing.id });   // re-select = discard
-  else post({ type: "add_highlight", file: path, side: "new", line_range: { start: lo, end: hi } });
+  else post({ type: "add_highlight", file: path, side: "new", line_range: { start: lo, end: hi },
+              commit_sha: readingCommit() });
 }
 
 function firstLine(s) {

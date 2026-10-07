@@ -150,3 +150,41 @@ async def test_writeback_posts_mr_level_comment_when_unanchored(session, writer,
     method, path, _params, body = calls[-1]
     assert method == "POST" and path.endswith("/merge_requests/42/notes")
     assert body == {"body": "a review summary"} and "position" not in body
+
+
+class _PositionSpy:
+    """A writer that keeps the host-neutral position it was handed — which is the thing under test
+    here. What a forge then makes of it is that adapter's business and its own test."""
+
+    def __init__(self):
+        self.positions = []
+
+    def capabilities(self):
+        return dict(GITLAB_CAPABILITIES)
+
+    async def post_comment(self, ref, position, body):
+        self.positions.append(position)
+        return {"id": "disc1", "notes": [{"id": 1}]}
+
+
+async def test_the_commit_a_mark_was_aimed_at_travels_with_its_comment(session):
+    """A mark made while reading an intermediate commit is about that commit, and its line numbers
+    are that commit's. Posting it against the head would land on whatever is at that number now —
+    the wrong line, and sometimes someone else's code."""
+    m, sid, _hid = session
+    marked = m.get(sid)
+    await marked.submit(AddHighlight(file="a.py", side=Side.NEW,
+                                     line_range=LineRange(start=3, end=3), commit_sha="older7"),
+                        Origin.BROWSER)
+    aimed = marked.snapshot().highlights[-1].id
+
+    spy = _PositionSpy()
+    await Writeback(m, spy).post_comment(sid, aimed, "fix it where it is written", REF)
+    assert spy.positions[-1]["commit_sha"] == "older7"
+
+
+async def test_an_ordinary_comment_names_no_commit(session):
+    m, sid, hid = session
+    spy = _PositionSpy()
+    await Writeback(m, spy).post_comment(sid, hid, "about the change", REF)
+    assert spy.positions[-1]["commit_sha"] is None

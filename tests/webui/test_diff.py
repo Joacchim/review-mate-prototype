@@ -374,3 +374,41 @@ def test_the_file_list_says_so_before_a_file_is_opened(diff, staged, stub_host, 
     diff.load("s1")
     diff.toggle_per_commit()
     expect(diff.files.filter(has_text="capacity.py").locator(".rv.sup")).to_have_text("2↷")
+
+
+def test_an_earlier_commit_can_be_marked_when_the_forge_takes_comments_on_one(
+        diff, staged, stub_host, review_kb, page):
+    """Reading commit N, the reviewer may want to say something about that commit. What they mark
+    there is about that commit, and the header says so rather than leaving them to assume."""
+    from review_mate.session.state import ChangeType, FileEntry
+    from webui.fixtures.scenarios import COMMIT_DIFF, COMMITS, reviewed_then_advanced
+    state = reviewed_then_advanced("s1")
+    state.mr.capabilities = {**state.mr.capabilities, "commit_comments": True}
+    staged.put(state)
+    review_kb.set_watermark("gitlab", "platform/virtu/control-plane", 137, "reviewed-head")
+    stub_host.commit_list = list(COMMITS)
+    stub_host.commit_files = {"aaaa111": [
+        FileEntry(path="first.py", change_type=ChangeType.MODIFIED, language="python",
+                  hunks=[{"diff": COMMIT_DIFF}])]}
+    diff.load("s1")
+    diff.toggle_per_commit()
+    expect(diff.file_header).to_contain_text("what you mark here is about this commit")
+    diff.ask_about(2)
+    page.wait_for_function("() => (state.highlights || []).some((h) => h.commit_sha === 'aaaa111')")
+
+
+def test_a_forge_that_does_not_take_them_leaves_the_commit_read_only(
+        diff, staged, stub_host, review_kb, page):
+    """The affordance is not offered and then refused at the moment of sending."""
+    from review_mate.session.state import ChangeType, FileEntry
+    from webui.fixtures.scenarios import COMMIT_DIFF
+    stage_advanced_review(staged, stub_host, review_kb)          # capabilities leave it off
+    stub_host.commit_files = {"aaaa111": [
+        FileEntry(path="first.py", change_type=ChangeType.MODIFIED, language="python",
+                  hunks=[{"diff": COMMIT_DIFF}])]}
+    diff.load("s1")
+    diff.toggle_per_commit()
+    expect(diff.file_header).to_contain_text("read-only")
+    diff.ask_about(2)                                        # the lines are there; marking is not
+    page.wait_for_timeout(400)
+    assert page.evaluate("() => (state.highlights || []).length") == 0

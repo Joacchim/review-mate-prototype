@@ -87,7 +87,9 @@ plain.
 
 ## Reviewing
 
-**Highlight** — a line range a reviewer marked to ask about.
+**Highlight** — a line range a reviewer marked to ask about. One made while reading an earlier
+commit records which, and is then about that commit's code: it does not go stale when the head
+moves, and its comment posts against the commit.
 
 **Host context** — what the host can already tell you about the lines you marked: who last
 touched them, and the issues the change closes. It arrives immediately and needs no agent.

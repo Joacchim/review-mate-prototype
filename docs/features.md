@@ -101,6 +101,13 @@ merges, so it is not marked. Only what the commit itself wrote can be — contex
 beside is the file's history, not this commit's work. It needs the repository rather than the
 forge, so a session with no local clone simply shows no markers.
 
+**Saying something about one commit.** Where the forge takes a comment on a commit of the change,
+an earlier one can be marked like any other code, and what you write there is about *that* commit —
+asking for it to be fixed where it is written, or leaving something worth knowing even though the
+code has moved on. The header says which you are doing, the mark never goes stale (the commit's
+code does not move), and the comment posts against the commit rather than the head. Forges that do
+not take one leave the commit read-only rather than refusing at the moment you press send.
+
 **Since your last review.** Mark a baseline, come back later, and see a normal per-file diff of what
 the author changed since — with target-branch noise excluded, so a rebase does not read as a hundred
 new files.
@@ -231,7 +238,10 @@ everything above the adapter works the same way, because what a forge can do is 
 capabilities and the parts of the UI it cannot serve turn themselves off. One difference is visible:
 GitHub keeps no versions of a pull request, so *Since last review* compares the head against the
 version **you** last marked reviewed. The view says so — nobody else sees that comparison and the
-forge has no record of it — and your comments still post against the latest code.
+forge has no record of it — and your comments still post against the latest code. GitHub also takes
+a comment on an earlier commit of the pull request, so marking one there works; it keeps the remark
+in the conversation and flags it outdated once the line changes, which is the honest label for a
+note about a version that has been written over.
 
 **Both at once.** A reference names the host it is on, so `group/proj!12` and `owner/repo#12` each
 find their own forge with nothing to configure per lookup, and the review queue and the search span

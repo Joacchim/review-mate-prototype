@@ -383,3 +383,22 @@ async def test_a_reload_that_returns_the_same_dead_token_does_not_loop(provider)
     with pytest.raises(httpx.HTTPStatusError):
         await provider.load(REF)
     assert len(tries) == 1                        # no pointless second round-trip
+
+
+async def test_a_comment_can_be_aimed_at_an_earlier_commit(writer):
+    """Reading commit N, a reviewer may want to say something about *that* commit — to have it
+    fixed where it is written, or to leave advice worth having even though the code moved on.
+
+    GitHub takes any commit of the pull request as the comment's `commit_id`, keeps the remark in
+    the conversation, and flags it outdated once the line changes. Checked against a real pull
+    request before this was built, not read off the documentation.
+    """
+    await writer.post_comment(REF, {"new_path": "a.py", "new_line": 12, "head_sha": "head1",
+                                    "commit_sha": "older7"}, "about this commit")
+    assert sent[-1][3]["commit_id"] == "older7"
+
+
+async def test_without_one_it_still_goes_to_the_head(writer):
+    await writer.post_comment(REF, {"new_path": "a.py", "new_line": 12, "head_sha": "head1",
+                                    "commit_sha": None}, "about the change")
+    assert sent[-1][3]["commit_id"] == "head1"

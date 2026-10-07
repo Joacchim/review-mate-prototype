@@ -150,6 +150,12 @@ class Highlight(BaseModel):
     author: Origin = Origin.BROWSER
     created_at: str = ""
     created_sha: str | None = None     # MR head SHA when made — flags "older version" after a push
+    # The commit this was made while reading, when that was not the head. Two different facts:
+    # `created_sha` is which head was current, this is which code the lines belong to. A comment
+    # made on an intermediate commit is about that commit — the author is being asked to fix it
+    # where it is written, or told something worth knowing even though the code moved on — so it
+    # does not drift when the head does, and it posts against the commit rather than the head.
+    commit_sha: str | None = None
     status: HighlightStatus = HighlightStatus.OPEN
     context_requested: bool = False    # the reviewer escalated this to the agent (D21)
     context_requested_at: str = ""     # when they escalated — the UI ages the "Claude is working" cue

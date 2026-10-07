@@ -43,6 +43,9 @@ GITHUB_CAPABILITIES: dict[str, bool] = {
     "draft_reviews": True,
     "diff_versions": False,   # no versions API; "since you last looked" is derived from the clone
     "commits": True,
+    # a review comment takes any commit of the pull request as its `commit_id`, keeps the remark in
+    # the conversation and flags it outdated once the line moves — exercised against a real PR
+    "commit_comments": True,
     "reactions": True,
     "labels": True,
     "reviewers": True,
@@ -474,9 +477,18 @@ class GitHubWriter:
 
 
 def _pos(position: dict) -> dict:
-    """The host-neutral position onto GitHub's. `commit_id` is the head the line numbers belong to,
-    which is what the review model calls `head_sha` and falls back to the session's own head."""
+    """The host-neutral position onto GitHub's. `commit_id` is the commit the line numbers belong
+    to: an intermediate one when the reviewer was reading it, otherwise the head — which the review
+    model calls `head_sha`, falling back to the session's own head.
+
+    GitHub takes a comment on any commit of the pull request and keeps it in the conversation,
+    pinned to that commit's line and flagged outdated once the line changes. Verified against a
+    real pull request rather than read off the documentation: the thread comes back `isOutdated:
+    true` with `originalLine` set and `line` null, which is the honest shape for a remark about a
+    version that has been written over.
+    """
     return {"path": position.get("new_path"),
             "line": position.get("new_line"),
             "side": "RIGHT",
-            "commit_id": position.get("head_sha") or position.get("sha")}
+            "commit_id": (position.get("commit_sha")
+                          or position.get("head_sha") or position.get("sha"))}

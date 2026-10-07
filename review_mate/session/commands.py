@@ -30,6 +30,9 @@ class AddHighlight(BaseModel):
     line_range: LineRange
     anchor: str | None = None
     question: str | None = None
+    # set when the lines were read in a commit that is not the head, so the mark is about that
+    # commit's code rather than the merge request's latest
+    commit_sha: str | None = None
 
 
 class RemoveHighlight(BaseModel):
@@ -303,7 +306,11 @@ def handle(state, command: Command, origin: Origin) -> "list[ev.Event] | Rejecti
                        file=command.file, side=command.side,
                        line_range=command.line_range, anchor=command.anchor,
                        question=command.question, author=origin, created_at=ts,
-                       created_sha=state.mr.sha if state.mr else None)
+                       created_sha=state.mr.sha if state.mr else None,
+                       # the head is not a commit the reviewer was reading "instead of" itself
+                       commit_sha=(command.commit_sha
+                                   if command.commit_sha and state.mr
+                                   and command.commit_sha != state.mr.sha else None))
         return emit(ev.HighlightAdded, highlight=hl)
 
     if isinstance(command, RemoveHighlight):

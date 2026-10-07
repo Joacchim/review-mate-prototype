@@ -497,3 +497,32 @@ def test_a_subject_can_be_addressed_more_than_once():
     for sha in ("aaa111", "bbb222"):
         s = fold(s, handle(s, cmd.RecordAddressed(subject=subject, sha=sha), Origin.AGENT))
     assert [r.sha for r in s.addressed] == ["aaa111", "bbb222"]
+
+
+# --- a mark aimed at one commit rather than at the change ---------------------
+
+def test_a_mark_made_while_reading_a_commit_records_which_one():
+    s = _with_mr(sha="head9")
+    s = fold(s, handle(s, cmd.AddHighlight(file="a.py", side=Side.NEW,
+                                           line_range=LineRange(start=4, end=4),
+                                           commit_sha="older1"), Origin.BROWSER))
+    hl = s.highlights[0]
+    assert hl.commit_sha == "older1"      # which code the lines are
+    assert hl.created_sha == "head9"      # ... and which head was current, still separately
+
+
+def test_marking_the_tip_records_no_commit_because_the_tip_is_the_head():
+    """`commit_sha` means "a commit that is not the head". Recording the head there would make
+    every ordinary mark look like one aimed at an earlier version."""
+    s = _with_mr(sha="head9")
+    s = fold(s, handle(s, cmd.AddHighlight(file="a.py", side=Side.NEW,
+                                           line_range=LineRange(start=4, end=4),
+                                           commit_sha="head9"), Origin.BROWSER))
+    assert s.highlights[0].commit_sha is None
+
+
+def test_an_ordinary_mark_names_no_commit():
+    s = _with_mr(sha="head9")
+    s = fold(s, handle(s, cmd.AddHighlight(file="a.py", side=Side.NEW,
+                                           line_range=LineRange(start=4, end=4)), Origin.BROWSER))
+    assert s.highlights[0].commit_sha is None

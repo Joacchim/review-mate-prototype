@@ -73,6 +73,9 @@ class AnnotationHighlight(BaseModel):
     context_requested: bool = False  # escalated past the host context, so an answer is expected
     context_requested_at: str = ""   # when they escalated — a client ages the "working" cue from it
     stale: bool = False          # made against an earlier head, so its lines may have moved
+    # the commit this was aimed at, when it was not the head: the mark is about that commit's
+    # code, so it never goes stale and it posts there
+    commit_sha: str | None = None
     addressed: "AnnotationAddressed | None" = None   # the agent changed the code in answer to this
     comment_state: str = "context"   # context | comment | posted
     created_at: str = ""
@@ -150,7 +153,12 @@ class AnnotationsTopic:
                 author=getattr(highlight.author, "value", "browser"),
                 context_requested=bool(highlight.context_requested),
                 context_requested_at=highlight.context_requested_at,
-                stale=bool(highlight.created_sha and head and highlight.created_sha != head),
+                # A mark aimed at a commit does not drift: that commit's code is what it is
+                # about, and the head moving says nothing about it. Stale means an anchor that
+                # moved by accident; this one was aimed.
+                stale=bool(not highlight.commit_sha and highlight.created_sha
+                           and head and highlight.created_sha != head),
+                commit_sha=highlight.commit_sha,
                 addressed=_addressed(snapshot, SubjectKind.HIGHLIGHT, highlight.id),
                 comment_state=("context" if draft is None else
                                "posted" if draft.status is DraftStatus.POSTED else "comment"),

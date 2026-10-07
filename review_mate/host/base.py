@@ -23,6 +23,14 @@ GITLAB_CAPABILITIES: dict[str, bool] = {
     "draft_reviews": True,
     "diff_versions": True,
     "commits": True,
+    # Off because it has not been seen to work here, not because GitLab cannot. A comment on one
+    # commit of a merge request is a commit discussion
+    # (`POST /projects/:id/repository/commits/:sha/discussions`) with a position whose head_sha is
+    # that commit and whose base_sha/start_sha are its parent — a different surface from the MR
+    # discussions, landing on the commit rather than in the review. Turning this on wants someone
+    # with a GitLab to post one and say where it appeared; until then the affordance stays off
+    # rather than failing at the moment the reviewer presses send.
+    "commit_comments": False,
     "reactions": True,
     "labels": True,
     "reviewers": True,
