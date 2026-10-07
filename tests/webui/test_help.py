@@ -1,0 +1,138 @@
+"""Explaining the screen from inside it.
+
+The `?` turns on a mode rather than a tour: the parts of the screen that can explain themselves
+are outlined, and the reviewer points at whichever one they are wondering about. What is worth
+testing here is not that a string appears — it is that every surface claiming to explain itself
+still exists, and that nothing claims to explain a page it is not on.
+"""
+import pytest
+from playwright.sync_api import expect
+
+from webui.fixtures.scenarios import review_with_highlights
+from webui.pages.diff import DiffPage
+from webui.pages.hub import HubPage
+
+
+@pytest.fixture
+def diff(page, base_url) -> DiffPage:
+    return DiffPage(page, base_url)
+
+
+@pytest.fixture
+def hub(page, base_url) -> HubPage:
+    return HubPage(page, base_url)
+
+
+def _registry(page):
+    return page.evaluate("() => HELP.map(([sel, page, title]) => [sel, page, title])")
+
+
+def _bubble(page):
+    return page.locator("#helpbubble")
+
+
+def test_the_screen_says_nothing_until_it_is_asked(diff, staged, page):
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    expect(_bubble(page)).to_be_hidden()
+    expect(page.locator("body.helping")).to_have_count(0)
+    page.locator("#files").hover()
+    expect(_bubble(page)).to_be_hidden()      # hovering explains nothing while the mode is off
+
+
+def test_asking_explains_whatever_is_pointed_at(diff, staged, page):
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    page.locator("#t-help").click()
+    page.locator("#files").hover()
+    expect(_bubble(page)).to_contain_text("The files in the change")
+    page.locator("#ann").hover()
+    expect(_bubble(page)).to_contain_text("What you have collected")
+
+
+def test_it_can_be_put_away_again(diff, staged, page):
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    page.locator("#t-help").click()
+    page.locator("#files").hover()
+    expect(_bubble(page)).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(_bubble(page)).to_be_hidden()
+    expect(page.locator("body.helping")).to_have_count(0)
+
+
+def test_a_control_says_the_same_thing_hovered_as_explained(diff, staged, page):
+    """The tooltip is the short half of the entry, set from it — so the two cannot drift apart."""
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    page.locator("#t-help").click()
+    page.locator("#t-commits").hover()
+    expect(_bubble(page)).to_contain_text("Read one commit at a time")
+    assert page.locator("#t-commits").get_attribute("title") == "Read one commit at a time"
+
+
+def test_the_landing_page_explains_itself_too(hub, staged, page):
+    staged.put(review_with_highlights("s1"))
+    hub.load()
+    page.locator("#t-help").click()
+    page.locator(".queuehdr").first.hover()
+    expect(_bubble(page)).to_contain_text("Changes waiting on you")
+    page.locator(".sitem").first.hover()
+    expect(_bubble(page)).to_contain_text("One review you have open")
+
+
+def test_the_diff_does_not_claim_the_page_it_is_not_showing(hub, staged, page):
+    """`#diff` holds the landing page as well as a diff. Explaining it as a diff on the hub would
+    describe something that is not open."""
+    staged.put(review_with_highlights("s1"))
+    hub.load()
+    page.locator("#t-help").click()
+    # the column holding the landing page, to the side of the page itself — the one place where
+    # `#diff` is what the pointer is over and nothing nearer has anything to say
+    def point_in(selector, dx, dy):
+        box = page.locator(selector).first.bounding_box()
+        page.mouse.move(box["x"] + dx, box["y"] + dy)       # a point, not an element's centre:
+        page.wait_for_timeout(150)                          # the centre belongs to a child
+
+    # below the landing page, which fills the column's width but not its height — the one point
+    # where `#diff` is genuinely what the pointer is over
+    land = page.locator(".land").bounding_box()
+    column = page.locator("#diff").bounding_box()
+    assert land["y"] + land["height"] + 40 < column["y"] + column["height"], "no space below it"
+    page.mouse.move(column["x"] + 8, land["y"] + land["height"] + 40)
+    page.wait_for_timeout(150)
+    expect(_bubble(page)).not_to_contain_text("What you are reading")
+    point_in(".land", 4, 200)          # the page itself, by its own margin
+    expect(_bubble(page)).to_contain_text("Where a review starts")
+
+
+def test_an_empty_surface_does_not_offer_to_explain_itself(hub, staged, page):
+    """On the hub the file tree is an empty column. Outlining it would promise an answer about a
+    change that is not open."""
+    staged.put(review_with_highlights("s1"))
+    hub.load()
+    page.locator("#t-help").click()
+    assert page.evaluate("() => getComputedStyle(document.getElementById('files')).outlineStyle") \
+        == "none"
+
+
+def test_every_surface_that_claims_to_explain_itself_still_exists(diff, hub, staged, page):
+    """The guard against the explanations going quietly stale. A renamed class or a dropped panel
+    leaves an entry pointing at nothing, and nothing else would fail — the mode would simply have
+    one fewer thing to say, which is exactly the failure nobody notices.
+    """
+    staged.put(review_with_highlights("s1"))
+    hub.load()
+    entries = _registry(page)
+    assert entries, "the registry is empty"
+
+    missing = []
+    for where, load in (("hub", lambda: hub.load()), ("review", lambda: diff.load("s1"))):
+        load()
+        page.wait_for_timeout(300)
+        for selector, belongs, title in entries:
+            if belongs and belongs != where:
+                continue
+            if page.locator(selector).count() == 0:
+                missing.append(f"{selector} ({title}) — nothing matches it on the {where} screen")
+    assert not missing, "\n".join(missing)

@@ -94,6 +94,10 @@ document.addEventListener("keydown", (e) => {
 
 async function boot() {
   wireToolbar();
+  wireHelp();          // the ? runs everywhere the header does, queue page included
+  // which page this is, for the surfaces that mean different things on each — #diff holds the
+  // landing page as well as a diff, and explaining it as one on the hub would be a lie
+  document.body.classList.toggle("onhub", !new URLSearchParams(location.search).get("s"));
   startAgentWatch();   // the header light runs everywhere, queue page included
   const params = new URLSearchParams(location.search);
   SID = params.get("s");
@@ -765,7 +769,7 @@ function mrItem(it) {
 
 async function showLanding() {
   landingSearch = null;
-  $("mr").textContent = "—";
+  $("mr").textContent = "";     // nothing is open; an em dash said that at some width
   $("files").innerHTML = ""; $("ann").innerHTML = "";
   const land = document.createElement("div");
   land.className = "land";
@@ -1160,6 +1164,168 @@ function reviewedCount(files) {
   let done = 0, stale = 0;
   files.forEach((f) => { if (f.reviewed) (f.reviewed_stale ? stale++ : done++); });
   return { done, stale };
+}
+
+// --- explaining the screen --------------------------------------------------
+//
+// A mode rather than a tour: pressing `?` marks the parts of the screen that can explain
+// themselves, and the reviewer points at whichever one they are wondering about. Self-directed,
+// because the question someone has at a given moment is about the thing in front of them, and a
+// scripted walkthrough answers questions in its own order instead.
+//
+// Keyed by CSS selector rather than by id, because half of what is worth explaining has no id:
+// the hub's sections are classes, and all of it is rebuilt or merged while the mode is on. A
+// selector needs nothing re-applied after a render, so there is no way for a surface to quietly
+// stop explaining itself.
+//
+// The walk runs outward from whatever the pointer is over, so the innermost match wins: a queue
+// row answers for itself rather than for the page it sits on, and the hub's own sections answer
+// instead of the diff panel they are rendered into.
+//
+// These say what a surface is *for* at the altitude of someone using it. `docs/features.md`
+// explains the same surfaces to someone deciding whether to use the tool at all, with room for a
+// screenshot and a paragraph. Different questions, so neither is generated from the other.
+const HELP = [
+  // [selector, which page it belongs to ("" for both), what it is, what it is for]
+  // --- the header, where a control's own tooltip is the short half of its entry -----------
+  ["#agent", "", "Whether Claude is here",
+   "Green while Claude is attached and listening, amber while something is owed and ageing, grey "
+   + "when nothing is connected. It is the server's answer, not a guess from this page."],
+  ["#t-left", "", "Show or hide the file tree",
+   "Gives the diff the width when you want to read rather than navigate."],
+  ["#t-split", "", "Unified or side-by-side",
+   "Side-by-side puts the old and the new on one row instead of interleaving them, which is "
+   + "easier for a rewrite and worse for a long file."],
+  ["#t-right", "", "Show or hide the review panel",
+   "The same trade as the tree: what you have collected is still there when you bring it back."],
+  ["#t-commits", "", "Read one commit at a time",
+   "Steps through the change commit by commit, which is usually how work that arrived in several "
+   + "passes is easiest to follow. Lines a later commit writes over are marked while you read."],
+  ["#t-theme", "", "Light or dark",
+   "Follows the system until you choose; the choice is remembered on this machine."],
+  ["#t-help", "", "This",
+   "Turns on the outlines and these explanations. Press it again, or Escape, to put them away."],
+  ["#mr", "review", "Which change you are reading",
+   "The project and the number, linking back to the merge request on its own forge."],
+  [".tb", "", "Open a change by name",
+   "A merge request URL, or the shorthand its forge uses — group/project!12 on GitLab, "
+   + "owner/repo#12 on GitHub. The hostname decides which forge answers."],
+
+  // --- the landing page ---------------------------------------------------------------------
+  // `#diff` holds this page too, which is why entries name the page they belong to: without that
+  // the space under the queue would offer to explain a diff that is not open.
+  [".land", "hub", "Where a review starts",
+   "What you have open and what is waiting for you, from every forge you are authenticated to. "
+   + "Opening one from here puts you on the review screen; closing it brings you back."],
+  [".hubhdr", "hub", "Reviews you have open",
+   "Everything you are part-way through, with what each holds and whether the merge request has "
+   + "moved since you looked. Checking for updates asks the forges rather than waiting to be told."],
+  [".sitem", "hub", "One review you have open",
+   "What you have collected in it, and the state the forge reports — approved, discussions still "
+   + "open, the branch moved on. Opening it puts you back where you were."],
+  [".queuehdr", "hub", "Changes waiting on you",
+   "What the forges say is assigned to you or asking for your review, across every forge you are "
+   + "authenticated to. Search by name when the queue is not where the change is."],
+  [".qitem", "hub", "One change you could review",
+   "Track adds it to your open reviews without leaving this page; the title opens it. A row you "
+   + "have already tracked says so instead of offering again."],
+
+  // --- the review screen --------------------------------------------------------------------
+  ["#files", "review", "The files in the change",
+   "Nested by directory, with a count of how far through you are. The marks on the right say what "
+   + "you have finished reading: a green tick for done, a grey one for a file the author has "
+   + "changed since. The rest of the repository is a tick box away."],
+  ["#diff", "review", "What you are reading",
+   "Drag across lines to mark them and ask about them. The bands between hunks open the context "
+   + "around a change, and the band that leaves behind folds it away again."],
+  ["#ann", "review", "What you have collected",
+   "Everything you marked and everything Claude found, in one list that stays put while you move "
+   + "between files. The merge-request-wide comment and Claude's findings about the change as a "
+   + "whole are pinned at the top; the per-line index, the discussions and the access requests "
+   + "scroll under it."],
+  ["#detail", "review", "One thing at a time",
+   "Whatever you opened from the list, with two channels: the conversation with Claude about it, "
+   + "and the comment you are preparing for the merge request. They are kept apart on purpose — "
+   + "nothing you say to Claude is posted, and nothing you write for the review is sent until you "
+   + "submit it."],
+];
+
+
+let helping = false;
+
+function wireHelp() {
+  // The outline advertises what can be explained, so its selectors are the registry's — written
+  // once, into a stylesheet, rather than kept in step with a list in the CSS file by hand.
+  const style = document.createElement("style");
+  // `:not(:empty)` so a surface with nothing in it does not offer to explain itself: on the hub
+  // the file tree and the review panel are empty columns, and outlining them would promise an
+  // answer about a change that is not open.
+  // `:not(:empty)` so a surface with nothing in it does not offer to explain itself: on the hub
+  // the file tree and the review panel are empty columns, and outlining them would promise an
+  // answer about a change that is not open. The page marker does the same for `#diff`, which
+  // holds the landing page as well as a diff.
+  const on = (page) => page === "hub" ? "body.helping.onhub"
+                     : page === "review" ? "body.helping:not(.onhub)" : "body.helping";
+  const each = (suffix) => HELP.map(([sel, page]) =>
+    `${on(page)} ${sel}:not(:empty)${suffix}`).join(",");
+  style.textContent = `${each("")}{outline:1px dashed var(--accent);outline-offset:-1px;cursor:help}`
+                    + `${each(":hover")}{outline-style:solid}`;
+  document.head.appendChild(style);
+
+  // A button's tooltip is the short half of what the registry already says, so it is set from
+  // there: one place says what a control is, and the two readings cannot drift apart.
+  HELP.forEach(([sel, , title]) => {
+    document.querySelectorAll(sel).forEach((el) => { if (el.title) el.title = title; });
+  });
+
+  const bubble = document.createElement("div");
+  bubble.id = "helpbubble"; bubble.hidden = true;
+  document.body.appendChild(bubble);
+
+  const here = (page) => !page || (page === "hub") === document.body.classList.contains("onhub");
+  const entryFor = (node) => {
+    for (let el = node; el && el !== document.body; el = el.parentElement) {
+      if (!el.matches || !el.firstChild) continue;      // nothing in it, nothing to say about it
+      const found = HELP.find(([sel, page]) => here(page) && el.matches(sel));
+      if (found) return [el, found];
+    }
+    return null;
+  };
+
+  const show = (el, [, , title, body]) => {
+    bubble.innerHTML = `<div class="ht">${esc(title)}</div>${esc(body)}`;
+    bubble.hidden = false;
+    const box = el.getBoundingClientRect();
+    const own = bubble.getBoundingClientRect();
+    // beside what it explains rather than over it, and pulled back inside the window at the edges
+    // beside what it explains where there is room, under it where there is not — never over it,
+    // since the thing being explained is the thing worth looking at
+    const gap = 10;
+    let left = box.right + gap, top = box.top;
+    if (left + own.width > window.innerWidth - 8) left = box.left - own.width - gap;
+    if (left < 8) {                       // wider than either margin: sit under it instead
+      left = Math.max(8, Math.min(box.left, window.innerWidth - own.width - 8));
+      top = box.bottom + gap;
+    }
+    bubble.style.left = left + "px";
+    bubble.style.top = Math.max(8, Math.min(top, window.innerHeight - own.height - 8)) + "px";
+  };
+
+  // delegated, because every one of these surfaces is rebuilt or merged under the pointer
+  document.body.addEventListener("mouseover", (e) => {
+    if (!helping) return;
+    const hit = entryFor(e.target);
+    if (hit) show(hit[0], hit[1]); else bubble.hidden = true;
+  });
+  $("t-help").onclick = () => {
+    helping = !helping;
+    document.body.classList.toggle("helping", helping);
+    $("t-help").classList.toggle("on", helping);
+    if (!helping) bubble.hidden = true;
+  };
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && helping) $("t-help").click();
+  });
 }
 
 // --- file tree (nested, foldable) -------------------------------------------

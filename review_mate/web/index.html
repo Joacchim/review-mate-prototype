@@ -101,6 +101,16 @@
   /* collapse in place — never display:none (that drops the panel from the grid and shifts the diff) */
   .shell.hl .files,.shell.hr .ann{overflow:hidden;border:0;padding:0}
   .diff{overflow:auto;padding:0 0 60px}
+  /* explaining the screen — a mode, not a tour: the reviewer points at what they want explained */
+  #t-help.on{color:var(--accent);border-color:var(--accent)}
+  /* never in the way: the bubble sits over the page, and a pointer moving to the next surface
+     must pass through it rather than land on it */
+  #helpbubble{position:fixed;z-index:60;max-width:30rem;padding:10px 12px;border-radius:8px;
+    pointer-events:none;
+    background:var(--panel2);border:1px solid var(--accent);color:var(--fg);font-size:13px;
+    line-height:1.45;box-shadow:0 6px 24px rgba(0,0,0,.28)}
+  #helpbubble .ht{font-weight:600;margin-bottom:4px}
+  #helpbubble[hidden]{display:none}
   /* file tree */
   .treehdr{display:flex;align-items:center;gap:6px;padding:7px 10px;font-size:11px;color:var(--fg2);border-bottom:1px solid var(--line);cursor:pointer;user-select:none}
   .tree{padding:6px 0;font-size:13px}
@@ -402,6 +412,7 @@
   <button class="btn" id="t-right" title="toggle context panel">◨</button>
   <button class="btn" id="t-commits" title="review per commit">⑃ commits</button>
   <button class="btn" id="t-theme" title="toggle light / dark theme">☾</button>
+  <button class="btn" id="t-help" title="explain this screen">?</button>
   <span class="mr" id="mr" style="flex:1">—</span>
   <span class="tb"><input id="ref" placeholder="MR url or group/proj!iid"><button class="btn" id="load">Load</button></span>
   <span class="sid" id="status"></span>

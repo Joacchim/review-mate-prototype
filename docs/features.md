@@ -18,6 +18,13 @@ remembered, so it survives a reload and applies to every review you open.
 
 The next picture is this same page in the light theme, and everything after it is light too.
 
+## Asking what something is
+
+`?` in the header outlines the parts of the screen that can explain themselves; point at whichever
+one you are wondering about and it says what it is for. It is a mode, not a tour — the question
+someone has is about the thing in front of them, and a walkthrough answers in its own order
+instead. Press it again, or Escape, to put it away.
+
 ## Finding something to review
 
 This is the landing page — where review-mate opens when it is not showing a particular change.
