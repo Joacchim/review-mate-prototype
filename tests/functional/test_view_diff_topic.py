@@ -996,3 +996,53 @@ async def test_a_failure_about_the_change_still_says_what_it_was(tmp_path):
             ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:since"]})
             view = settled(ws, f"diff:{sid}:since")
     assert view["state"] == "error" and "bad object deadbeef" in view["error"]
+
+
+async def test_a_forge_that_will_not_say_what_the_versions_are_is_not_an_empty_diff(tmp_path):
+    """`mr_versions` answers [] for a failure as much as for a change with no versions, and an
+    empty since view is a sentence: nothing has changed since you last looked. Saying that on no
+    evidence is worse than saying nothing, because the reviewer believes it and stops looking."""
+    class Silent(VersionHost):
+        async def mr_versions(self, ref):
+            return []
+
+    app, _ = build_versioned(tmp_path, provider=Silent())
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:since"]})
+            view = settled(ws, f"diff:{sid}:since")
+    assert view["state"] == "unavailable"
+    assert "did not say which versions" in view["error"]
+
+
+async def test_not_being_able_to_tell_is_not_remembered_as_an_answer(tmp_path):
+    """An answer is kept until the head moves. A non-answer kept the same way turns a moment's
+    trouble reaching the forge into a settled and wrong account of the change — which is what a
+    live review did, and it survived the credentials being fixed underneath it."""
+    class Flaky(VersionHost):
+        def __init__(self):
+            super().__init__()
+            self.asked = 0
+
+        async def mr_versions(self, ref):
+            self.asked += 1
+            return [] if self.asked == 1 else await super().mr_versions(ref)
+
+    provider = Flaky()
+    app, _ = build_versioned(tmp_path, provider=provider)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:since"]})
+            assert settled(ws, f"diff:{sid}:since")["state"] == "unavailable"
+
+        from review_mate.view import difftopic
+        difftopic._FAILED_TTL = 0        # the interval, not the behaviour, is what we skip here
+        try:
+            with tc.websocket_connect("/api/stream") as ws:
+                ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:since"]})
+                view = settled(ws, f"diff:{sid}:since")
+        finally:
+            difftopic._FAILED_TTL = 30.0
+    assert view["state"] == "ready" and view["files"], "it never asked again"

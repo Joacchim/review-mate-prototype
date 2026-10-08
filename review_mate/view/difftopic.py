@@ -98,6 +98,16 @@ def parse_address(argument: str) -> Address | None:
     return Address(session, mode, path if has_path else None)
 
 
+class CannotTell(Exception):
+    """The comparison could not be worked out — which is not the same as there being nothing in it.
+
+    An empty answer here is a sentence: "nothing has changed since you last looked". Returning one
+    because a version list came back empty says that on no evidence, and the reviewer believes it.
+    Worse, an answer is cached until the head moves, so a moment's trouble reaching the forge
+    becomes a settled and wrong account of the change.
+    """
+
+
 class FileRow(BaseModel):
     path: str
     old_path: str | None = None
@@ -246,6 +256,7 @@ class DiffTopics:
         self._local: dict[tuple, bool] = {}
         self._clean: dict[tuple, bool] = {}
         self._superseded: dict[tuple, dict] = {}   # commit@ only: path -> ranges, see FileView
+        self._unresolved: dict[tuple, tuple[str, float]] = {}   # key -> (why, when), see CannotTell
         self._tasks: dict[tuple, asyncio.Task] = {}
 
     # --- diff:<sid>:<mode>[:<path>] ---------------------------------------
@@ -340,6 +351,12 @@ class DiffTopics:
             if (monotonic() - at) < _FAILED_TTL:
                 return "error", [], reason
             del self._failed[key]     # long enough ago to be worth asking again
+        unresolved = self._unresolved.get(key)
+        if unresolved is not None:
+            why, at = unresolved
+            if (monotonic() - at) < _FAILED_TTL:
+                return "unavailable", [], why
+            del self._unresolved[key]     # long enough ago to be worth asking again
         if key in self._resolved:
             return "ready", self._resolved[key], ""
         if not self._can_resolve(mode, snapshot):
@@ -405,6 +422,9 @@ class DiffTopics:
                  self._local[key]) = await self._since(snapshot)
         except asyncio.CancelledError:
             raise
+        except CannotTell as why:
+            # not an answer, so it is not cached as one: the next read asks again
+            self._unresolved[key] = (str(why), monotonic())
         except RepoUnreadable:
             # The one git failure a reviewer can act on, and the one that reads as something else:
             # the forge half of the review is fine, so the change loads and only what comes from
@@ -457,6 +477,8 @@ class DiffTopics:
         mr = snapshot.mr
         watermark = (self._kb.get_watermark(mr.host, mr.project, mr.iid)
                      if self._kb is not None else None)
+        # Never reviewed reads as "nothing new" deliberately, which is a separate decision from
+        # the one above: there is no baseline, so there is nothing to show either way.
         if not watermark or watermark == mr.sha:
             return [], True, True, False           # never reviewed, or reviewed at this very head
         repo = RepoRef(host=mr.host, project=mr.project, clone_url=mr.clone_url)
@@ -470,7 +492,9 @@ class DiffTopics:
             versions = await forge.mr_versions(ref)
             newest = versions[0] if versions else None
             if newest is None:
-                return [], True, True, False
+                # `mr_versions` answers [] for a failure as well as for a merge request with no
+                # versions, so this is "the forge did not tell us", not "there is nothing"
+                raise CannotTell("the forge did not say which versions this change has")
             reviewed = next((v for v in versions if v["head_sha"] == watermark), None)
             result = await self._workspace.since_diff(
                 repo, reviewed["base_sha"] if reviewed else None, watermark,
@@ -531,8 +555,8 @@ class DiffTopics:
         """
         for task in [t for key, t in self._tasks.items() if key[0] == session_id]:
             task.cancel()                       # nobody is left to publish the answer to
-        for store in (self._resolved, self._failed, self._aligned, self._local, self._clean,
-                      self._superseded, self._tasks):
+        for store in (self._resolved, self._failed, self._unresolved, self._aligned, self._local,
+                      self._clean, self._superseded, self._tasks):
             for key in [k for k in store if k[0] == session_id]:
                 del store[key]
 
@@ -544,6 +568,7 @@ class DiffTopics:
         self._local.clear()
         self._clean.clear()
         self._superseded.clear()
+        self._unresolved.clear()
 
     # --- internals ---------------------------------------------------------
 
