@@ -8,7 +8,10 @@ still exists, and that nothing claims to explain a page it is not on.
 import pytest
 from playwright.sync_api import expect
 
+from review_mate.session.state import AccessRequest, AccessStatus
 from webui.fixtures.scenarios import review_with_highlights
+from webui.pages.annotations import AnnotationsPage
+from webui.pages.detail import DetailPage
 from webui.pages.diff import DiffPage
 from webui.pages.hub import HubPage
 
@@ -21,6 +24,16 @@ def diff(page, base_url) -> DiffPage:
 @pytest.fixture
 def hub(page, base_url) -> HubPage:
     return HubPage(page, base_url)
+
+
+@pytest.fixture
+def annotations(page) -> AnnotationsPage:
+    return AnnotationsPage(page)
+
+
+@pytest.fixture
+def detail(page) -> DetailPage:
+    return DetailPage(page)
 
 
 def _registry(page):
@@ -67,8 +80,9 @@ def test_a_control_says_the_same_thing_hovered_as_explained(diff, staged, page):
     diff.load("s1")
     page.locator("#t-help").click()
     page.locator("#t-commits").hover()
-    expect(_bubble(page)).to_contain_text("Read one commit at a time")
-    assert page.locator("#t-commits").get_attribute("title") == "Read one commit at a time"
+    expect(_bubble(page)).to_contain_text("The diff view mode: one commit at a time")
+    assert page.locator("#t-commits").get_attribute("title") \
+        == "The diff view mode: one commit at a time"
 
 
 def test_the_landing_page_explains_itself_too(hub, staged, page):
@@ -116,23 +130,43 @@ def test_an_empty_surface_does_not_offer_to_explain_itself(hub, staged, page):
         == "none"
 
 
-def test_every_surface_that_claims_to_explain_itself_still_exists(diff, hub, staged, page):
+def test_every_surface_that_claims_to_explain_itself_still_exists(
+        diff, hub, annotations, detail, staged, page):
     """The guard against the explanations going quietly stale. A renamed class or a dropped panel
     leaves an entry pointing at nothing, and nothing else would fail — the mode would simply have
     one fewer thing to say, which is exactly the failure nobody notices.
+
+    The screens are driven far enough that every surface exists at some point: half of them appear
+    only once a subject is open, and one channel at a time can be on screen. A guard that loaded
+    each page and stopped would pass while saying nothing about those.
     """
-    staged.put(review_with_highlights("s1"))
+    state = review_with_highlights("s1")
+    state.access_requests = [AccessRequest(id="r1", repo="platform/shared",
+                                           reason="it defines the type this calls",
+                                           status=AccessStatus.PENDING)]
+    staged.put(state)
     hub.load()
     entries = _registry(page)
     assert entries, "the registry is empty"
 
-    missing = []
-    for where, load in (("hub", lambda: hub.load()), ("review", lambda: diff.load("s1"))):
-        load()
-        page.wait_for_timeout(300)
-        for selector, belongs, title in entries:
-            if belongs and belongs != where:
-                continue
-            if page.locator(selector).count() == 0:
-                missing.append(f"{selector} ({title}) — nothing matches it on the {where} screen")
+    seen = set()
+
+    def look(where):
+        page.wait_for_timeout(250)
+        for selector, belongs, _title in entries:
+            if (not belongs or belongs == where) and page.locator(selector).count():
+                seen.add(selector)
+
+    hub.load()
+    look("hub")
+    diff.load("s1")
+    look("review")
+    annotations.index_rows.first.click()          # the detail panel, on its Claude channel
+    look("review")
+    detail.tab("Review").click()                  # ... and on the comment being prepared
+    expect(detail.draft_box).to_be_visible()
+    look("review")
+
+    missing = [f"{sel} ({title}) — nothing matched it anywhere"
+               for sel, _b, title in entries if sel not in seen]
     assert not missing, "\n".join(missing)

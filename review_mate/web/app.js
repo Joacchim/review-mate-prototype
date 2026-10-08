@@ -1187,27 +1187,37 @@ function reviewedCount(files) {
 // screenshot and a paragraph. Different questions, so neither is generated from the other.
 const HELP = [
   // [selector, which page it belongs to ("" for both), what it is, what it is for]
-  // --- the header, where a control's own tooltip is the short half of its entry -----------
+  //
+  // A name is said in full. "Unified or side-by-side" is the *split mode*; "one commit at a time"
+  // is a *diff view mode*; the sun and moon are the *theme*. The glossary keeps those three apart
+  // deliberately because they are different axes, and an explanation that names only the options
+  // teaches the options without the thing they belong to.
+  //
+  // --- the header ---------------------------------------------------------------------------
   ["#agent", "", "Whether Claude is here",
    "Green while Claude is attached and listening, amber while something is owed and ageing, grey "
    + "when nothing is connected. It is the server's answer, not a guess from this page."],
-  ["#t-left", "", "Show or hide the file tree",
+  ["#t-left", "", "The file tree, shown or hidden",
    "Gives the diff the width when you want to read rather than navigate."],
-  ["#t-split", "", "Unified or side-by-side",
+  ["#t-split", "", "The split mode: unified or side-by-side",
    "Side-by-side puts the old and the new on one row instead of interleaving them, which is "
-   + "easier for a rewrite and worse for a long file."],
-  ["#t-right", "", "Show or hide the review panel",
+   + "easier for a rewrite and worse for a long file. It is not the diff view mode — that is "
+   + "which version you are reading, and this is how it is laid out."],
+  ["#t-right", "", "The review panel, shown or hidden",
    "The same trade as the tree: what you have collected is still there when you bring it back."],
-  ["#t-commits", "", "Read one commit at a time",
+  ["#t-commits", "", "The diff view mode: one commit at a time",
    "Steps through the change commit by commit, which is usually how work that arrived in several "
-   + "passes is easiest to follow. Lines a later commit writes over are marked while you read."],
-  ["#t-theme", "", "Light or dark",
+   + "passes is easiest to follow. Lines a later commit writes over are marked while you read. "
+   + "The other diff view modes are the whole change, and what has arrived since your last review."],
+  ["#t-theme", "", "The theme: light or dark",
    "Follows the system until you choose; the choice is remembered on this machine."],
-  ["#t-help", "", "This",
-   "Turns on the outlines and these explanations. Press it again, or Escape, to put them away."],
+  ["#t-help", "", "These explanations",
+   "Outlines what can explain itself and says what it is for when you point at it. Press it "
+   + "again, or Escape, to put them away."],
   ["#mr", "review", "Which change you are reading",
-   "The project and the number, linking back to the merge request on its own forge."],
-  [".tb", "", "Open a change by name",
+   "The project and the number, linking back to the merge request on its own forge. A branch on "
+   + "this machine has no number and no link — it says the branch instead."],
+  [".tb", "", "Opening a change by name",
    "A merge request URL, or the shorthand its forge uses — group/project!12 on GitLab, "
    + "owner/repo#12 on GitHub. The hostname decides which forge answers."],
 
@@ -1230,25 +1240,67 @@ const HELP = [
    "Track adds it to your open reviews without leaving this page; the title opens it. A row you "
    + "have already tracked says so instead of offering again."],
 
-  // --- the review screen --------------------------------------------------------------------
+  // --- the file tree ---------------------------------------------------------------------
   ["#files", "review", "The files in the change",
-   "Nested by directory, with a count of how far through you are. The marks on the right say what "
-   + "you have finished reading: a green tick for done, a grey one for a file the author has "
-   + "changed since. The rest of the repository is a tick box away."],
-  ["#diff", "review", "What you are reading",
-   "Drag across lines to mark them and ask about them. The bands between hunks open the context "
-   + "around a change, and the band that leaves behind folds it away again."],
+   "Nested by directory. Selecting one reads it; the count at the top says how far through the "
+   + "change you are."],
+  [".treeprog", "review", "How far through the change you are",
+   "Counts the files you have marked as read. A file you read and the author has since changed "
+   + "stops counting and says how many are waiting to be read again."],
+  [".node.file", "review", "One file of the change",
+   "The letter on the left is what happened to it — modified, added, deleted, renamed. A tick on "
+   + "the right means you have marked it read: green while that still holds, grey once the author "
+   + "has changed it since. The mark is made from the button above the diff, not from here."],
+  [".treehdr", "review", "Files beyond the change",
+   "The change's own files are always listed. This adds the rest of the repository, read-only, "
+   + "for when the answer to a question is in a file the change does not touch."],
+
+  // --- the diff ---------------------------------------------------------------------------
+  ["#diff", "review", "The change itself",
+   "Drag across lines to mark them and ask about them. Which version you are reading is the diff "
+   + "view mode, in the header; how it is laid out is the split mode, beside it."],
+  [".fname", "review", "The file you are reading, and what can be done to it",
+   "Names the file and, in the per-commit diff view mode, which commit and how much of it a later "
+   + "commit writes over. Marking the file read is here, and so is the rendered view of a "
+   + "Markdown file."],
+  ["tr.expand", "review", "Context the diff is not showing",
+   "Opens the unchanged lines between two hunks, a screen at a time from either end or all at "
+   + "once. Once opened, the same band folds it away again."],
+
+  // --- the review panel -------------------------------------------------------------------
   ["#ann", "review", "What you have collected",
    "Everything you marked and everything Claude found, in one list that stays put while you move "
-   + "between files. The merge-request-wide comment and Claude's findings about the change as a "
-   + "whole are pinned at the top; the per-line index, the discussions and the access requests "
-   + "scroll under it."],
+   + "between files."],
+  [".annpin", "review", "About the change as a whole",
+   "Pinned so it stays reachable whatever you are reading: the comment you are preparing for the "
+   + "merge request itself, and what Claude found about the change rather than about one line. "
+   + "It is capped, so its own growth cannot bury the list underneath."],
+  ["#hlist", "review", "The lines you marked",
+   "One row per marked range, numbered the way you refer to them in conversation — the number "
+   + "stays put when an earlier one is removed. The filter above narrows them by state or by text."],
+  [".chathdr", "review", "What has been said on the merge request",
+   "The discussions everyone can see, mirrored from the forge. Replying and resolving happen "
+   + "here; refreshing asks the forge again rather than waiting to be told."],
+  [".req", "review", "A repository Claude has asked to read",
+   "Claude reads the change without asking. Anything outside it — another repository the change "
+   + "depends on — is a request you answer, and nothing is read until you do."],
+
+  // --- the detail panel -------------------------------------------------------------------
   ["#detail", "review", "One thing at a time",
-   "Whatever you opened from the list, with two channels: the conversation with Claude about it, "
-   + "and the comment you are preparing for the merge request. They are kept apart on purpose — "
-   + "nothing you say to Claude is posted, and nothing you write for the review is sent until you "
-   + "submit it."],
+   "Whatever you opened from the list, with everything about it in one place."],
+  [".tabs", "review", "The two channels of one subject",
+   "Claude is the conversation about this — questions, answers, double-checks — and none of it is "
+   + "posted anywhere. Review is the comment you are preparing for the merge request, which is "
+   + "sent only when you submit. They are kept apart on purpose."],
+  [".draft", "review", "The comment you are preparing",
+   "Your words, not Claude's — a card is context and is never posted. A suggested change can "
+   + "travel with it, and the whole thing can be handed to Claude to check before it is sent. "
+   + "Nothing leaves this machine until you submit the review."],
+  [".msgs", "review", "What you and Claude have said about this",
+   "Only you see it. Asking here is how a marked line becomes an explanation rather than a "
+   + "comment, and Claude answers the double-checks on this subject here too."],
 ];
+
 
 
 let helping = false;
