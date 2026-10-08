@@ -1627,7 +1627,7 @@ function renderDiff() {
   if (commitsMode) { renderCommitView(el); return; }
   if (sinceLast) { renderSinceLast(el); return; }
   if (viewingPath) { renderFileView(el, viewingPath); return; }
-  renderFileDiff(el, activeFiles(), "  ·  click a line, or drag to select a block", true);
+  renderFileDiff(el, activeFiles(), "  ·  click a line, or drag to select a block", true, true);
  
 }
 
@@ -1730,7 +1730,8 @@ function renderCommitView(el) {
           : commentable
             ? `  ·  in ${short} · an earlier commit — what you mark here is about this commit${later}`
             : `  ·  in ${short} · older commit (read-only; use the full diff to comment)${later}`,
-    isTip || commentable);
+    isTip || commentable,
+    true);     // the blob behind the bands is this commit's own, so the lines spliced are its own
 }
 
 // A renamed file's header, as a brace divergence over the parts of the path that actually moved:
@@ -1791,7 +1792,13 @@ function supersededLines(path) {
   return out;
 }
 
-function renderFileDiff(el, files, suffix, interactive) {
+// `interactive` is whether the reviewer can mark lines here; `unfoldable` is whether the context
+// around them can be opened. They are different questions and were one flag. Opening context
+// splices from the blob this diff view mode resolves — the head for full and since, that commit
+// for commit@ — so it is right whenever those are the diff's own coordinates. That is always,
+// except a since view computed against a head the session has not caught up to, whose lines are
+// not the head's. An earlier commit is read-only and unfolds perfectly well.
+function renderFileDiff(el, files, suffix, interactive, unfoldable) {
   let file = files.find((f) => f.path === currentFile);
   if (!file && files.length) { currentFile = files[0].path; file = files[0]; }
   if (!file) { el.innerHTML = '<div class="empty" style="padding:16px">select a file</div>'; return; }
@@ -1830,13 +1837,11 @@ function renderFileDiff(el, files, suffix, interactive) {
   if (hunks === null) { el.appendChild(empty("loading " + file.path + "…")); return; }
   const table = document.createElement("table");
   table.className = "hunk";
-  if (!splitMode && interactive) {
-    // unified: render with "unfold" bands revealing the context between hunks (full diff, and any
-    // head-aligned since-last diff — its new side is the head blob the bands reveal from)
-    renderUnifiedUnfoldable(table, hunks, file.path, hl);
+  const sup = supersededLines(file.path);
+  if (!splitMode && unfoldable) {
+    renderUnifiedUnfoldable(table, hunks, file.path, hl, sup);
   } else {
-    table.innerHTML = splitMode ? splitRowsHtml(hunks, hl)
-                                : unifiedRowsHtml(hunks, hl, supersededLines(file.path));
+    table.innerHTML = splitMode ? splitRowsHtml(hunks, hl) : unifiedRowsHtml(hunks, hl, sup);
   }
   if (!interactive) wireSuperseded(table);
   if (interactive) wireSelection(table, file.path);
@@ -1861,7 +1866,10 @@ function renderMarkdownDoc(el, path) {
   el.appendChild(box);
 }
 
-function renderUnifiedUnfoldable(table, hunks, path, hl) {
+// `sup` travels with the rows because the two renderers must say the same thing about a line:
+// the unfoldable one is now used where code a later commit rewrites is marked, and a row built
+// without it would quietly lose the mark on the way through.
+function renderUnifiedUnfoldable(table, hunks, path, hl, sup) {
   const lines = blobLines(path);
   const exp = expandedGaps[path] || new Map();
   let cursor = 1;   // next not-yet-shown new-side line number
@@ -1869,7 +1877,7 @@ function renderUnifiedUnfoldable(table, hunks, path, hl) {
     renderGap(table, path, cursor, h.new_start - 1, lines, exp, hl);
     // the hunk's own rows are built from the topic — sides, numbers and spans are all fields
     const block = document.createElement("tbody");
-    block.innerHTML = unifiedRowsHtml([h], hl);
+    block.innerHTML = unifiedRowsHtml([h], hl, sup);
     while (block.firstChild) table.appendChild(block.firstChild);
     cursor = h.new_start + h.new_count;
   });
@@ -2033,7 +2041,10 @@ function renderSinceLast(el) {
   // fully interactive (highlight, comment, unfold) when head-aligned — the diff's new side is then
   // the head blob, so its line numbers anchor exactly like the full diff. A stale session (head
   // moved past the session) is read-only until a refresh re-syncs the head.
-  renderFileDiff(el, files, "  ·  since your last review", view.head_aligned !== false);
+  // head-aligned is both questions at once here: the diff's new side is the head, which is what
+  // makes it anchorable and what makes the head's blob the right thing to unfold into
+  renderFileDiff(el, files, "  ·  since your last review", view.head_aligned !== false,
+                 view.head_aligned !== false);
 }
 
 function renderFileView(el, path) {

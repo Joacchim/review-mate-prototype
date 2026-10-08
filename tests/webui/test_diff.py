@@ -412,3 +412,35 @@ def test_a_forge_that_does_not_take_them_leaves_the_commit_read_only(
     diff.ask_about(2)                                        # the lines are there; marking is not
     page.wait_for_timeout(400)
     assert page.evaluate("() => (state.highlights || []).length") == 0
+
+
+def test_an_earlier_commit_can_still_be_read_around(diff, staged, stub_host, review_kb):
+    """Reading an older commit is read-only, and opening the context around a hunk is reading. The
+    bands splice from the blob this diff view mode resolves — that commit's own — so the lines they
+    reveal are the commit's, not the head's."""
+    from review_mate.session.state import ChangeType, FileEntry
+    from webui.fixtures.scenarios import COMMIT_DIFF
+    stage_advanced_review(staged, stub_host, review_kb)
+    stub_host.commit_files = {"aaaa111": [
+        FileEntry(path="first.py", change_type=ChangeType.MODIFIED, language="python",
+                  hunks=[{"diff": COMMIT_DIFF}])]}
+    stub_host.files["first.py"] = "\n".join(f"# line {n}" for n in range(1, 40))
+    diff.load("s1")
+    diff.toggle_per_commit()
+    expect(diff.file_header).to_contain_text("read-only")      # still not somewhere to comment
+    expect(diff.unfold_bands).not_to_have_count(0)             # ... and still somewhere to read
+    diff.unfold_all()
+    expect(diff.table).to_contain_text("# line 1")
+
+
+def test_a_since_view_behind_the_head_is_not_read_around_either(diff, staged, stub_host, review_kb):
+    """The one place opening context would be wrong: a since view computed against a head the
+    session has not caught up to shows lines that are not the head's, and the bands splice from the
+    head's blob. Reading around a hunk there would interleave two different versions of the file."""
+    stage_advanced_review(staged, stub_host, review_kb)
+    stub_host.versions = [{"head_sha": "moved-on-since", "base_sha": "base2"},
+                          {"head_sha": "reviewed-head", "base_sha": "base1"}]
+    diff.load("s1")
+    diff.show_since_last()
+    expect(diff.table).to_be_visible()
+    expect(diff.unfold_bands).to_have_count(0)

@@ -94,6 +94,10 @@ how work that arrived in several passes is easiest to follow.
 
 > ① switch into per-commit reading · ② the commits, in order, with the diff showing one at a time
 
+An earlier commit is read-only unless the forge takes a comment on one, but it reads like any other
+diff: the context around a hunk opens and folds the same way, from that commit's own version of the
+file rather than the latest.
+
 Reading a commit from the middle of a branch, the risk is spending attention on code the branch
 does not keep. Lines a later commit writes over are marked, and the marker names the commit that
 does it — one click away in the picker you are already using.
