@@ -1200,19 +1200,24 @@ const HELP = [
    + "session against this review and it turns green. It is the server's answer, not a guess "
    + "from this page."],
   ["#t-left", "", "The file tree, shown or hidden",
-   "Gives the diff the width when you want to read rather than navigate."],
+   "Puts away the list of files on the left and brings it back. The tree is how you move between "
+   + "files, so it is worth the width while you are finding your way around and worth hiding once "
+   + "you have settled into one file and are reading rather than navigating."],
   ["#t-split", "", "The split mode: unified or side-by-side",
    "Side-by-side puts the old and the new on one row instead of interleaving them, which is "
    + "easier for a rewrite and worse for a long file. It is not the diff view mode — that is "
    + "which version you are reading, and this is how it is laid out."],
   ["#t-right", "", "The review panel, shown or hidden",
-   "The same trade as the tree: what you have collected is still there when you bring it back."],
+   "Puts away the panel on the right — the lines you marked, what Claude found, the discussions "
+   + "on the merge request — and brings it back. Hiding it gives the diff the width and discards "
+   + "nothing: everything in it is still there when you bring it back."],
   ["#t-commits", "", "The diff view mode: one commit at a time",
    "Steps through the change commit by commit, which is usually how work that arrived in several "
    + "passes is easiest to follow. Lines a later commit writes over are marked while you read. "
    + "The other diff view modes are the whole change, and what has arrived since your last review."],
   ["#t-theme", "", "The theme: light or dark",
-   "Follows the system until you choose; the choice is remembered on this machine."],
+   "Follows the system until you pick one yourself. The choice is remembered on this machine and "
+   + "nowhere else, so it does not follow you to another."],
   ["#t-help", "", "These explanations",
    "Outlines what can explain itself and says what it is for when you point at it. Press it "
    + "again, or Escape, to put them away."],
@@ -1225,8 +1230,9 @@ const HELP = [
    + "things that live there rather than here — the pipeline, the description, the approvals. A "
    + "branch on this machine has no number and nowhere to go, so it says the branch instead."],
   [".tb", "", "Opening a change by name",
-   "A merge request URL, or the shorthand its forge uses — group/project!12 on GitLab, "
-   + "owner/repo#12 on GitHub. The hostname decides which forge answers."],
+   "Paste a merge request URL, or type the shorthand its forge uses — group/project!12 on GitLab, "
+   + "owner/repo#12 on GitHub — and it opens. Which forge answers is read off the reference "
+   + "itself, so you never have to say which one you mean."],
 
   // --- the landing page ---------------------------------------------------------------------
   // `#diff` holds this page too, which is why entries name the page they belong to: without that
@@ -1264,8 +1270,9 @@ const HELP = [
 
   // --- the diff ---------------------------------------------------------------------------
   ["#diff", "review", "The change itself",
-   "Drag across lines to mark them and ask about them. Which version you are reading is the diff "
-   + "view mode, in the header; how it is laid out is the split mode, beside it."],
+   "Drag across lines to mark them. Marking collects the range in the panel on the right and asks "
+   + "nobody anything; the asking, and the comment, happen there. Which version you are reading is "
+   + "the diff view mode, in the header; how it is laid out is the split mode, beside it."],
   [".fname", "review", "The file you are reading, and what can be done to it",
    "Names the file and, in the per-commit diff view mode, which commit and how much of it a later "
    + "commit writes over. Marking the file read is here, and so is the rendered view of a "
@@ -1277,11 +1284,13 @@ const HELP = [
   // --- the review panel -------------------------------------------------------------------
   ["#ann", "review", "What you have collected",
    "Everything you marked and everything Claude found, in one list that stays put while you move "
-   + "between files."],
+   + "between files. Opening a row is where the work on it happens: asking about it, writing the "
+   + "comment, reading what came back."],
   [".annpin", "review", "About the change as a whole",
    "Pinned so it stays reachable whatever you are reading: the comment you are preparing for the "
    + "merge request itself, and what Claude found about the change rather than about one line. "
-   + "It is capped, so its own growth cannot bury the list underneath."],
+   + "A remark that belongs to no single file belongs here, where it is not lost behind whichever "
+   + "file you happen to have open."],
   ["#hlist", "review", "The lines you marked",
    "One row per marked range, numbered the way you refer to them in conversation — the number "
    + "stays put when an earlier one is removed. Marking a line is for you: it collects what you "
@@ -1303,12 +1312,15 @@ const HELP = [
    + "and nothing there is read until you do. Approving one covers that repository for this "
    + "review; what was granted stays listed so it is never a thing you agreed to and forgot."],
   [".req", "review", "A repository Claude has asked to read",
-   "Claude reads the change without asking. Anything outside it — another repository the change "
-   + "depends on — is a request you answer, and nothing is read until you do."],
+   "One request: the repository asked for, and why it was asked for. Approving covers that one "
+   + "repository for this one review — another repository, or another review, asks again. "
+   + "Denying leaves it unread, and Claude answers from the change alone."],
 
   // --- the detail panel -------------------------------------------------------------------
   ["#detail", "review", "One thing at a time",
-   "Whatever you opened from the list, with everything about it in one place."],
+   "Whatever you opened from the list — a range you marked, something Claude found, the change as "
+   + "a whole — with the conversation about it and the comment you are preparing on it in the two "
+   + "tabs below. Everything else stays where it was; this is the one subject you are on."],
   [".tabs", "review", "The two channels of one subject",
    "Claude is the conversation about this — questions, answers, double-checks — and none of it "
    + "goes anywhere else. Review is the comment you are preparing, which is sent when you send "
