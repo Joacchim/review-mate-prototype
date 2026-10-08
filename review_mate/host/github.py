@@ -185,7 +185,10 @@ class GitHubProvider:
     async def commits(self, ref: MRRef) -> list[dict]:
         rows = await self._paged(f"/repos/{ref.project}/pulls/{ref.iid}/commits")
         out = []
-        for row in reversed(rows):            # newest first, the order a reviewer steps back through
+        # GitHub lists a pull request's commits oldest-first already, which is the order the review
+        # reads in — and the order the picker's "reviewed up to here" ticks depend on. Reversing
+        # here, as the GitLab adapter must, turned the list round and inverted those ticks.
+        for row in rows:
             commit = row.get("commit") or {}
             message = commit.get("message") or ""
             out.append({"sha": row.get("sha") or "", "short_id": (row.get("sha") or "")[:8],

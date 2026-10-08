@@ -146,10 +146,13 @@ async def test_it_says_it_cannot_version_a_diff(provider):
         "the absent method is the other half of the capability — a guard upstream asks for both")
 
 
-async def test_commits_come_back_newest_first(provider):
+async def test_commits_come_back_oldest_first(provider):
+    """The order a review reads in, and the order every other host hands over. It is also what the
+    picker's "reviewed up to here" ticks are counted from, so a list the other way round does not
+    merely read oddly — it marks the newest commits as the ones already read."""
     rows = await provider.commits(REF)
-    assert [c["sha"] for c in rows] == ["c2", "c1"]
-    assert rows[1]["title"] == "first" and rows[1]["message"].startswith("first\n\nbody")
+    assert [c["sha"] for c in rows] == ["c1", "c2"]
+    assert rows[0]["title"] == "first" and rows[0]["message"].startswith("first\n\nbody")
 
 
 async def test_one_commit_diffs_like_the_whole_change(provider):

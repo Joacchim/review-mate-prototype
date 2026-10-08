@@ -92,7 +92,12 @@ class LocalBranchProvider:
     # --- stepping through the branch one commit at a time ---------------------
 
     async def commits(self, ref: LocalRef) -> list[dict]:
-        """The commits the branch added, newest first — the shape a forge returns.
+        """The commits the branch added, oldest first — the order the review reads in.
+
+        Same order every host hands over: a reviewer steps through a branch the way it was written,
+        and the picker's marks for "reviewed up to here" are positional, so a list the other way
+        round ticks the newest commits as the ones already read.
+
 
         `base..branch` and not `base...branch`: what is wanted here is the commits *this branch*
         added, and a symmetric range would sweep in whatever the base has done since. The diff uses
@@ -100,7 +105,7 @@ class LocalBranchProvider:
         """
         repo = Path(ref.path)
         base = ref.base or await self._default_branch(repo)
-        raw = await self._git(repo, "log", f"{base}..{ref.branch}",
+        raw = await self._git(repo, "log", "--reverse", f"{base}..{ref.branch}",
                               f"--format=%H{_UNIT}%h{_UNIT}%s{_UNIT}%B{_UNIT}%an{_UNIT}%aI{_RECORD}")
         rows = []
         for record in raw.split(_RECORD):

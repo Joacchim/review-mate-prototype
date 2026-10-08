@@ -261,13 +261,13 @@ def stacked(tmp_path):
 async def test_it_lists_the_commits_the_branch_added(provider, stacked):
     """`base..branch`, so what the base did afterwards is not listed as the author's work."""
     rows = await provider.commits(LocalRef(path=str(stacked), branch="feat/three", base="main"))
-    assert [r["title"] for r in rows] == ["add three", "add b", "add two"]
+    assert [r["title"] for r in rows] == ["add two", "add b", "add three"]   # oldest first
     assert "someone else" not in [r["title"] for r in rows]
 
 
 async def test_a_commit_row_carries_what_a_forge_would_give(provider, stacked):
     rows = await provider.commits(LocalRef(path=str(stacked), branch="feat/three", base="main"))
-    row = rows[-1]
+    row = rows[0]
     assert row["sha"].startswith(row["short_id"])
     assert row["title"] == "add two" and row["author"] == "the agent"
     assert row["created_at"], "a forge gives a timestamp, and so does this"
@@ -280,8 +280,8 @@ async def test_a_message_with_newlines_stays_one_commit(provider, stacked):
     git(stacked, "commit", "-m", "add four\n\nwhy: because the retry needed a bound\nand a note")
     rows = await provider.commits(LocalRef(path=str(stacked), branch="feat/three", base="main"))
     assert len(rows) == 4
-    assert rows[0]["title"] == "add four"
-    assert "because the retry needed a bound" in rows[0]["message"]
+    assert rows[-1]["title"] == "add four"
+    assert "because the retry needed a bound" in rows[-1]["message"]
 
 
 async def test_one_commit_reads_as_its_own_change(provider, stacked):
@@ -321,7 +321,7 @@ async def test_the_commit_list_reaches_the_topic_that_publishes_it(tmp_path, sta
     await topics.fetch_commits(sid)
     view = await topics.build_commits(sid)
     assert view["state"] == "ready"
-    assert [c["title"] for c in view["commits"]] == ["add three", "add b", "add two"]
+    assert [c["title"] for c in view["commits"]] == ["add two", "add b", "add three"]
     await manager.shutdown()
 
 
