@@ -14,6 +14,7 @@ from webui.pages.annotations import AnnotationsPage
 from webui.pages.detail import DetailPage
 from webui.pages.diff import DiffPage
 from webui.pages.hub import HubPage
+from webui.pages.reviewbar import ReviewBarPage
 
 
 @pytest.fixture
@@ -34,6 +35,11 @@ def annotations(page) -> AnnotationsPage:
 @pytest.fixture
 def detail(page) -> DetailPage:
     return DetailPage(page)
+
+
+@pytest.fixture
+def review(page) -> ReviewBarPage:
+    return ReviewBarPage(page)
 
 
 def _registry(page):
@@ -59,8 +65,10 @@ def test_asking_explains_whatever_is_pointed_at(diff, staged, page):
     page.locator("#t-help").click()
     page.locator("#files").hover()
     expect(_bubble(page)).to_contain_text("The files in the change")
-    page.locator("#ann").hover()
-    expect(_bubble(page)).to_contain_text("What you have collected")
+    # the nearest thing to the pointer answers, not the panel holding it: a reviewer wondering
+    # about the count at the top of the tree is not asking what a file tree is
+    page.locator(".treeprog").hover()
+    expect(_bubble(page)).to_contain_text("How far through the change you are")
 
 
 def test_it_can_be_put_away_again(diff, staged, page):
@@ -131,7 +139,7 @@ def test_an_empty_surface_does_not_offer_to_explain_itself(hub, staged, page):
 
 
 def test_every_surface_that_claims_to_explain_itself_still_exists(
-        diff, hub, annotations, detail, staged, page):
+        diff, hub, annotations, detail, review, staged, page):
     """The guard against the explanations going quietly stale. A renamed class or a dropped panel
     leaves an entry pointing at nothing, and nothing else would fail — the mode would simply have
     one fewer thing to say, which is exactly the failure nobody notices.
@@ -163,8 +171,16 @@ def test_every_surface_that_claims_to_explain_itself_still_exists(
     look("review")
     annotations.index_rows.first.click()          # the detail panel, on its Claude channel
     look("review")
+    # every row, because a mark answered, a mark waiting and a mark nobody has asked about yet
+    # put different things in the panel — and the ask itself only exists on the last of those
+    for row in range(1, annotations.index_rows.count()):
+        annotations.index_rows.nth(row).click()
+        look("review")
     detail.tab("Review").click()                  # ... and on the comment being prepared
     expect(detail.draft_box).to_be_visible()
+    look("review")
+    detail.save_draft("something to send")        # ... which is what the review bar counts
+    expect(review.counts).to_contain_text("pending")
     look("review")
 
     missing = [f"{sel} ({title}) — nothing matched it anywhere"

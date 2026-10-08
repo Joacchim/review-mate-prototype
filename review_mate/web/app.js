@@ -1277,7 +1277,9 @@ const HELP = [
    + "It is capped, so its own growth cannot bury the list underneath."],
   ["#hlist", "review", "The lines you marked",
    "One row per marked range, numbered the way you refer to them in conversation — the number "
-   + "stays put when an earlier one is removed. The filter above narrows them by state or by text."],
+   + "stays put when an earlier one is removed. Marking a line is for you: it collects what you "
+   + "want to look at. Claude is not told about it until you open the row and ask, or write a "
+   + "comment and send the review."],
   [".chathdr", "review", "What has been said on the merge request",
    "The discussions everyone can see, mirrored from the forge. Replying and resolving happen "
    + "here; refreshing asks the forge again rather than waiting to be told."],
@@ -1289,13 +1291,32 @@ const HELP = [
   ["#detail", "review", "One thing at a time",
    "Whatever you opened from the list, with everything about it in one place."],
   [".tabs", "review", "The two channels of one subject",
-   "Claude is the conversation about this — questions, answers, double-checks — and none of it is "
-   + "posted anywhere. Review is the comment you are preparing for the merge request, which is "
-   + "sent only when you submit. They are kept apart on purpose."],
+   "Claude is the conversation about this — questions, answers, double-checks — and none of it "
+   + "goes anywhere else. Review is the comment you are preparing, which is sent when you send "
+   + "the review: to the merge request, or to Claude when there is no merge request to post to. "
+   + "They are kept apart on purpose."],
   [".draft", "review", "The comment you are preparing",
    "Your words, not Claude's — a card is context and is never posted. A suggested change can "
    + "travel with it, and the whole thing can be handed to Claude to check before it is sent. "
-   + "Nothing leaves this machine until you submit the review."],
+   + "It stays yours until you send the review, and nothing is sent one comment at a time."],
+  [".askctx", "review", "Asking Claude about these lines",
+   "Marking a line collects it; this is what puts it to Claude. The question is optional — "
+   + "without one it is a request for context on the range, with one it is that question about "
+   + "it. The answer arrives as a card on this subject."],
+  [".passrow", "review", "Asking Claude to read the whole change",
+   "The same ask, about the change rather than one range: what it finds comes back as findings "
+   + "pinned above the list, which you can sort by what matters and dismiss one at a time."],
+  [".anntools", "review", "Narrowing what you have collected",
+   "Filters the list by what each row has become — still context, a comment you wrote, something "
+   + "already sent — or by text across the file names, your questions and your comments."],
+  [".verbanner", "review", "Where your last reading stopped",
+   "Marking a baseline records the version you have read up to, which is what the since-last "
+   + "diff view mode compares against. It is yours alone — nobody else sees it, and the forge has "
+   + "no record of it."],
+  [".reviewbar", "review", "Sending what you have written",
+   "Comments are prepared one at a time and sent together. Pending is what you have written and "
+   + "not sent; what has gone says posted on a merge request and handed over on a branch here, "
+   + "where Claude is the one who receives it."],
   [".msgs", "review", "What you and Claude have said about this",
    "Only you see it. Asking here is how a marked line becomes an explanation rather than a "
    + "comment, and Claude answers the double-checks on this subject here too."],
