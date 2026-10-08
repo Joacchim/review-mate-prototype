@@ -8,7 +8,7 @@ still exists, and that nothing claims to explain a page it is not on.
 import pytest
 from playwright.sync_api import expect
 
-from review_mate.session.state import AccessRequest, AccessStatus
+from review_mate.session.state import AccessRequest, AccessStatus, ReviewThread, ThreadComment
 from webui.fixtures.scenarios import review_with_highlights
 from webui.pages.annotations import AnnotationsPage
 from webui.pages.detail import DetailPage
@@ -148,10 +148,19 @@ def test_every_surface_that_claims_to_explain_itself_still_exists(
     only once a subject is open, and one channel at a time can be on screen. A guard that loaded
     each page and stopped would pass while saying nothing about those.
     """
+    # a review far enough along that every surface exists somewhere: something Claude asked to
+    # read, and a discussion already on the merge request. A surface that only appears in a state
+    # the fixture never reaches is a surface this guard cannot speak for.
     state = review_with_highlights("s1")
     state.access_requests = [AccessRequest(id="r1", repo="platform/shared",
                                            reason="it defines the type this calls",
                                            status=AccessStatus.PENDING)]
+    state.threads = [
+        ReviewThread(id="t1", resolved=False,
+                     comments=[ThreadComment(id="1", author="paul", body="why here?")]),
+        ReviewThread(id="t2", resolved=True,
+                     comments=[ThreadComment(id="2", author="sam", body="settled")]),
+    ]
     staged.put(state)
     hub.load()
     entries = _registry(page)
@@ -176,6 +185,7 @@ def test_every_surface_that_claims_to_explain_itself_still_exists(
     for row in range(1, annotations.index_rows.count()):
         annotations.index_rows.nth(row).click()
         look("review")
+    annotations.index_rows.first.click()          # back to a row that takes a comment
     detail.tab("Review").click()                  # ... and on the comment being prepared
     expect(detail.draft_box).to_be_visible()
     look("review")
@@ -186,3 +196,13 @@ def test_every_surface_that_claims_to_explain_itself_still_exists(
     missing = [f"{sel} ({title}) — nothing matched it anywhere"
                for sel, _b, title in entries if sel not in seen]
     assert not missing, "\n".join(missing)
+
+
+def test_the_id_in_the_corner_says_it_is_not_a_commit(diff, staged, page):
+    """Eight hex characters in the corner of a code review read as a short sha. They are the
+    session's id, and nothing on screen said so."""
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    page.locator("#t-help").click()
+    page.locator("#sid").hover()
+    expect(_bubble(page)).to_contain_text("Not a commit")

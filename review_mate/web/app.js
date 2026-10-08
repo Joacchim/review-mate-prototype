@@ -1214,6 +1214,10 @@ const HELP = [
   ["#t-help", "", "These explanations",
    "Outlines what can explain itself and says what it is for when you point at it. Press it "
    + "again, or Escape, to put them away."],
+  ["#sid", "review", "This review's own id",
+   "Not a commit: it is the identifier of your review of this change, which is what the URL "
+   + "carries and what an agent is told to work on. The code you are reading is named in the "
+   + "header on the left, and in per-commit reading the commit is named above the diff."],
   ["#mr", "review", "Which change you are reading",
    "The project and the number, linking back to the merge request on its own forge. A branch on "
    + "this machine has no number and no link — it says the branch instead."],
@@ -1281,8 +1285,20 @@ const HELP = [
    + "want to look at. Claude is not told about it until you open the row and ask, or write a "
    + "comment and send the review."],
   [".chathdr", "review", "What has been said on the merge request",
-   "The discussions everyone can see, mirrored from the forge. Replying and resolving happen "
-   + "here; refreshing asks the forge again rather than waiting to be told."],
+   "The discussions everyone can see, mirrored from the forge — yours and everyone else's. A "
+   + "discussion is unresolved until somebody settles it, and resolved once they have; resolving "
+   + "is reversible and reopening it is the same control. Replying and resolving happen here, and "
+   + "they reach the forge straight away rather than waiting for the review to be sent. "
+   + "Refreshing asks the forge again rather than waiting to be told."],
+  [".threadseg", "review", "Which discussions to show",
+   "Unresolved is what is still open and is the one you are usually after; All adds the settled "
+   + "ones back, which is what you want when checking that something was answered rather than "
+   + "dropped. The numbers are how many of each there are."],
+  [".accesszone", "review", "Repositories Claude has asked to read",
+   "Claude reads this change without asking. Anything outside it — another repository this one "
+   + "depends on, to see how a function it calls is actually written — is a request you answer, "
+   + "and nothing there is read until you do. Approving one covers that repository for this "
+   + "review; what was granted stays listed so it is never a thing you agreed to and forgot."],
   [".req", "review", "A repository Claude has asked to read",
    "Claude reads the change without asking. Anything outside it — another repository the change "
    + "depends on — is a request you answer, and nothing is read until you do."],
@@ -2179,8 +2195,13 @@ function renderAnnotations() {
   renderThreads(list);          // existing MR discussions — reply / resolve / refresh
 
   const requests = accessRequests();
-  list.appendChild(h3("Access requests"));
-  if (!requests.length) list.appendChild(empty("none"));
+  // its own section rather than a loose heading and some boxes: it is one thing to explain, and
+  // it is a thing a reviewer meets with no idea why they are being asked
+  const consent = document.createElement("div");
+  consent.className = "accesszone";
+  list.appendChild(consent);
+  consent.appendChild(h3("Access requests"));
+  if (!requests.length) consent.appendChild(empty("none"));
   requests.forEach((r) => {
     const box = document.createElement("div");
     box.className = "req" + (r.status === "pending" ? "" : " decided");
@@ -2197,7 +2218,7 @@ function renderAnnotations() {
       if (state.path) line.title = "Claude can read this checkout";
       box.appendChild(line);
     }
-    list.appendChild(box);
+    consent.appendChild(box);
   });
 
   morph(el, built);
