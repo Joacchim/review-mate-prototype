@@ -9,6 +9,8 @@ from review_mate.session.commands import AddHighlight, ApplyMRMetadata, SaveDraf
 from review_mate.session.state import LineRange, MRMetadata, Origin, ReviewThread, Side, ThreadComment
 from review_mate.contracts import MRRef
 from review_mate.writeback.service import Writeback
+from review_mate.writeback.submit import ReviewSubmitter
+from review_mate.session.state import DraftStatus
 
 MR = MRMetadata(host="gitlab", project="g/p", iid=42, title="T", source_branch="x",
                 target_branch="main", sha="s", author="a", url="https://gl/g/p/-/merge_requests/42")
@@ -534,3 +536,70 @@ async def test_resync_moves_the_checkout_to_the_new_head(tmp_path):
     assert workspace.made == ["head-2", "head-3"]
     assert workspace.released == ["head-2"]            # and the old one does not pile up
     await manager.shutdown()
+
+
+# --- a review of a branch on this machine has nowhere to post -----------------------------------
+#
+# What there is, is the agent that wrote the code. The documentation has always said a comment is
+# answered here rather than read later; before this, a comment written on a local branch reached
+# nobody — no forge to take it, no notification raised, and the agent's view carries no drafts.
+
+async def _local_session(tmp_path, caps=None):
+    """A review of a branch on this machine: marked, and with nowhere to post."""
+    manager = SessionManager(root=tmp_path / "local")
+    sid = await manager.create()
+    writer = manager.get(sid)
+    await writer.submit(ApplyMRMetadata(mr=MRMetadata(
+        host="local", project="control-plane", iid=0, title="a branch",
+        source_branch="feat/x", target_branch="main", sha="abc", author="you",
+        url="/home/you/src/cp", clone_url="/home/you/src/cp",
+        capabilities=dict(caps if caps is not None else LOCAL_CAPS))), Origin.SYSTEM)
+    await writer.submit(AddHighlight(file="a.py", side=Side.NEW,
+                                     line_range=LineRange(start=3, end=3)), Origin.BROWSER)
+    return manager, sid
+
+
+LOCAL_CAPS = {"inline_comments": False, "mr_comments": False, "threads": False,
+              "approvals": False, "suggestions": False, "commits": True}
+
+
+async def test_sending_a_self_review_hands_the_comments_to_the_agent(tmp_path):
+    manager, sid = await _local_session(tmp_path)
+    writer = manager.get(sid)
+    highlight = writer.snapshot().highlights[0]
+    await writer.submit(SaveDraft(highlight_id=highlight.id, body="rename this, it reads as a flag"),
+                        Origin.BROWSER)
+
+    out = await ReviewSubmitter(manager, None, provider=None, kb=None).submit(sid)
+    assert out["handed_to"] == "agent" and out["posted"] == 1
+
+    snapshot = writer.snapshot()
+    message = snapshot.messages[-1]
+    assert message.role == "user"
+    assert message.body == "rename this, it reads as a flag"
+    assert message.anchor.id == highlight.id      # on the subject it was written against
+    assert snapshot.drafts[0].status is DraftStatus.POSTED    # and it says it has gone
+
+
+async def test_a_handed_over_comment_is_in_the_agents_backlog(tmp_path):
+    """The reuse that makes this work: a message nobody has answered is already an ask, and posting
+    one already wakes a parked watcher. Nothing new carries it."""
+    from review_mate.view.asks import outstanding
+    manager, sid = await _local_session(tmp_path)
+    writer = manager.get(sid)
+    await writer.submit(SaveDraft(highlight_id=writer.snapshot().highlights[0].id,
+                                  body="this needs a test"), Origin.BROWSER)
+    await ReviewSubmitter(manager, None, provider=None, kb=None).submit(sid)
+    asks = outstanding(writer.snapshot())
+    assert [a.kind for a in asks] == ["chat"]
+
+
+async def test_a_review_with_a_forge_still_goes_to_the_forge(tmp_path):
+    """Only a review with nowhere to post is redirected. Somewhere to post and no way to reach it
+    is a different answer — the reviewer meant the merge request."""
+    manager, sid = await _local_session(tmp_path, caps={"inline_comments": True})
+    writer = manager.get(sid)
+    await writer.submit(SaveDraft(highlight_id=writer.snapshot().highlights[0].id, body="x"),
+                        Origin.BROWSER)
+    out = await ReviewSubmitter(manager, None, provider=None, kb=None).submit(sid)
+    assert out == {"error": "review posting unavailable"}

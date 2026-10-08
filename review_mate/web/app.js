@@ -3099,7 +3099,11 @@ function renderReviewBar(el) {
   const bar = document.createElement("div");
   bar.className = "reviewbar";
   const lbl = document.createElement("span");
-  lbl.textContent = `Your review · ${pending} pending${posted ? ` · ${posted} posted` : ""}`;
+  // "posted" is where they went, and on a branch on this machine they went to Claude rather than
+  // to a merge request. Saying posted there would name a place that does not exist.
+  const toAgent = !canPostToForge();
+  lbl.textContent = `Your review · ${pending} pending`
+    + (posted ? ` · ${posted} ${toAgent ? "handed over" : "posted"}` : "");
   bar.appendChild(lbl);
   if (alreadyApproved) {   // your prior review approved this MR — a right-aligned status marker
     const ap = document.createElement("span");
@@ -3118,7 +3122,8 @@ function renderReviewBar(el) {
   // a submit button only when there's an action to take: drafts to post, an approve toggled on, or an
   // approval still available. Once approved with nothing pending, the bar is pure status (no dead button).
   if (pending || approveToggle || (canApprove && !alreadyApproved)) {
-    const label = pending ? "Submit review" : (approveToggle ? "Approve MR" : "Submit review");
+    const label = pending ? (toAgent ? "Send to Claude" : "Submit review")
+                          : (approveToggle ? "Approve MR" : "Submit review");
     const b = btn(label, "btn primary", submitReview);
     if (!pending && !approveToggle) b.disabled = true;
     bar.appendChild(b);
@@ -3126,14 +3131,25 @@ function renderReviewBar(el) {
   el.appendChild(bar);
 }
 
+// Whether this review has a merge request to post to. A branch on this machine has none — the
+// comments go to the agent that wrote the code, which is the whole shape of a self-review. The
+// server's rule, said the same way: only an explicit no on both counts means there is nowhere to
+// post, so a host advertising half of itself is not redirected.
+function canPostToForge() {
+  const caps = (state.mr && state.mr.capabilities) || {};
+  return !(caps.inline_comments === false && caps.mr_comments === false);
+}
+
 async function submitReview() {
-  setStatus(approveToggle ? "submitting review…" : "posting review…");
+  setStatus(canPostToForge() ? (approveToggle ? "submitting review…" : "posting review…")
+                             : "handing your comments to Claude…");
   const data = await cmd("review.submit", { session: SID, approve: approveToggle });
   if (!data.ok) { setStatus("✕ " + data.reason); return; }
   const failed = (data.results || []).filter((x) => !x.ok);
   const parts = [];
-  if (data.total) parts.push(failed.length ? `posted ${data.posted}/${data.total} — ${failed.length} failed`
-                                           : `posted ${data.posted} comment${data.posted === 1 ? "" : "s"}`);
+  const verb = data.handed_to === "agent" ? "handed over" : "posted";
+  if (data.total) parts.push(failed.length ? `${verb} ${data.posted}/${data.total} — ${failed.length} failed`
+                                           : `${verb} ${data.posted} comment${data.posted === 1 ? "" : "s"}`);
   if (data.approved) parts.push("approved");
   else if (data.approve_error) parts.push("approve failed: " + data.approve_error);
   setStatus(parts.join(" · ") || "nothing to submit");

@@ -233,7 +233,13 @@ to put their name on it.
 
 The difference is what a comment means. On a merge request you write a comment for the author to
 read later; here, the agent that wrote the code is watching, so a comment is answered — by
-discussion where you asked a question, and by changing the code where you asked for a change. A
+discussion where you asked a question, and by changing the code where you asked for a change.
+
+Sending the review is still the moment that happens. Comments are prepared the same way and stay
+yours until you send them; with no merge request to post to, sending hands them to Claude instead,
+each on the lines it was written against. The button says so — **Send to Claude** rather than
+Submit review — and what has gone reads as handed over rather than posted, since there is nowhere
+to have posted it. A
 subject the agent has acted on says what it became, rather than warning you that your marked lines
 are now out of date.
 

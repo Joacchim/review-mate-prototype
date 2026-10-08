@@ -13,8 +13,23 @@ from __future__ import annotations
 
 from review_mate.contracts import MRRef
 from review_mate.forges import Forges
-from review_mate.session.commands import MarkDraftPosted, ReplaceThreads
-from review_mate.session.state import DraftStatus, Origin
+from review_mate.session.commands import MarkDraftPosted, PostMessage, ReplaceThreads
+from review_mate.session.state import DraftStatus, Origin, Subject, SubjectKind
+
+
+def _nowhere_to_post(snapshot) -> bool:
+    """Whether this review has no forge to send comments to.
+
+    Read off the capabilities rather than the host's name: a branch on this machine is the case
+    that exists today, and any host that cannot take a comment is in the same position. Distinct
+    from a writer that could not be built — there the reviewer means the merge request, and quietly
+    sending their review somewhere else would be a worse answer than saying it is unavailable.
+    """
+    capabilities = (snapshot.mr.capabilities or {}) if snapshot.mr else {}
+    # Both said, and both said no. An absent capability is not a claim that nothing is possible —
+    # a host that advertises half of itself would otherwise have its reviews quietly redirected.
+    return (capabilities.get("inline_comments") is False
+            and capabilities.get("mr_comments") is False)
 
 
 class ReviewSubmitter:
@@ -33,14 +48,23 @@ class ReviewSubmitter:
         writer = self._manager.get(session_id)
         if writer is None:
             return {"error": "unknown session"}
-        if self._writeback is None:
-            return {"error": "review posting unavailable"}
         snapshot = writer.snapshot()
         if snapshot.mr is None:
             return {"error": "no MR loaded"}
+        pending = [d for d in snapshot.drafts if d.status is DraftStatus.DRAFT]
+
+        # A review of a branch on this machine has nowhere to post: there is no merge request and
+        # nobody else reading it. What there is, is the agent that wrote the code — so sending the
+        # review hands it the comments rather than dropping them. They travel as messages on the
+        # subjects they were written against, which is where the answer will appear and what puts
+        # them in the agent's backlog; nothing new had to be invented to carry them.
+        if _nowhere_to_post(snapshot):
+            return await self._hand_over(writer, snapshot, pending)
+
+        if self._writeback is None:
+            return {"error": "review posting unavailable"}
 
         ref = MRRef(host=snapshot.mr.host, project=snapshot.mr.project, iid=snapshot.mr.iid)
-        pending = [d for d in snapshot.drafts if d.status is DraftStatus.DRAFT]
         by_id = {h.id: h for h in snapshot.highlights}
         results = [await self._post(writer, snapshot, ref, draft, by_id) for draft in pending]
         posted = sum(1 for r in results if r["ok"])
@@ -53,6 +77,34 @@ class ReviewSubmitter:
                                    snapshot.mr.sha)
         return {"posted": posted, "total": len(pending), "results": results,
                 "approved": approved, "approve_error": approve_error}
+
+    async def _hand_over(self, writer, snapshot, pending) -> dict:
+        """Give the comments to the agent, as messages on the subjects they were written against.
+
+        The same two acts as posting to a forge, in the same order: the comment goes somewhere, and
+        the draft is marked as having gone. A draft is private prose until the reviewer sends it,
+        and sending is still what changes that — the recipient is the agent rather than a merge
+        request, which is the only difference.
+        """
+        by_id = {h.id: h for h in snapshot.highlights}
+        results = []
+        for draft in pending:
+            body = self._compose(draft, by_id.get(draft.highlight_id) if draft.highlight_id else None)
+            anchor = (Subject(kind=SubjectKind.HIGHLIGHT, id=draft.highlight_id)
+                      if draft.highlight_id else None)
+            try:
+                await writer.submit(PostMessage(body=body, anchor=anchor), Origin.BROWSER)
+                await writer.submit(MarkDraftPosted(highlight_id=draft.highlight_id,
+                                                    url=None, thread_id=None), Origin.BROWSER)
+                results.append({"highlight_id": draft.highlight_id, "ok": True, "url": None})
+            except Exception as exc:    # one bad subject must not sink the rest of the review
+                results.append({"highlight_id": draft.highlight_id, "ok": False, "error": str(exc)})
+        posted = sum(1 for r in results if r["ok"])
+        if self._kb is not None and snapshot.mr.sha:
+            self._kb.set_watermark(snapshot.mr.host, snapshot.mr.project, snapshot.mr.iid,
+                                   snapshot.mr.sha)
+        return {"posted": posted, "total": len(pending), "results": results,
+                "approved": False, "approve_error": None, "handed_to": "agent"}
 
     # --- the steps -----------------------------------------------------------
 

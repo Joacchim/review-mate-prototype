@@ -431,3 +431,20 @@ def test_nothing_is_offered_to_check_before_a_comment_exists(diff, annotations, 
     detail.tab("Review").click()
     expect(detail.draft_box).to_have_value("")
     expect(page.locator("#detail .draftbtns .btn", has_text="Double-check it")).to_have_count(0)
+
+
+def test_a_branch_on_this_machine_says_where_the_review_is_going(
+        diff, annotations, detail, review, staged, page):
+    """There is no merge request to post to, so the button does not claim one. The comments go to
+    the agent that wrote the code, which is what a self-review is."""
+    state = review_with_highlights("s1")
+    state.mr = state.mr.model_copy(update={
+        "host": "local", "iid": 0, "url": "/home/you/src/cp", "clone_url": "/home/you/src/cp",
+        "capabilities": {"inline_comments": False, "mr_comments": False, "threads": False,
+                         "approvals": False, "commits": True}})
+    staged.put(state)
+    diff.load("s1")
+    annotations.index_rows.first.click()
+    detail.tab("Review").click()
+    detail.save_draft("rename this, it reads as a flag")
+    expect(page.locator(".reviewbar .btn.primary")).to_have_text("Send to Claude")
