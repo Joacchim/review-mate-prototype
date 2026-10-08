@@ -11,7 +11,7 @@ from time import monotonic
 from starlette.testclient import TestClient
 
 from conftest import HostStub, next_frame
-from review_mate.contracts import MRPayload, MRRef
+from review_mate.contracts import MRPayload, MRRef, RepoUnreadable
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
 from review_mate.session.state import ChangeType, FileEntry, MRMetadata
@@ -59,6 +59,9 @@ class TwoFileHost(HostStub):
         return MRPayload(
             mr=MRMetadata(host="gitlab", project=ref.project, iid=ref.iid, title="T",
                           source_branch="x", target_branch="main", sha=self.sha,
+                          # a real change can be cloned, and everything in this file that reads the
+                          # repository rather than the forge says nothing without it
+                          clone_url=f"git@gitlab.com:{ref.project}.git",
                           author="dev", url="http://x"),
             files=[
                 FileEntry(path="a.py", change_type=ChangeType.MODIFIED, language="python",
@@ -961,3 +964,35 @@ def test_the_mark_shows_in_every_diff_view_mode(tmp_path):
                 assert view["state"] == "ready", (topic, view)
                 got = {f["path"]: (f["reviewed"], f["reviewed_stale"]) for f in view["files"]}
                 assert got == want, topic
+
+
+async def test_a_repository_out_of_reach_is_said_in_words_a_reviewer_can_act_on(tmp_path):
+    """The forge half of a review keeps working when the server has no git credentials, so the
+    change loads and only what comes from the repository is missing. Handing over git's own words
+    about a promisor remote sends the reviewer to look at the merge request."""
+    workspace = StubWorkspace(fail=RepoUnreadable(
+        "git fetch failed: Please make sure you have the correct access rights"))
+    app, _ = build_versioned(tmp_path, workspace=workspace)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:since"]})
+            view = settled(ws, f"diff:{sid}:since")
+    assert view["state"] == "error"
+    # the protocol and the host, which is the pair the reviewer has to go and fix, and the one
+    # thing git's own words never say plainly
+    assert "no ssh credentials for gitlab" in view["error"]
+    assert "promisor" not in view["error"] and "fatal" not in view["error"]
+
+
+async def test_a_failure_about_the_change_still_says_what_it_was(tmp_path):
+    """Only the one a reviewer can act on is translated; the rest keep their own words, which are
+    the only clue to what went wrong."""
+    workspace = StubWorkspace(fail=RuntimeError("bad object deadbeef"))
+    app, _ = build_versioned(tmp_path, workspace=workspace)
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:since"]})
+            view = settled(ws, f"diff:{sid}:since")
+    assert view["state"] == "error" and "bad object deadbeef" in view["error"]

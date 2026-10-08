@@ -42,7 +42,7 @@ from time import monotonic
 from pydantic import BaseModel, Field
 
 from review_mate.config import blob_budget_bytes
-from review_mate.contracts import MRRef, RepoRef, ref_of
+from review_mate.contracts import MRRef, RepoRef, RepoUnreadable, ref_of
 from review_mate.forges import Forges
 from review_mate.session.state import ChangeType, FileEntry, SessionStatus, file_fingerprint
 from review_mate.view.diffdoc import build as build_hunks
@@ -122,6 +122,27 @@ def _within(ranges, lines: set[int]) -> list[dict]:
         else:
             out.append({"start": line, "end": line, "sha": kept[line]})
     return out
+
+
+def _no_credentials(snapshot) -> str:
+    """What to say when git could not reach the repository.
+
+    Names the protocol and the host, because that pair is what the reviewer has to go and fix and
+    it is the one thing git never says plainly — its own words are about a promisor remote or an
+    access right, which describe the symptom at the wrong altitude.
+    """
+    clone = ((snapshot.mr.clone_url if snapshot.mr else "") or "").strip()
+    scheme = "ssh" if clone.startswith(("git@", "ssh://")) else \
+             "https" if clone.startswith(("https://", "http://")) else "git"
+    host = ""
+    if "@" in clone and "://" not in clone:
+        host = clone.split("@", 1)[1]
+    elif "://" in clone:
+        host = clone.split("://", 1)[1].split("/", 1)[0].split("@")[-1]
+    host = host.split(":", 1)[0]       # a port is not part of what the reviewer has to go and fix
+    at = f" for {host}" if host else ""
+    return (f"cannot refresh the repository: this server has no {scheme} credentials{at}. "
+            f"The merge request itself still loads — only what is read from the repository stops.")
 
 
 def _reviewed(snapshot) -> dict:
@@ -384,6 +405,12 @@ class DiffTopics:
                  self._local[key]) = await self._since(snapshot)
         except asyncio.CancelledError:
             raise
+        except RepoUnreadable:
+            # The one git failure a reviewer can act on, and the one that reads as something else:
+            # the forge half of the review is fine, so the change loads and only what comes from
+            # the repository is missing. Name the protocol, because that is what the reviewer has
+            # to go and fix and it is the one thing git's own words never say plainly.
+            self._failed[key] = (_no_credentials(snapshot), monotonic())
         except Exception as exc:
             self._failed[key] = (f"{type(exc).__name__}: {exc}", monotonic())
         if self._publish is not None:

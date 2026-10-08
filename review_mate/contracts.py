@@ -104,6 +104,15 @@ class MRSource(Protocol):
     async def fetch_threads(self, ref: MRRef) -> list[ReviewThread]: ...
 
 
+class RepoUnreadable(RuntimeError):
+    """git could not reach the repository — credentials or the network, not the review.
+
+    Worth its own type because it is the one git failure a reviewer can act on, and because it is
+    the one that looks like something else: the forge half of a review keeps working, so the merge
+    request loads and only the parts read from the repository are missing.
+    """
+
+
 @runtime_checkable
 class Workspace(Protocol):
     """Workspace contract → workspace-manager."""

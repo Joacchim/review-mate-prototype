@@ -1,10 +1,11 @@
 """Functional tests for WorkspaceManager — real git, temp repos as the 'remote'."""
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from review_mate.contracts import RepoRef, CheckoutHandle, Workspace
+from review_mate.contracts import RepoRef, CheckoutHandle, RepoUnreadable, Workspace
 from review_mate.workspace.manager import WorkspaceManager
 
 
@@ -266,3 +267,47 @@ async def test_too_many_commits_to_attribute_still_says_what_is_superseded(wm, t
     monkeypatch.setattr(WorkspaceManager, "ATTRIBUTE_LIMIT", 1)
     out = await wm.superseded(_repo(src), first, _rev(src))
     assert out == {"f.txt": [{"start": 1, "end": 1, "sha": ""}]}   # superseded, by nobody named
+
+
+# --- when the repository cannot be reached at all ----------------------------------------------
+#
+# Found on a live review: the service had no ssh agent, so every clone-derived surface failed while
+# the forge half kept working — the merge request loaded and only part of the screen was missing.
+# What the reviewer saw was git's own words about a promisor remote.
+
+@pytest.mark.parametrize("stderr", [
+    "git@gitlab.com: Permission denied (publickey).\nfatal: Could not read from remote repository.",
+    "Please make sure you have the correct access rights and the repository exists.",
+    "fatal: could not fetch 1234abcd from promisor remote",
+    "fatal: Authentication failed for 'https://example/x.git'",
+    "ssh: Could not resolve hostname gitlab.example: Name or service not known",
+])
+def test_git_failures_that_mean_the_repository_is_out_of_reach(stderr):
+    from review_mate.workspace.manager import _unreadable
+    assert _unreadable(stderr)
+
+
+@pytest.mark.parametrize("stderr", [
+    "fatal: bad object 1234abcd",
+    "error: pathspec 'nope' did not match any file(s) known to git",
+    "CONFLICT (content): Merge conflict in a.py",
+])
+def test_git_failures_that_are_about_the_change_rather_than_the_connection(stderr):
+    from review_mate.workspace.manager import _unreadable
+    assert not _unreadable(stderr)
+
+
+async def test_a_repository_that_cannot_be_reached_says_so_rather_than_naming_a_commit(wm, tmp_path):
+    """`commit not available in mirror` blames the commit for a credential problem — and sends the
+    reviewer looking at the merge request instead of at the server."""
+    src = tmp_path / "gone"
+    src.mkdir()
+    _git("init", "-b", "main", cwd=src)
+    (src / "f.txt").write_text("one\n")
+    _git("add", ".", cwd=src); _git("commit", "-m", "first", cwd=src)
+    repo, first = _repo(src), _rev(src)
+    await wm.superseded(repo, first, first)            # clones the mirror while the source exists
+
+    shutil.rmtree(src)                                 # the far end is now unreachable
+    with pytest.raises(RepoUnreadable):
+        await wm.since_diff(repo, None, first, None, "0" * 40)

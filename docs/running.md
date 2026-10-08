@@ -134,10 +134,19 @@ installed, and giving up is not an error: with no credentials at all the server 
 branch on this machine is still reviewable.
 
 **A user unit has no ssh agent.** Cloning uses whatever git credentials you already have, which over
-ssh means an agent your login session started and the unit does not inherit. Point `SSH_AUTH_SOCK`
-at it in the unit (there are commented lines for the two usual places), or use `https` with a
-credential helper. Without either, reviews still work over the host API — but nothing is cloned, so
-there is no local checkout, and an agent loses grep, LSP and the code graph with it.
+ssh means an agent your login session started and the unit does not inherit. `echo $SSH_AUTH_SOCK`
+in a terminal prints the one you are using — gpg-agent's is `%t/gnupg/S.gpg-agent.ssh`, which is a
+common one and was not among the unit's suggestions until it bit. Point `SSH_AUTH_SOCK` at it in
+the unit, or use `https` with a credential helper.
+
+Without either, reviews still work over the host API — and that is what makes it confusing rather
+than obvious. The merge request loads, the discussions mirror, the queue fills; what stops is
+everything read from the repository. The diff view mode that compares against your last review
+fails, the marks on code a later commit rewrites never appear, and an agent loses grep, LSP and the
+code graph with the checkout. A mirror cloned while credentials worked keeps only the commits it
+already has: it is blobless, so it fetches file content lazily and that fetch needs the credential
+too. The review says it cannot reach the repository rather than naming a commit, which is the
+honest version — the commit is fine.
 
 **Idling costs nothing.** Measured on an idle server: 66 MB resident and no measurable CPU. Every
 background task — the presence ticker, a session's event tail, the consent watch — starts when a

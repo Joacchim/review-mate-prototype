@@ -44,9 +44,15 @@ RestartSec=2s
 # from that durable state rather than replayed — see docs/architecture.md.
 
 # Cloning uses whatever git credentials you already have. Over ssh that means an agent, and a user
-# unit does not inherit one from your login session: uncomment whichever line matches your setup,
-# or leave both and accept reviews over the host API alone (no local checkout, so no grep, LSP or
-# code-graph for the agent).
+# unit does not inherit one from your login session — `echo $SSH_AUTH_SOCK` in a terminal prints
+# the one you are using. Uncomment whichever line matches, or leave all of them and accept reviews
+# over the host API alone.
+#
+# Without it, everything read from the repository rather than from the forge stops: the diff view
+# mode that compares against your last review, the marks on code a later commit rewrites, and the
+# checkout an agent greps. The forge half keeps working, which is what makes the failure confusing
+# — the merge request loads and only some of the screen is missing.
+#Environment=SSH_AUTH_SOCK=%t/gnupg/S.gpg-agent.ssh
 #Environment=SSH_AUTH_SOCK=%t/ssh-agent.socket
 #Environment=SSH_AUTH_SOCK=%t/keyring/ssh
 

@@ -13,7 +13,7 @@ import shutil
 from pathlib import Path
 
 from review_mate.config import review_mate_home
-from review_mate.contracts import CheckoutHandle, RepoRef
+from review_mate.contracts import CheckoutHandle, RepoRef, RepoUnreadable
 
 
 class WorkspaceManager:
@@ -260,8 +260,10 @@ class WorkspaceManager:
             return
         try:  # try to fetch the specific commit/ref into the mirror
             await self._git("-C", str(mirror), "fetch", "origin", commit)
+        except RepoUnreadable:
+            raise            # "not in the mirror" would blame the commit for a credential problem
         except RuntimeError:
-            pass
+            pass             # the server refused this sha; it may still arrive by another route
         if not await self._has_commit(mirror, commit):
             raise RuntimeError(f"commit not available in mirror: {commit}")
 
@@ -296,7 +298,10 @@ class WorkspaceManager:
             await proc.wait()
             raise RuntimeError(f"git {' '.join(args)} timed out after {timeout:.0f}s")
         if proc.returncode != 0:
-            raise RuntimeError(f"git {' '.join(args)} failed: {err.decode().strip()}")
+            text = err.decode().strip()
+            if _unreadable(text):
+                raise RepoUnreadable(f"git {' '.join(args)} failed: {text}")
+            raise RuntimeError(f"git {' '.join(args)} failed: {text}")
         return out.decode()
 
 
@@ -334,6 +339,26 @@ def _ranges(by_line: dict[int, str]) -> list[dict]:
         else:
             out.append({"start": line, "end": line, "sha": sha})
     return out
+
+
+# What git says when it could not reach the far end. Matched on text because git reports all of
+# these as exit 128 with no code of its own, and because the distinction a reviewer needs — "I
+# cannot get at the repository" against "that commit is not there" — is only in the words.
+_UNREADABLE = (
+    "could not read from remote repository",
+    "correct access rights",
+    "permission denied",
+    "authentication failed",
+    "could not resolve host",
+    "connection timed out",
+    "host key verification failed",
+    "from promisor remote",          # a blobless mirror failing to lazily fetch what it skipped
+)
+
+
+def _unreadable(stderr: str) -> bool:
+    low = (stderr or "").lower()
+    return any(mark in low for mark in _UNREADABLE)
 
 
 def _key(repo: RepoRef) -> str:
