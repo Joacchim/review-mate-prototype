@@ -1195,8 +1195,10 @@ const HELP = [
   //
   // --- the header ---------------------------------------------------------------------------
   ["#agent", "", "Whether Claude is here",
-   "Green while Claude is attached and listening, amber while something is owed and ageing, grey "
-   + "when nothing is connected. It is the server's answer, not a guess from this page."],
+   "Green while Claude is attached and listening, amber while something you asked for has been "
+   + "waiting long enough to be worth checking on, grey when nothing is connected — start a "
+   + "session against this review and it turns green. It is the server's answer, not a guess "
+   + "from this page."],
   ["#t-left", "", "The file tree, shown or hidden",
    "Gives the diff the width when you want to read rather than navigate."],
   ["#t-split", "", "The split mode: unified or side-by-side",
@@ -1219,8 +1221,9 @@ const HELP = [
    + "carries and what an agent is told to work on. The code you are reading is named in the "
    + "header on the left, and in per-commit reading the commit is named above the diff."],
   ["#mr", "review", "Which change you are reading",
-   "The project and the number, linking back to the merge request on its own forge. A branch on "
-   + "this machine has no number and no link — it says the branch instead."],
+   "The project and the number. Click it to open the merge request on its own forge, for the "
+   + "things that live there rather than here — the pipeline, the description, the approvals. A "
+   + "branch on this machine has no number and nowhere to go, so it says the branch instead."],
   [".tb", "", "Opening a change by name",
    "A merge request URL, or the shorthand its forge uses — group/project!12 on GitLab, "
    + "owner/repo#12 on GitHub. The hostname decides which forge answers."],
@@ -2326,7 +2329,9 @@ function renderHlist(root) {
   const built = document.createElement("div");
   const rows = annotationHighlights();
   if (!rows.length) {
-    built.appendChild(empty("highlight a line to ask for context"));
+    // the one piece of guidance shown without the ? being pressed, so it has to be true: marking
+    // a line collects it here and asks nobody anything, which is the step people assume away
+    built.appendChild(empty("drag across lines in the diff to collect them here"));
   } else {
     let shown = 0;
     // #N is the server's, fixed when the highlight was made — a position here would move on removal
