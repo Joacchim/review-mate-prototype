@@ -505,14 +505,21 @@ class DiffTopics:
         versioned = (bool(capabilities.get("diff_versions"))
                      and forge is not None and hasattr(forge, "mr_versions"))
 
+        newest = None
         if versioned:
             ref = MRRef(host=mr.host, project=mr.project, iid=mr.iid)
-            versions = await forge.mr_versions(ref)
+            try:
+                versions = await forge.mr_versions(ref)
+            except Exception as exc:
+                # Not an answer, so it is not cached as one and the next read asks again. Carrying
+                # the forge's own words matters here: "could not be asked" and "has none" used to
+                # arrive as the same empty list, and a reviewer sent to look at a merge request
+                # with no versions cannot find the expired token that actually stopped it.
+                raise CannotTell(
+                    f"the forge could not be asked which versions this change has: {exc}") from exc
             newest = versions[0] if versions else None
-            if newest is None:
-                # `mr_versions` answers [] for a failure as well as for a merge request with no
-                # versions, so this is "the forge did not tell us", not "there is nothing"
-                raise CannotTell("the forge did not say which versions this change has")
+
+        if newest is not None:
             reviewed = next((v for v in versions if v["head_sha"] == watermark), None)
             result = await self._workspace.since_diff(
                 repo, reviewed["base_sha"] if reviewed else None, watermark,
@@ -521,8 +528,10 @@ class DiffTopics:
             aligned = bool(newest.get("head_sha") and newest["head_sha"] == mr.sha)
             local = False
         else:
-            # no bases to give it, so it falls to a plain watermark..head diff — whose new side is
-            # the head by construction, which is what makes this anchorable at all
+            # No bases to give it — because the forge keeps no versions, or keeps none for this
+            # change, which amount to the same thing here. So it falls to a plain watermark..head
+            # diff, whose new side is the head by construction, which is what makes this
+            # anchorable at all. The client says the comparison is this reviewer's own.
             result = await self._workspace.since_diff(repo, None, watermark, None, mr.sha)
             aligned, local = True, True
 

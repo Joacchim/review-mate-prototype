@@ -5,6 +5,8 @@ is the whole reason the diff is split into topics at all.
 """
 import asyncio
 import json
+
+import httpx
 from pathlib import Path
 from time import monotonic
 
@@ -1014,22 +1016,45 @@ async def test_a_failure_about_the_change_still_says_what_it_was(tmp_path):
     assert view["state"] == "error" and "bad object deadbeef" in view["error"]
 
 
-async def test_a_forge_that_will_not_say_what_the_versions_are_is_not_an_empty_diff(tmp_path):
-    """`mr_versions` answers [] for a failure as much as for a change with no versions, and an
-    empty since view is a sentence: nothing has changed since you last looked. Saying that on no
-    evidence is worse than saying nothing, because the reviewer believes it and stops looking."""
-    class Silent(VersionHost):
-        async def mr_versions(self, ref):
-            return []
+async def test_a_forge_that_could_not_be_asked_is_not_an_empty_diff(tmp_path):
+    """An empty since view is a sentence: nothing has changed since you last looked. Saying that on
+    no evidence is worse than saying nothing, because the reviewer believes it and stops looking.
 
-    app, _ = build_versioned(tmp_path, provider=Silent())
+    The reason travels, which is the half this got wrong in the field: a read that failed used to
+    arrive as the same empty list a change with no versions gives, so the view could only report
+    that the forge "did not say" — and a reviewer sent to look at the merge request cannot find an
+    expired token or a broken ssh config from there."""
+    class Refusing(VersionHost):
+        async def mr_versions(self, ref):
+            raise httpx.HTTPStatusError("401 Unauthorized", request=None, response=None)
+
+    app, _ = build_versioned(tmp_path, provider=Refusing())
     with TestClient(app) as tc:
         sid = open_session(tc)
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:since"]})
             view = settled(ws, f"diff:{sid}:since")
     assert view["state"] == "unavailable"
-    assert "did not say which versions" in view["error"]
+    assert "could not be asked" in view["error"]
+    assert "401 Unauthorized" in view["error"], "the forge's own words, or there is nothing to act on"
+
+
+async def test_a_change_with_no_versions_is_compared_against_the_watermark(tmp_path):
+    """The other half of the same distinction. A forge that answers "none" has answered, so this
+    falls to the reviewer's own watermark comparison — the same place a forge that keeps no
+    versions at all lands — rather than refusing to show anything."""
+    class NoVersions(VersionHost):
+        async def mr_versions(self, ref):
+            return []
+
+    app, _ = build_versioned(tmp_path, provider=NoVersions())
+    with TestClient(app) as tc:
+        sid = open_session(tc)
+        with tc.websocket_connect("/api/stream") as ws:
+            ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:since"]})
+            view = settled(ws, f"diff:{sid}:since")
+    assert view["state"] == "ready", view
+    assert view["from_watermark"] is True, "and the client says whose comparison this is"
 
 
 async def test_not_being_able_to_tell_is_not_remembered_as_an_answer(tmp_path):
@@ -1043,7 +1068,9 @@ async def test_not_being_able_to_tell_is_not_remembered_as_an_answer(tmp_path):
 
         async def mr_versions(self, ref):
             self.asked += 1
-            return [] if self.asked == 1 else await super().mr_versions(ref)
+            if self.asked == 1:
+                raise httpx.HTTPStatusError("boom", request=None, response=None)
+            return await super().mr_versions(ref)
 
     provider = Flaky()
     app, _ = build_versioned(tmp_path, provider=provider)

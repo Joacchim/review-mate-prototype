@@ -454,3 +454,37 @@ async def test_the_queue_and_search_send_gitlab_its_own_parameter_names(provider
     searches = [p for path, p in sent if path == "/search"]
     for params in searches:
         assert params.get("scope") == "merge_requests", params
+
+
+# --- a read that failed must not borrow the shape of an answer --------------------------------
+
+def _refusing(status: int = 401):
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(status, json={"message": "nope"})),
+        base_url="https://gitlab/api/v4")
+    return GitLabProvider(base_url="https://gitlab/api/v4", token="stale", username="me",
+                          client=client)
+
+
+async def test_versions_that_could_not_be_read_raise_rather_than_come_back_empty():
+    """[] is a real answer — this change has no versions — and a failure wearing it leaves every
+    layer above reasoning about a merge request that does not exist. A live review spent an
+    afternoon on this: an expired token read as "the forge has nothing to say"."""
+    with pytest.raises(httpx.HTTPError):
+        await _refusing().mr_versions(MRRef(host="gitlab", project="group/proj", iid=42))
+
+
+async def test_commits_that_could_not_be_read_raise_rather_than_come_back_empty():
+    """Same distinction, and the per-commit picker is what reads it: an empty list is a change
+    with no commits, which it would happily draw."""
+    with pytest.raises(httpx.HTTPError):
+        await _refusing().commits(MRRef(host="gitlab", project="group/proj", iid=42))
+
+
+async def test_the_host_context_still_degrades_quietly():
+    """Not everything should raise. Blame and linked issues enrich a view that is complete without
+    them, so a forge that will not answer costs the reviewer nothing and must not cost them the
+    diff — the distinction is whether an empty answer would be believed as a fact."""
+    p = _refusing(500)
+    assert await p.blame("group/proj", "a.py", "s", 1, 1) == []
+    assert await p.linked_issues("group/proj", 42) == []

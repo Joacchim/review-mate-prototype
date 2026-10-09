@@ -262,24 +262,28 @@ class GitLabProvider:
 
     async def mr_versions(self, ref: MRRef) -> list[dict]:
         """The MR's diff versions (newest first): per-push base/head SHAs, for a base-aware
-        interdiff (diff-versions). Best-effort: [] on error / when unsupported."""
-        try:
-            rows = await self._get_paged(
-                f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}/versions")
-        except httpx.HTTPError:
-            return []
+        interdiff (diff-versions).
+
+        Raises rather than answering [] when the read fails. The empty list is a real answer — this
+        merge request has no versions — and a failure that borrows it leaves every layer above
+        reasoning about a merge request that does not exist: the reviewer is told nothing changed,
+        or told the forge said nothing, when what happened is that the forge was never reached.
+        """
+        rows = await self._get_paged(
+            f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}/versions")
         return [{"base_sha": r.get("base_commit_sha"), "head_sha": r.get("head_commit_sha"),
                  "start_sha": r.get("start_commit_sha"), "created_at": r.get("created_at", "")}
                 for r in rows]
 
     async def commits(self, ref: MRRef) -> list[dict]:
         """The MR's commits (oldest→newest, for per-commit review): sha, short id, title, message,
-        author. Best-effort: [] on error."""
-        try:
-            rows = await self._get_paged(
-                f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}/commits")
-        except httpx.HTTPError:
-            return []
+        author.
+
+        Raises rather than answering [] for the same reason as `mr_versions`: an empty commit list
+        reads as a change with no commits, and the picker would show one.
+        """
+        rows = await self._get_paged(
+            f"/projects/{quote(ref.project, safe='')}/merge_requests/{ref.iid}/commits")
         # GitLab returns newest-first; reverse so review reads in authoring order
         return [{"sha": c.get("id", ""), "short_id": c.get("short_id", ""),
                  "title": c.get("title", ""), "message": c.get("message", ""),
