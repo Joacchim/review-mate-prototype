@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from review_mate.contracts import ref_of
+from review_mate.contracts import ref_of, repo_of
 from review_mate.forges import Forges
 from review_mate.session.state import SessionStatus
 
@@ -89,7 +89,9 @@ class BrowseTopics:
         self._tree_state[sha] = "loading"
         await self._republish(f"tree:{session_id}")
         try:
-            self._trees[sha] = list(await forge.get_repo_tree(snapshot.mr.project, sha))
+            # the repository the way its own host spells it: a project path on a forge, a
+            # directory here. A bare project name locates nothing on this machine.
+            self._trees[sha] = list(await forge.get_repo_tree(repo_of(ref_of(snapshot)), sha))
             self._tree_state[sha] = "ready"
         except Exception as exc:
             self._tree_state[sha] = "error"

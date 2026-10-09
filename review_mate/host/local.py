@@ -126,6 +126,16 @@ class LocalBranchProvider:
         """
         return await self._git(Path(repo), "show", f"{ref}:{path}", strip=False)
 
+    async def get_repo_tree(self, repo: str, ref: str, max_pages: int = 30) -> list[str]:
+        """Every file in the repository at a commit — what the browser lists when a reviewer
+        wants a file the change does not touch.
+
+        `max_pages` is a forge's pagination and means nothing to git, which answers in one read;
+        it is accepted so the call looks the same whoever is being asked.
+        """
+        listing = await self._git(Path(repo), "ls-tree", "-r", "--name-only", ref)
+        return [line for line in listing.split("\n") if line]
+
     async def commit_diff(self, ref: LocalRef, sha: str) -> list[FileEntry]:
         """One commit against its parent, shaped like the whole change's files.
 

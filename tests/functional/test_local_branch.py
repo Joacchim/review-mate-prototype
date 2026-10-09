@@ -515,3 +515,49 @@ async def test_a_branch_of_your_own_can_unfold_the_lines_a_hunk_left_out(tmp_pat
     assert ready["state"] == "ready", ready
     assert [line["text"] for line in ready["lines"]][:2] == ["def drain():", "    retry()"]
     await manager.shutdown()
+
+
+async def test_the_whole_repository_can_be_listed_at_a_commit(provider, repo):
+    """What the file browser shows when a reviewer wants a file the change does not touch."""
+    head = git(repo, "rev-parse", "feat/retry")
+    listing = await provider.get_repo_tree(str(repo), head)
+
+    assert sorted(listing) == ["queue.py", "retry.py"]       # README.md is deleted on this branch
+    assert "unrelated.py" not in listing, "that landed on main after the branch left"
+
+
+async def test_the_listing_is_read_at_the_commit_not_from_disk(provider, repo):
+    """A file the reviewer has not committed is not in the change, and listing it would offer a
+    file the rest of the tool cannot then show at that sha."""
+    head = git(repo, "rev-parse", "feat/retry")
+    (repo / "scratch.py").write_text("notes to self\n")
+    assert "scratch.py" not in await provider.get_repo_tree(str(repo), head)
+
+
+async def test_a_branch_of_your_own_can_list_files_beyond_the_change(tmp_path, repo):
+    """The box that adds the rest of the repository to the tree: a host read like the others,
+    and the host here is git."""
+    from review_mate.view.browse import BrowseTopics
+
+    manager, sid, routed, published = await _local_session(tmp_path, repo)
+    topics = BrowseTopics(manager, provider=routed, publish=published)
+    await topics.fetch_tree(sid)
+    view = await topics.build_tree(sid)
+
+    assert view["state"] == "ready", view
+    assert sorted(view["paths"]) == ["queue.py", "retry.py"], view
+    await manager.shutdown()
+
+
+async def test_the_listing_reaches_into_directories(provider, repo):
+    """A flat listing would offer the reviewer a directory name as though it were a file, and
+    hide every file under it — which is most of a real repository."""
+    (repo / "pkg").mkdir()
+    (repo / "pkg" / "inner.py").write_text("DEPTH = 1\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "nest a module")
+    head = git(repo, "rev-parse", "feat/retry")
+
+    listing = await provider.get_repo_tree(str(repo), head)
+    assert "pkg/inner.py" in listing, "the file itself, by its path"
+    assert "pkg" not in listing, "not the directory standing in for it"
