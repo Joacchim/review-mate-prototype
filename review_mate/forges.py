@@ -53,6 +53,16 @@ class Forges:
                 return only          # it claims no host, so it is not claiming not to serve this
         return None
 
+    def joined(self, host: str, provider) -> "Forges":
+        """This router plus one more provider, under the host it serves.
+
+        For a source that exists whether or not anything is configured — a branch on this machine
+        needs git and nothing else. It still belongs *here*, because `pick` is how a topic finds
+        the provider for a review, and a host nothing answers for degrades as though reading a
+        branch of your own were a feature no host has.
+        """
+        return Forges({**self._by_host, host: provider})
+
     def can(self, method: str) -> bool:
         """Whether any configured forge offers `method` at all.
 

@@ -140,3 +140,42 @@ async def test_create_session_from_ref_string(tmp_path):
         assert snap.json()["mr"]["title"] == "loaded"
         assert [f["path"] for f in snap.json()["files"]] == ["x.py"]
     await manager.shutdown()
+
+
+# --- (E) the composition root: what the router answers for -------------------
+
+def _rooted(monkeypatch, configured):
+    """build_manager_from_env with the forge layer's answer pinned, so the test is about the
+    wiring and not about whatever glab and gh happen to be logged into on this machine."""
+    from review_mate.server import app as server_app
+    monkeypatch.setattr(server_app, "build_provider_from_env", lambda *a, **k: configured)
+    monkeypatch.setattr(server_app, "build_writer_from_env", lambda *a, **k: None)
+    return server_app.build_manager_from_env()[2]
+
+
+def test_a_branch_on_this_machine_is_reachable_through_the_router(monkeypatch):
+    """The provider is wired as the manager's local source either way. It has to be in the router
+    too, because that is what every topic afterwards asks — and a host the router does not answer
+    for turns off per-commit reading and whole-file reads that git can serve perfectly well."""
+    routed = _rooted(monkeypatch, (None, None))
+    assert routed is not None
+    assert routed.pick("local") is not None
+
+
+def test_a_configured_forge_does_not_displace_it(monkeypatch):
+    from review_mate.forges import Forges
+
+    class Stub:
+        host = "gitlab.example"
+
+    routed = _rooted(monkeypatch, (Forges({"gitlab.example": Stub()}), lambda s: None))
+    assert routed.pick("gitlab.example") is not None
+    assert routed.pick("local") is not None
+    assert routed.pick("github.com") is None       # still answers for nothing it does not serve
+
+
+def test_the_provider_the_router_hands_back_can_list_commits(monkeypatch):
+    """What the router reaching it is *for*: per-commit reading is gated on the provider having
+    this, and it always did — only the lookup was failing."""
+    routed = _rooted(monkeypatch, (None, None))
+    assert hasattr(routed.pick("local"), "commits")

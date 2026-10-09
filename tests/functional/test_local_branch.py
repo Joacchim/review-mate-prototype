@@ -441,3 +441,34 @@ async def test_a_branch_has_no_merge_request_to_write_a_reply_to(tmp_path, repo)
     assert answer == {"error": "this review has no merge request to write to"}
     assert Writer.called is False
     await manager.shutdown()
+
+
+# --- reading one commit at a time, which the router has to answer for ------------------------
+
+async def _local_session(tmp_path, repo):
+    """A review of a branch here, wired the way the composition root wires one."""
+    from review_mate.forges import Forges
+    from review_mate.session.manager import SessionManager
+
+    local = LocalBranchProvider()
+    manager = SessionManager(root=tmp_path / "sessions", local_source=local)
+    sid = await manager.create(ref=LocalRef(path=str(repo), branch="feat/retry", base="main"))
+    async def published(topic):
+        return None
+
+    return manager, sid, Forges({local.host: local}), published
+
+
+async def test_a_branch_of_your_own_can_be_read_one_commit_at_a_time(tmp_path, repo):
+    """`commits` is advertised and implemented; it was unreachable because the review's host
+    resolved to no provider at all, so the step-through turned itself off."""
+    from review_mate.view.browse import BrowseTopics
+
+    manager, sid, routed, published = await _local_session(tmp_path, repo)
+    topics = BrowseTopics(manager, provider=routed, publish=published)
+    await topics.fetch_commits(sid)
+    view = await topics.build_commits(sid)
+
+    assert view["state"] == "ready", view
+    assert [c["title"] for c in view["commits"]] == ["add a retry to the drain"]
+    await manager.shutdown()

@@ -56,14 +56,20 @@ def build_manager_from_env(activity_broker=None):
     provider, resolve_ref = build_provider_from_env()
     # a branch on disk needs git and nothing else, so it is wired whether or not a forge is
     local = LocalBranchProvider()
+    # It joins the router under its own host as well as being the manager's local source. The two
+    # are different jobs: the source loads a branch into a session, while the router is how every
+    # topic afterwards finds the provider to ask. Left out of the router, a review of your own
+    # branch resolves to no forge and turns off the features git can answer perfectly well.
+    forges = Forges.of(provider)
+    routed = forges.joined(local.host, local) if forges else Forges({local.host: local})
     if provider is None:
         return (SessionManager(activity_broker=activity_broker, local_source=local,
-                               workspace=WorkspaceManager()), None, None, None)
+                               workspace=WorkspaceManager()), None, routed, None)
     manager = SessionManager(mr_source=provider, workspace=WorkspaceManager(),
                              activity_broker=activity_broker, local_source=local)
     writer = build_writer_from_env()
     writeback = Writeback(manager, writer) if writer is not None else None
-    return manager, resolve_ref, provider, writeback
+    return manager, resolve_ref, routed, writeback
 
 
 def create_app(manager: SessionManager | None = None,
