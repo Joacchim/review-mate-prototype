@@ -116,6 +116,16 @@ class LocalBranchProvider:
                          "message": fields[3], "author": fields[4], "created_at": fields[5]})
         return rows
 
+    async def get_file(self, repo: str, path: str, ref: str) -> str:
+        """One file's whole content at a commit — what unfolding reads to show the lines around a
+        hunk, and what a reviewer opens a file outside the change with.
+
+        The first argument is where the repository is, which a forge spells as a project path and
+        this spells as a directory; `contracts.repo_of` is what hands over the right one. git reads
+        a blob out of any commit it has, so no checkout is moved and nothing is fetched.
+        """
+        return await self._git(Path(repo), "show", f"{ref}:{path}", strip=False)
+
     async def commit_diff(self, ref: LocalRef, sha: str) -> list[FileEntry]:
         """One commit against its parent, shaped like the whole change's files.
 
@@ -169,14 +179,21 @@ class LocalBranchProvider:
         return entries
 
     @staticmethod
-    async def _git(repo: Path, *args: str) -> str:
+    async def _git(repo: Path, *args: str, strip: bool = True) -> str:
+        """Run git here and hand back what it said.
+
+        Stripped by default, because almost everything read here is one field — a sha, a branch
+        name, a subject — and the trailing newline git adds is noise. File content is the exception
+        and asks for it raw: a blob's own leading and trailing blank lines are part of the file,
+        and eating them puts every line after a hunk one off.
+        """
         process = await asyncio.create_subprocess_exec(
             "git", "-C", str(repo), *args,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         out, err = await process.communicate()
         if process.returncode != 0:
             raise GitError((err.decode() or out.decode()).strip() or f"git {args[0]} failed")
-        return out.decode().strip()
+        return out.decode().strip() if strip else out.decode()
 
 
 def _name_status(raw: str):

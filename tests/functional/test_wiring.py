@@ -174,8 +174,9 @@ def test_a_configured_forge_does_not_displace_it(monkeypatch):
     assert routed.pick("github.com") is None       # still answers for nothing it does not serve
 
 
-def test_the_provider_the_router_hands_back_can_list_commits(monkeypatch):
-    """What the router reaching it is *for*: per-commit reading is gated on the provider having
-    this, and it always did — only the lookup was failing."""
+def test_the_provider_the_router_hands_back_can_list_commits_and_read_a_file(monkeypatch):
+    """What the router reaching it is *for*: the two features that were off are gated on the
+    provider having these, and the lookup is what was failing."""
     routed = _rooted(monkeypatch, (None, None))
-    assert hasattr(routed.pick("local"), "commits")
+    local = routed.pick("local")
+    assert hasattr(local, "commits") and hasattr(local, "get_file")

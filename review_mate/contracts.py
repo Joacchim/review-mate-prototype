@@ -58,6 +58,17 @@ def ref_of(snapshot) -> "SessionRef | None":
     return MRRef(host=mr.host, project=mr.project, iid=mr.iid)
 
 
+def repo_of(ref) -> str:
+    """Where a reference says its repository is.
+
+    A forge spells that as a project path and a branch on this machine as a directory, and the
+    reads that take it — fetching one file's content, say — want whichever the host understands.
+    """
+    if ref is None:
+        return ""
+    return getattr(ref, "project", None) or getattr(ref, "path", "") or ""
+
+
 def serves(provider, snapshot) -> bool:
     """Whether `provider` is the source this session was loaded from.
 

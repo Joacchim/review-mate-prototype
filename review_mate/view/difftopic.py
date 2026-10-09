@@ -42,7 +42,7 @@ from time import monotonic
 from pydantic import BaseModel, Field
 
 from review_mate.config import blob_budget_bytes
-from review_mate.contracts import MRRef, RepoRef, RepoUnreadable, ref_of
+from review_mate.contracts import MRRef, RepoRef, RepoUnreadable, ref_of, repo_of
 from review_mate.forges import Forges
 from review_mate.session.state import ChangeType, FileEntry, SessionStatus, file_fingerprint
 from review_mate.view.diffdoc import build as build_hunks
@@ -702,8 +702,9 @@ class BlobTopics:
             if forge is None or not hasattr(forge, "get_file"):
                 view.state = "unavailable"          # no forge configured to read a blob from
                 return view.model_dump(mode="json")
-            # the host travels with the project: a project path does not name the forge it is on
-            self._start(key, snapshot.mr.host, snapshot.mr.project, f"blob:{argument}")
+            # the host travels with the repository: neither a project path nor a directory on this
+            # machine names the host it is on, and only the host knows which of the two it reads.
+            self._start(key, snapshot.mr.host, repo_of(ref_of(snapshot)), f"blob:{argument}")
             return view.model_dump(mode="json")     # state stays "loading"
         spans = tokenize(text, path, language)
         view.lines = [BlobLine(n=index + 1, text=line, tokens=line_spans)

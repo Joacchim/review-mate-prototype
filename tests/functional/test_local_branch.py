@@ -443,7 +443,33 @@ async def test_a_branch_has_no_merge_request_to_write_a_reply_to(tmp_path, repo)
     await manager.shutdown()
 
 
-# --- reading one commit at a time, which the router has to answer for ------------------------
+# --- reading a file whole, which is what unfolding and the file browser need -------------------
+
+async def test_a_file_is_read_whole_at_a_commit(provider, repo):
+    """Unfolding shows the lines a hunk left out, so it needs the file and not the diff."""
+    head = git(repo, "rev-parse", "feat/retry")
+    assert await provider.get_file(str(repo), "retry.py", head) == "def retry():\n    return 1\n"
+
+
+async def test_a_file_is_read_out_of_history_not_the_working_tree(provider, repo):
+    """The sha is the point: per-commit reading unfolds at the commit being read, which is not
+    where the branch now is — and a dirty working tree must not leak into either."""
+    base = git(repo, "rev-parse", "main")
+    head = git(repo, "rev-parse", "feat/retry")
+    (repo / "queue.py").write_text("whatever the reviewer is mid-edit\n")
+
+    assert await provider.get_file(str(repo), "queue.py", base) == "def drain():\n    pass\n"
+    assert await provider.get_file(str(repo), "queue.py", head) == "def drain():\n    retry()\n"
+
+
+async def test_a_file_the_commit_does_not_have_is_an_error_not_an_empty_file(provider, repo):
+    """An empty string would render as a file with no lines, which reads as true and is not."""
+    head = git(repo, "rev-parse", "feat/retry")
+    with pytest.raises(GitError):
+        await provider.get_file(str(repo), "README.md", head)       # deleted on this branch
+
+
+# --- the two features that were off because the router did not answer for `local` --------------
 
 async def _local_session(tmp_path, repo):
     """A review of a branch here, wired the way the composition root wires one."""
@@ -471,4 +497,21 @@ async def test_a_branch_of_your_own_can_be_read_one_commit_at_a_time(tmp_path, r
 
     assert view["state"] == "ready", view
     assert [c["title"] for c in view["commits"]] == ["add a retry to the drain"]
+    await manager.shutdown()
+
+
+async def test_a_branch_of_your_own_can_unfold_the_lines_a_hunk_left_out(tmp_path, repo):
+    """The blob a diff unfolds into is a host read, and the host here is git."""
+    from review_mate.view.difftopic import BlobTopics
+
+    manager, sid, routed, published = await _local_session(tmp_path, repo)
+    topics = BlobTopics(manager, provider=routed, publish=published)
+
+    first = await topics.build(f"{sid}:full:queue.py")
+    assert first["state"] == "loading", "a host read, so never answered inline"
+    await asyncio.gather(*topics._tasks.values())
+
+    ready = await topics.build(f"{sid}:full:queue.py")
+    assert ready["state"] == "ready", ready
+    assert [line["text"] for line in ready["lines"]][:2] == ["def drain():", "    retry()"]
     await manager.shutdown()
