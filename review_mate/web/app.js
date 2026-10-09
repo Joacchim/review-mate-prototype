@@ -2938,10 +2938,13 @@ function draftEditor(key, anchor, draft) {
 
 // existing MR discussions (host threads) — list, filter, and open a discussion in the overlay
 function renderThreads(el) {
-  // a posted draft is already shown inline under its highlight ("your comment"); don't also list
-  // its thread here, or the reviewer's own comments double up once refresh re-mirrors them
+  // A posted draft is already shown inline under its highlight ("your comment"), so listing its
+  // thread here too would double up the reviewer's own comments once a refresh re-mirrors them.
+  // Only an anchored draft has that inline home: an MR-level comment belongs to no line, and the
+  // pinned zone shows it as "✓ posted" and nothing more. Suppress it here as well and the comment
+  // cannot be read back or replied to anywhere — so the whole-change ones stay listed.
   const ownPosted = new Set((state.drafts || [])
-    .filter((d) => d.status === "posted" && d.thread_id)
+    .filter((d) => d.status === "posted" && d.thread_id && d.highlight_id)
     .map((d) => d.thread_id));
   const threads = allThreads().filter((t) => !ownPosted.has(t.id));
   const head = document.createElement("div");

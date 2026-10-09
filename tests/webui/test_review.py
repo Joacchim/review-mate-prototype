@@ -448,3 +448,40 @@ def test_a_branch_on_this_machine_says_where_the_review_is_going(
     detail.tab("Review").click()
     detail.save_draft("rename this, it reads as a flag")
     expect(page.locator(".reviewbar .btn.primary")).to_have_text("Send to Claude")
+
+
+# --- a comment about the whole change, once it has been posted ---------------
+# An anchored comment has an inline home under its highlight, so listing its thread here as well
+# would show it twice. A whole-change comment has no such home, and the pinned zone it was written
+# in says only "posted" afterwards — so the discussion list is the only place it can be read back.
+
+def _posted_as_thread(highlight_id, said="the error handling reads well"):
+    from review_mate.session.state import ReviewThread, ThreadComment
+    state = _discussed({"id": "t1", "said": [("me", said)]})
+    state.drafts = [DraftComment(id="d1", highlight_id=highlight_id, body=said,
+                                 status=DraftStatus.POSTED, thread_id="t1")]
+    return state
+
+
+def test_a_posted_whole_change_comment_can_still_be_read(diff, threads, staged):
+    staged.put(_posted_as_thread(highlight_id=None))
+    diff.load("s1")
+    expect(threads.row("the error handling reads well")).to_be_visible()
+
+
+def test_a_posted_whole_change_comment_can_still_be_replied_to(diff, threads, staged):
+    """Replying lives on the opened thread, so a thread that is never listed cannot be answered."""
+    staged.put(_posted_as_thread(highlight_id=None))
+    diff.load("s1")
+    threads.row("the error handling reads well").click()
+    expect(threads.comment("the error handling reads well")).to_be_visible()
+    expect(threads.reply_box).to_be_visible()
+
+
+def test_a_posted_line_comment_is_not_listed_twice(diff, threads, staged):
+    """The suppression this narrows, and the reason it exists: an anchored comment is already
+    shown under its own highlight, so it appears there and not again among the discussions."""
+    staged.put(_posted_as_thread(highlight_id="h1"))
+    diff.load("s1")
+    expect(threads.row("the error handling reads well")).to_have_count(1)
+    expect(threads.rows.filter(has_text="the error handling reads well")).to_have_count(0)
