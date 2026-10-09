@@ -966,23 +966,39 @@ def test_the_mark_shows_in_every_diff_view_mode(tmp_path):
                 assert got == want, topic
 
 
-async def test_a_repository_out_of_reach_is_said_in_words_a_reviewer_can_act_on(tmp_path):
-    """The forge half of a review keeps working when the server has no git credentials, so the
-    change loads and only what comes from the repository is missing. Handing over git's own words
-    about a promisor remote sends the reviewer to look at the merge request."""
-    workspace = StubWorkspace(fail=RepoUnreadable(
-        "git fetch failed: Please make sure you have the correct access rights"))
+async def _since_error(tmp_path, failure: str) -> str:
+    workspace = StubWorkspace(fail=RepoUnreadable(failure))
     app, _ = build_versioned(tmp_path, workspace=workspace)
     with TestClient(app) as tc:
         sid = open_session(tc)
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:since"]})
             view = settled(ws, f"diff:{sid}:since")
-    assert view["state"] == "error"
-    # the protocol and the host, which is the pair the reviewer has to go and fix, and the one
-    # thing git's own words never say plainly
-    assert "no ssh credentials for gitlab" in view["error"]
-    assert "promisor" not in view["error"] and "fatal" not in view["error"]
+    assert view["state"] == "error", view
+    return view["error"]
+
+
+async def test_a_repository_out_of_reach_says_what_git_said(tmp_path):
+    """The forge half of a review keeps working, so the change loads and only what comes from the
+    repository is missing — and the reviewer is told which of the two it was, in git's words."""
+    error = await _since_error(
+        tmp_path, "git fetch failed: Please make sure you have the correct access rights")
+    assert "Please make sure you have the correct access rights" in error
+    # still the protocol and the host: when it really is credentials, that pair is what to fix
+    assert "ssh" in error and "gitlab" in error
+
+
+async def test_a_local_fault_is_not_reported_as_missing_credentials(tmp_path):
+    """The case this was got wrong on. ssh refusing to start because a system config file has the
+    wrong permissions is a local fault with a concrete fix, and it says so on git's *first* line —
+    the one a summary drops. Reported as missing credentials it sends the reviewer to check an
+    ssh setup that is working, and the file that is actually broken is never named."""
+    error = await _since_error(tmp_path, (
+        "git fetch origin abc123 failed: Bad owner or permissions on /etc/ssh/ssh_config.d/99-x.conf"
+        "\nfatal: Could not read from remote repository."
+        "\nPlease make sure you have the correct access rights"))
+    assert "Bad owner or permissions on /etc/ssh/ssh_config.d/99-x.conf" in error
+    assert "has no ssh credentials" not in error, "it has them; ssh would not start"
 
 
 async def test_a_failure_about_the_change_still_says_what_it_was(tmp_path):

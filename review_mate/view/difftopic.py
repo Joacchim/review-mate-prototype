@@ -134,12 +134,28 @@ def _within(ranges, lines: set[int]) -> list[dict]:
     return out
 
 
-def _no_credentials(snapshot) -> str:
+def _git_said(detail: str) -> str:
+    """The first thing git actually complained about.
+
+    `RepoUnreadable` carries "git <args> failed: <stderr>", and the line that names the cause is
+    the first one: the rest is git's own follow-up about access rights, which is advice for the
+    common case rather than a reading of this one. A local config fault — a system ssh file with
+    the wrong owner, say — says so on that first line and nowhere else.
+    """
+    _, _, stderr = (detail or "").partition(" failed: ")
+    return next((line.strip() for line in (stderr or detail or "").splitlines() if line.strip()), "")
+
+
+def _no_credentials(snapshot, detail: str = "") -> str:
     """What to say when git could not reach the repository.
 
-    Names the protocol and the host, because that pair is what the reviewer has to go and fix and
-    it is the one thing git never says plainly — its own words are about a promisor remote or an
-    access right, which describe the symptom at the wrong altitude.
+    Leads with what git said, because a guess that reads as a diagnosis is worse than none: this
+    used to report every unreachable repository as missing credentials, which sent a reviewer to
+    check an ssh setup that was working while the real fault — a system ssh config file rewritten
+    with the wrong permissions — went unmentioned, and it is on that discarded line.
+
+    Then names the protocol and the host, which stays worth saying: when it really is credentials
+    that pair is what has to be fixed, and git's own words never put it plainly.
     """
     clone = ((snapshot.mr.clone_url if snapshot.mr else "") or "").strip()
     scheme = "ssh" if clone.startswith(("git@", "ssh://")) else \
@@ -150,8 +166,10 @@ def _no_credentials(snapshot) -> str:
     elif "://" in clone:
         host = clone.split("://", 1)[1].split("/", 1)[0].split("@")[-1]
     host = host.split(":", 1)[0]       # a port is not part of what the reviewer has to go and fix
-    at = f" for {host}" if host else ""
-    return (f"cannot refresh the repository: this server has no {scheme} credentials{at}. "
+    at = f" {host}" if host else " the repository"
+    said = _git_said(detail)
+    lead = f"cannot refresh the repository: {said}" if said else "cannot refresh the repository"
+    return (f"{lead} — this server reaches{at} over {scheme}. "
             f"The merge request itself still loads — only what is read from the repository stops.")
 
 
@@ -425,12 +443,12 @@ class DiffTopics:
         except CannotTell as why:
             # not an answer, so it is not cached as one: the next read asks again
             self._unresolved[key] = (str(why), monotonic())
-        except RepoUnreadable:
+        except RepoUnreadable as why:
             # The one git failure a reviewer can act on, and the one that reads as something else:
             # the forge half of the review is fine, so the change loads and only what comes from
             # the repository is missing. Name the protocol, because that is what the reviewer has
             # to go and fix and it is the one thing git's own words never say plainly.
-            self._failed[key] = (_no_credentials(snapshot), monotonic())
+            self._failed[key] = (_no_credentials(snapshot, str(why)), monotonic())
         except Exception as exc:
             self._failed[key] = (f"{type(exc).__name__}: {exc}", monotonic())
         if self._publish is not None:
