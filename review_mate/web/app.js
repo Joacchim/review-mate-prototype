@@ -3054,6 +3054,9 @@ function mentionList(key) {
   list.className = "mentions";
   if (!found.length) {
     list.appendChild(empty("nobody here by that name"));
+    // the one moment the reviewer has a reason to think the list is behind, so the control that
+    // settles it belongs here rather than only at the bottom of a list they are not reading
+    list.appendChild(refreshPeople("they may have joined since — look again"));
     return list;
   }
   let group = null;
@@ -3074,7 +3077,26 @@ function mentionList(key) {
     row.onmousedown = (e) => { e.preventDefault(); insertMention(person.username); };
     list.appendChild(row);
   });
+  list.appendChild(refreshPeople("someone missing? look again"));
   return list;
+}
+
+// Read the project's members again. Asked for and never inferred: a list goes out of date exactly
+// when somebody joins, which is also when a mention of them fails — and nothing here can tell that
+// from a typo, so guessing would either spend a call on every slip or leave the reviewer trusting
+// a list they have no reason to doubt.
+function refreshPeople(label) {
+  const row = document.createElement("div");
+  row.className = "mrefresh";
+  const view = peopleView();
+  if (view && view.members === "loading") {
+    row.textContent = "looking again…";
+    return row;
+  }
+  row.appendChild(btn("↻ " + label, "btn ghost", async () => {
+    await cmd("people.refresh", { session: SID });
+  }));
+  return row;
 }
 
 function insertMention(username) {
@@ -3131,9 +3153,11 @@ function mentionWarning(text) {
   if (!unknown.length) return null;
   const note = document.createElement("div");
   note.className = "mentionwarn";
-  note.textContent = unknown.length === 1
-    ? `${unknown[0]} is not in this project — if that is a typo the mention reaches nobody`
-    : `${unknown.join(", ")} are not in this project`;
+  note.appendChild(document.createTextNode(unknown.length === 1
+    ? `${unknown[0]} is not in this project's list — a typo reaches nobody, and so does a name `
+      + `the list has not caught up with. `
+    : `${unknown.join(", ")} are not in this project's list. `));
+  note.appendChild(refreshPeople("read it again"));
   return note;
 }
 

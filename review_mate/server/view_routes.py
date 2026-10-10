@@ -21,7 +21,8 @@ from review_mate.view.protocol import HUB, TopicError, Subscribe, parse_client_m
 
 
 def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
-                      review=None, kb=None, threads=None, browse=None, diffs=None) -> list:
+                      review=None, kb=None, threads=None, browse=None, diffs=None,
+                      people=None) -> list:
     async def _publish_hub() -> None:
         await bus.publish(HUB)
 
@@ -159,6 +160,15 @@ def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
         await bus.publish(f"threads:{sid}")
         return JSONResponse({"ok": True, "author": author.strip(), "muted": mute})
 
+    async def _people_refresh(args: dict) -> JSONResponse:
+        """Read the project's members again. The reviewer's call: they are the one who knows
+        somebody is missing, and nothing here can tell that from a mistyped handle."""
+        sid = _session_arg(args)
+        if people is None or manager.get(sid) is None:
+            return JSONResponse({"ok": False, "reason": "unknown session"}, status_code=404)
+        await people.refresh(sid)
+        return JSONResponse({"ok": True})
+
     async def _thread_verb(args: dict, act) -> JSONResponse:
         """Every thread verb answers the same way: do it, then republish what it changed.
 
@@ -229,6 +239,7 @@ def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
         "session.open": _session_open,
         "session.resync": _session_resync,
         "thread.reply": _thread_reply,
+        "people.refresh": _people_refresh,
         "author.mute": lambda args: _author_mute(args, True),
         "author.unmute": lambda args: _author_mute(args, False),
         "thread.resolve": _thread_resolve,

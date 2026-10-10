@@ -83,6 +83,23 @@ class PeopleTopic:
             self._error[key] = f"{type(exc).__name__}: {exc}"
         await self._republish(session_id)
 
+    async def refresh(self, session_id: str) -> None:
+        """Read the member list again, because the reviewer says somebody is missing.
+
+        Asked for and never inferred. A list goes out of date exactly when somebody joins, which
+        is also when a mention of them fails — but the tool cannot tell that from a typo, and
+        guessing wrong either spends a call on every slip or leaves the reviewer with a list they
+        have no reason to distrust. So the reviewer is given the control and told where it is.
+        """
+        snapshot = self._snapshot(session_id)
+        if snapshot is None:
+            return
+        key = self._key(snapshot)
+        self._members.pop(key, None)
+        self._state.pop(key, None)
+        self._error.pop(key, None)
+        await self.fetch(session_id)
+
     def reset(self) -> None:
         """Forget every project's member list. For a test harness that swaps the forge under a
         long-lived server — in a real one the cache is the point, and nothing calls this."""

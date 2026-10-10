@@ -174,3 +174,42 @@ def test_a_forge_that_refused_the_list_says_nothing_about_a_name(diff, annotatio
     box.type("thanks @someone.else ")
     expect(page.locator(".mentionwarn")).to_have_count(0)
     expect(_mentions(page)).to_have_count(0)
+
+
+# --- reading the project's list again ---------------------------------------
+
+def test_a_name_that_finds_nobody_offers_to_look_again(diff, annotations, detail,
+                                                       staged, stub_host, page):
+    """The one moment a reviewer has reason to think the list is behind, so the control that
+    settles it is here rather than only at the bottom of a list they are not reading."""
+    stub_host.roster = ROSTER
+    box = _open_draft(diff, annotations, detail, staged, _peopled())
+    box.click()
+    box.type("ping @newjoiner")
+    expect(_mentions(page).locator(".mrefresh .btn")).to_contain_text("look again")
+
+
+def test_looking_again_picks_up_somebody_who_joined(diff, annotations, detail,
+                                                    staged, stub_host, page):
+    stub_host.roster = ROSTER
+    box = _open_draft(diff, annotations, detail, staged, _peopled())
+    box.click()
+    box.type("ping @jmartin")
+    expect(_mentions(page)).to_contain_text("nobody here by that name")
+
+    stub_host.roster = [*ROSTER, {"username": "jmartin", "name": "Jean Martin"}]
+    _mentions(page).locator(".mrefresh .btn").click()
+    expect(_mentions(page).locator(".mrow", has_text="jmartin")).to_be_visible()
+
+
+def test_the_note_about_an_unknown_name_admits_the_list_may_be_behind(diff, annotations, detail,
+                                                                      staged, stub_host, page):
+    """It used to say the name was not in the project, flatly. For somebody who joined last week
+    that is false, in the one place a reviewer would believe it."""
+    stub_host.roster = ROSTER
+    box = _open_draft(diff, annotations, detail, staged, _peopled())
+    box.click()
+    box.type("thanks @jmartin ")
+    warn = page.locator(".mentionwarn")
+    expect(warn).to_contain_text("not in this project's list")
+    expect(warn.locator(".btn")).to_contain_text("read it again")

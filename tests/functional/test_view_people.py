@@ -153,3 +153,42 @@ async def test_a_session_that_is_not_there_says_unknown_session(people):
     manager, _, topic, _, _ = await people()
     assert (await topic.build("nope"))["state"] == "unknown-session"
     await manager.shutdown()
+
+
+# --- reading the list again ------------------------------------------------
+# It goes out of date when somebody joins, which is the same moment a mention of them fails. The
+# tool cannot tell that from a typo, so the reviewer asks and nothing here infers it.
+
+async def test_refreshing_reads_the_list_again(people):
+    manager, sid, topic, host, _ = await people()
+    await topic.fetch(sid)
+    host.roster = [*host.roster, {"username": "jmartin", "name": "Jean Martin"}]
+
+    await topic.fetch(sid)          # the ordinary path does not go back
+    assert "jmartin" not in [p["username"] for p in (await topic.build(sid))["people"]]
+
+    await topic.refresh(sid)
+    assert host.asked == 2
+    assert "jmartin" in [p["username"] for p in (await topic.build(sid))["people"]]
+    await manager.shutdown()
+
+
+async def test_a_refresh_that_fails_says_so_without_losing_the_change(people):
+    """A forge that answered once can refuse the next time — a token that expired between them.
+    The people on the change are not the forge's to take away."""
+    manager, sid, topic, host, _ = await people(threads=[_said("jsmith")])
+    await topic.fetch(sid)
+    host.fail = RuntimeError("401 Unauthorized")
+
+    await topic.refresh(sid)
+    view = await topic.build(sid)
+    assert view["members"] == "error"
+    assert "jsmith" in [p["username"] for p in view["people"]]
+    await manager.shutdown()
+
+
+async def test_refreshing_a_session_that_is_not_there_does_nothing(people):
+    manager, _, topic, host, _ = await people()
+    await topic.refresh("nope")
+    assert host.asked == 0
+    await manager.shutdown()
