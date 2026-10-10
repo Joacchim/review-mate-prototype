@@ -52,12 +52,34 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
 // minimal, safe markdown (escape first, then a small subset) — Claude writes markdown
+// A place in the code, written the way everyone writes one. The line number is required: a bare
+// `queue.py` is how people talk about a file, and linking every mention of one turns prose into a
+// field of links — while `queue.py:42` is only ever a pointer at something to go and look at.
+const CODEREF = /([A-Za-z0-9_.\-]+(?:\/[A-Za-z0-9_.\-]+)*\.[A-Za-z][A-Za-z0-9]{0,4}):(\d+)(?:-(\d+))?/g;
+
 function mdInline(s) {
-  return s
+  return linkCodeRefs(s
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<em>$2</em>")
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>'));
+}
+
+// Run over the formatted text rather than the raw, so a reference inside backticks still links —
+// that is where Claude usually writes one. Anything already inside an anchor is left alone: a
+// link within a link is not a thing, and the outer one is the author's own.
+function linkCodeRefs(html) {
+  let depth = 0;
+  return html.split(/(<[^>]+>)/).map((part) => {
+    if (part.startsWith("<")) {
+      if (/^<a\b/.test(part)) depth++;
+      else if (/^<\/a>/.test(part)) depth = Math.max(0, depth - 1);
+      return part;
+    }
+    if (depth > 0) return part;
+    return part.replace(CODEREF, (whole, path, line) =>
+      `<a class="coderef" data-path="${path}" data-line="${line}">${whole}</a>`);
+  }).join("");
 }
 const MD_FENCE = /^\s*```(\w*)/;
 const MD_HEADING = /^(#{1,6})\s+(.*)$/;
@@ -1624,6 +1646,44 @@ function renderNode(node, path, depth, out) {
     out.appendChild(row);
   });
 }
+
+// Go where a reference points, including out of the change. A file the change does not touch is
+// read through the repository browser, which is a subscription rather than a mode — so following
+// a reference into one turns it on, the same as ticking the box would, and leaves it on: the
+// reviewer asked to look outside the change and is probably not done.
+async function openReference(path, line) {
+  const listing = listingView();
+  const inChange = ((listing && listing.files) || []).some((f) => f.path === path);
+  if (inChange) { jumpToCode(path, line); return; }
+
+  if (!showAll) {
+    showAll = true;
+    localStorage.setItem("rm-showall", "1");
+    watchTopics(diffTopics());      // the repository listing is read while it is being looked at
+    renderTree();
+  }
+  currentFile = path;
+  viewingPath = path;
+  wantBlob(path);
+  render();
+  // The blob is a host read, so the row to land on does not exist yet. Waiting here rather than
+  // reporting a miss is the difference between a slow link and a broken one.
+  for (let attempt = 0; attempt < 40 && blobLines(path) === null; attempt++) {
+    await new Promise((done) => setTimeout(done, 100));
+  }
+  render();
+  setTimeout(() => revealLine(path, line), 0);
+}
+
+// Delegated: every panel that renders an answer is merged or rebuilt under the pointer, so a
+// handler bound to the anchor itself does not survive the next frame.
+document.addEventListener("click", (e) => {
+  const ref = e.target.closest && e.target.closest("a.coderef");
+  if (!ref) return;
+  e.preventDefault();
+  e.stopPropagation();            // the row underneath would open its own subject
+  openReference(ref.dataset.path, Number(ref.dataset.line));
+});
 
 function selectFile(entry) {
   currentFile = entry.path;

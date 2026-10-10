@@ -118,3 +118,75 @@ def test_markup_an_agent_sends_is_shown_not_run(diff, annotations, detail, stage
     expect(md.locator("script")).to_have_count(0)
     expect(md.locator("b")).to_have_count(0)
     assert "<script>alert(1)</script>" in md.inner_text()
+
+
+# --- a place in the code, written the way everyone writes one --------------------------------
+
+def test_a_file_and_line_becomes_a_link(diff, annotations, detail, staged):
+    md = _render(diff, annotations, detail, staged,
+                 "The caller is in scheduler/capacity.py:45 and never checks the result.")
+    ref = md.locator("a.coderef")
+    expect(ref).to_have_count(1)
+    assert ref.get_attribute("data-path") == "scheduler/capacity.py"
+    assert ref.get_attribute("data-line") == "45"
+
+
+def test_a_reference_in_backticks_links_too(diff, annotations, detail, staged):
+    """Where Claude usually writes one, so excluding code spans would miss most of them."""
+    md = _render(diff, annotations, detail, staged, "Look at `scheduler/capacity.py:45`.")
+    expect(md.locator("code a.coderef")).to_have_count(1)
+
+
+def test_a_bare_filename_is_left_as_prose(diff, annotations, detail, staged):
+    """Linking every mention of a file turns an answer into a field of links, and a file named in
+    passing is not somewhere the reviewer was told to go."""
+    md = _render(diff, annotations, detail, staged, "The helper lives in capacity.py these days.")
+    expect(md.locator("a.coderef")).to_have_count(0)
+
+
+def test_prose_that_merely_looks_like_one_is_left_alone(diff, annotations, detail, staged):
+    """A wrong link is worse than no link: it is indistinguishable from a right one until it is
+    followed, and then it has moved the reviewer somewhere for no reason."""
+    md = _render(diff, annotations, detail, staged,
+                 "It regressed by 3.14 and the e.g. case is rare.")
+    expect(md.locator("a.coderef")).to_have_count(0)
+
+
+def test_an_external_link_is_not_rewritten_inside_itself(diff, annotations, detail, staged):
+    """The author's own link wins — a link inside a link is not a thing."""
+    md = _render(diff, annotations, detail, staged,
+                 "see [the pipeline](https://gitlab.com/x/y/-/jobs/1) for app.py:12")
+    expect(md.locator("a[href]")).to_have_count(1)
+    expect(md.locator("a.coderef")).to_have_count(1)
+
+
+def test_following_a_reference_opens_that_file_at_that_line(diff, annotations, detail, staged,
+                                                            page):
+    """The point of the whole thing: it goes where it points."""
+    md = _render(diff, annotations, detail, staged,
+                 "The guard is missing at scheduler/capacity.py:45.")
+    md.locator("a.coderef").click()
+    expect(page.locator("#diff .fname")).to_contain_text("scheduler/capacity.py")
+    expect(page.locator('#diff td.code[data-line="45"]')).to_be_visible()
+
+
+def test_a_reference_outside_the_change_opens_the_browser_and_goes_there(
+        diff, annotations, detail, staged, stub_host, page):
+    """The half that is not just a jump. A file the change does not touch is read through the
+    repository browser, which is a subscription rather than a mode — so following a reference
+    into one has to turn it on, wait for the read, and land on the line."""
+    stub_host.repo_tree = ["scheduler/capacity.py", "docs/retries.md"]
+    stub_host.files["docs/retries.md"] = "\n".join(f"line {n}" for n in range(1, 30))
+    staged.put(_said("The rule is written down in docs/retries.md:12."))
+    diff.load("s1")
+    assert page.evaluate("Object.keys(topicViews).filter(s => /^tree:/.test(s))") == []
+
+    annotations.mr_row.click()
+    detail.messages.first.locator("a.coderef").click()
+
+    page.wait_for_function("() => Object.keys(topicViews).some(s => /^tree:/.test(s))")
+    # the plain-file header, which says in so many words that this is not part of the change
+    header = page.locator("#diff .fname", has_text="related file")
+    expect(header).to_have_count(1)
+    expect(header).to_contain_text("docs/retries.md")
+    expect(page.locator('#diff td.code[data-line="12"]')).to_be_visible()

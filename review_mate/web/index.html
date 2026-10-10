@@ -364,6 +364,10 @@
   .md pre.md code{border:0;background:none;padding:0;white-space:pre}
   .md ul{margin:4px 0;padding-left:18px} .md li{margin:2px 0}
   .md a{color:var(--accent)} .md strong{color:var(--fg)}
+  /* a place in the code, not a page to leave for: dotted rather than underlined, so it does not
+     read as the external links beside it */
+  .coderef{color:var(--accent);cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
+  .coderef:hover{text-decoration:underline}
   /* landing / queue */
   .land{max-width:760px;margin:40px auto;padding:0 20px}
   .land h2{font-weight:600;margin:0 0 4px} .land p{color:var(--fg2);margin:0 0 18px}
