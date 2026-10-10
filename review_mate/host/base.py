@@ -31,6 +31,7 @@ GITLAB_CAPABILITIES: dict[str, bool] = {
     # with a GitLab to post one and say where it appeared; until then the affordance stays off
     # rather than failing at the moment the reviewer presses send.
     "commit_comments": False,
+    "members": True,            # project members, for completing a mention
     "reactions": True,
     "labels": True,
     "reviewers": True,

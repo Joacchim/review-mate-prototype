@@ -46,6 +46,7 @@ GITHUB_CAPABILITIES: dict[str, bool] = {
     # a review comment takes any commit of the pull request as its `commit_id`, keeps the remark in
     # the conversation and flags it outdated once the line moves — exercised against a real PR
     "commit_comments": True,
+    "members": True,            # collaborators — needs push access, so often refused
     "reactions": True,
     "labels": True,
     "reviewers": True,
@@ -181,6 +182,26 @@ class GitHubProvider:
     async def _files(self, ref: MRRef) -> list[FileEntry]:
         rows = await self._paged(f"/repos/{ref.project}/pulls/{ref.iid}/files")
         return [_entry(row) for row in rows]
+
+    async def members(self, ref: MRRef) -> list[dict]:
+        """The repository's collaborators, for completing a mention.
+
+        GitHub refuses this to anyone without push access — "Must have push access to view
+        repository collaborators" — which is most reviewers on most repositories. So it raises
+        like every other read here and the caller degrades to the people already on the change,
+        rather than reporting that this repository has nobody in it.
+
+        Collaborators carry a login and no display name, so the name is left empty and the list
+        is searched by handle alone. That is what GitHub shows too.
+        """
+        rows = await self._paged(f"/repos/{ref.project}/collaborators")
+        seen, out = set(), []
+        for row in rows:
+            login = row.get("login") or ""
+            if login and login not in seen:
+                seen.add(login)
+                out.append({"username": login, "name": ""})
+        return out
 
     async def commits(self, ref: MRRef) -> list[dict]:
         rows = await self._paged(f"/repos/{ref.project}/pulls/{ref.iid}/commits")

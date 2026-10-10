@@ -162,11 +162,20 @@ follows posting rather than racing it.
 | `access:<sid>` | repositories Claude has asked to read, and what the reviewer decided |
 | `tree:<sid>` | every file in the repository at the change's sha, for browsing beyond the diff |
 | `commits:<sid>` | the commits the change is made of, for reviewing one at a time |
+| `people:<sid>` | who a mention can name — the people on the change, and the project's members behind them |
 
-`tree` and `commits` each cost a host read, so both are fetched when someone starts watching and
-never while nobody is — which a route cannot arrange, because a route is asked whether anyone is
+`tree`, `commits` and the member half of `people` each cost a host read, so each is fetched when
+someone starts watching and never while nobody is — which a route cannot arrange, because a route is asked whether anyone is
 looking or not. Until the answer lands the view says `loading`, so a client shows that rather than
 waiting on it.
+
+`people` is two answers in one view rather than two topics. The people already on the change —
+the author, and everyone who has written in a discussion — are exact handles the session holds,
+cost nothing and cannot go stale, so they are always there. The project's members are the half
+that can be missing: GitHub asks for push access to say who a repository's collaborators are, and
+most reviewers do not have it. So the member half carries its own state, and a client can tell
+"still coming" from "refused" — which is the difference between warning too early about a name it
+has not heard of and never warning at all.
 
 A file's topic name is the list's name with a path appended, so a client concatenates rather than
 assembling a second name. Names are validated: a path may contain a colon, a session id and a diff

@@ -43,7 +43,7 @@ PRESENCE_TICK = 5.0
 # The topic families named after a session, rather than after the fleet. A review's lifetime is
 # decided by whether any of these is being read, so a new one belongs here and nowhere else.
 SESSION_FAMILIES = ("diff", "blob", "annotations", "chat", "review", "threads", "access",
-                    "tree", "commits")
+                    "tree", "commits", "people")
 
 
 def build_manager_from_env(activity_broker=None):
@@ -112,6 +112,7 @@ def create_app(manager: SessionManager | None = None,
     from review_mate.view.review import ReviewTopic
     from review_mate.view.access import AccessTopic
     from review_mate.view.browse import BrowseTopics
+    from review_mate.view.people import PeopleTopic
     from review_mate.view.threads import ThreadsTopic
     from review_mate.writeback.submit import ReviewSubmitter
     from review_mate.writeback.threads import ThreadVerbs
@@ -199,6 +200,10 @@ def create_app(manager: SessionManager | None = None,
             asyncio.create_task(_quietly(browse.fetch_tree(topic.partition(":")[2])))
         if topic.startswith("commits:") and topic.count(":") == 1:
             asyncio.create_task(_quietly(browse.fetch_commits(topic.partition(":")[2])))
+        # the same bargain for the member list: a reviewer who never starts a mention never asks
+        # the forge who is in the project, and on GitHub that read is usually refused anyway
+        if topic.startswith("people:") and topic.count(":") == 1:
+            asyncio.create_task(_quietly(people.fetch(topic.partition(":")[2])))
         if crossrepo is not None and topic.startswith("access:") and topic.count(":") == 1:
             # a decision can only come from a client that is reading this, so watching exactly then
             # misses nothing — and the watch sweeps for approvals a restart left unhonoured
@@ -287,8 +292,10 @@ def create_app(manager: SessionManager | None = None,
 
         crossrepo = CrossRepoBroker(manager, workspace, kb, _locate)
     browse = BrowseTopics(manager, provider=provider, publish=bus.publish)
+    people = PeopleTopic(manager, provider=provider, publish=bus.publish)
     bus.register_family("tree", browse.build_tree)
     bus.register_family("commits", browse.build_commits)
+    bus.register_family("people", people.build)
 
     async def _quietly(coro) -> None:
         """A background read that reports its own failure through the view it is filling."""
@@ -384,6 +391,7 @@ def create_app(manager: SessionManager | None = None,
     app.state.blob_topics = blob_topics
     app.state.annotations_topic = annotations_topic
     app.state.chat_topics = chat_topics
+    app.state.people_topic = people
     # whether the presence ticker is running — a test asserts it starts and stops with the
     # watching, which is otherwise invisible from outside
     app.state.presence_running = lambda: presence_task is not None and not presence_task.done()

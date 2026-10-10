@@ -488,3 +488,26 @@ async def test_the_host_context_still_degrades_quietly():
     p = _refusing(500)
     assert await p.blame("group/proj", "a.py", "s", 1, 1) == []
     assert await p.linked_issues("group/proj", 42) == []
+
+
+async def test_members_come_back_once_each_with_a_name_to_search_by():
+    """Access is usually granted on the group, so the same person arrives once per level they
+    inherit from — and a list with one of them in it three times is one nobody can pick from."""
+    rows = [{"username": "john.doe", "name": "John Doe", "access_level": 50},
+            {"username": "jdupont", "name": "Jean Dupont", "access_level": 20},
+            {"username": "john.doe", "name": "John Doe", "access_level": 30}]
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=rows)),
+        base_url="https://gitlab/api/v4")
+    p = GitLabProvider(base_url="https://gitlab/api/v4", token="t", username="me", client=client)
+
+    people = await p.members(MRRef(host="gitlab", project="group/proj", iid=42))
+    assert [u["username"] for u in people] == ["john.doe", "jdupont"]
+    assert people[0]["name"] == "John Doe", "searched by the name people actually type"
+
+
+async def test_members_that_could_not_be_read_raise_rather_than_come_back_empty():
+    """An empty member list is a project nobody can see. Offering nothing to mention, silently,
+    is how a reviewer concludes they know nobody."""
+    with pytest.raises(httpx.HTTPError):
+        await _refusing(403).members(MRRef(host="gitlab", project="group/proj", iid=42))

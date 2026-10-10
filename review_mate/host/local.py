@@ -37,6 +37,7 @@ LOCAL_CAPABILITIES: dict[str, bool] = {
     "mr_comments": False,
     "suggestions": False,
     "draft_reviews": False,
+    "members": False,         # nobody else is here, so there is nobody to mention
 }
 
 

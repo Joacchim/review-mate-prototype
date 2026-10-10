@@ -275,6 +275,29 @@ class GitLabProvider:
                  "start_sha": r.get("start_commit_sha"), "created_at": r.get("created_at", "")}
                 for r in rows]
 
+    async def members(self, ref: MRRef) -> list[dict]:
+        """Everyone with access to the project, for completing a mention.
+
+        `members/all` and not `members`: access is usually granted on the group, so the direct
+        list is a handful of people and the one a reviewer wants is in neither. The same person
+        arrives once per level they inherit from, so this is deduplicated — and the first entry
+        wins, which is the nearest grant.
+
+        Raises rather than answering [] on failure, as every read here does: an empty member list
+        is a project nobody can see, and a completion that silently offers nothing reads as a
+        reviewer who knows nobody.
+        """
+        rows = await self._get_paged(
+            f"/projects/{quote(ref.project, safe='')}/members/all")
+        seen, out = set(), []
+        for row in rows:
+            username = row.get("username") or ""
+            if not username or username in seen:
+                continue
+            seen.add(username)
+            out.append({"username": username, "name": row.get("name") or ""})
+        return out
+
     async def commits(self, ref: MRRef) -> list[dict]:
         """The MR's commits (oldest→newest, for per-commit review): sha, short id, title, message,
         author.
