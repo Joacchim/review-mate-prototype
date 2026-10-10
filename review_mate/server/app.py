@@ -264,7 +264,7 @@ def create_app(manager: SessionManager | None = None,
     bus.register_family("chat", chat_topics.build)
     review_topic = ReviewTopic(manager, provider=provider, kb=kb)
     bus.register_family("review", review_topic.build)
-    threads_topic = ThreadsTopic(manager, user=getattr(provider, "username", "") or "")
+    threads_topic = ThreadsTopic(manager, user=getattr(provider, "username", "") or "", kb=kb)
     bus.register_family("threads", threads_topic.build)
     access_topic = AccessTopic(manager)
     bus.register_family("access", access_topic.build)

@@ -137,6 +137,28 @@ def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
         await _publish_hub()
         return JSONResponse({"ok": True, "watermark": snapshot.mr.sha})
 
+    async def _author_mute(args: dict, mute: bool) -> JSONResponse:
+        """Stop reading a voice, or start again.
+
+        The reviewer's own, not the change's: an integration that posts on every push is noise on
+        every merge request, so this is kept with their other preferences and applies wherever
+        they are reading. Only the discussion list changes — nothing is hidden on the forge, and
+        what was already said stays said.
+        """
+        sid = _session_arg(args)
+        writer = manager.get(sid) if sid else None
+        author = args.get("author")
+        if writer is None:
+            return JSONResponse({"ok": False, "reason": "unknown session"}, status_code=404)
+        if not isinstance(author, str) or not author.strip():
+            return JSONResponse({"ok": False, "reason": "missing author"}, status_code=400)
+        snapshot = writer.snapshot()
+        if snapshot.mr is None or kb is None:
+            return JSONResponse({"ok": False, "reason": "unavailable"}, status_code=400)
+        (kb.mute_author if mute else kb.unmute_author)(snapshot.mr.host, author.strip())
+        await bus.publish(f"threads:{sid}")
+        return JSONResponse({"ok": True, "author": author.strip(), "muted": mute})
+
     async def _thread_verb(args: dict, act) -> JSONResponse:
         """Every thread verb answers the same way: do it, then republish what it changed.
 
@@ -207,6 +229,8 @@ def build_view_routes(manager, bus, hub, resolve_ref=None, submitter=None,
         "session.open": _session_open,
         "session.resync": _session_resync,
         "thread.reply": _thread_reply,
+        "author.mute": lambda args: _author_mute(args, True),
+        "author.unmute": lambda args: _author_mute(args, False),
         "thread.resolve": _thread_resolve,
         "thread.edit_note": _thread_edit_note,
         "thread.delete_note": _thread_delete_note,

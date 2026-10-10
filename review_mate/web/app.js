@@ -3094,9 +3094,22 @@ function renderThreads(el) {
   head.appendChild(h3("Discussions"));
   head.appendChild(btn("↻ refresh", "btn ghost", refreshThreads));
   el.appendChild(head);
+  // What the reviewer muted is not in this list at all, so the numbers beside it would otherwise
+  // be smaller than the merge request's with nothing to explain the difference. Before the empty
+  // case, not after: mute the only discussion there is and this is the one control still needed.
+  const muted = (threadsView() && threadsView().muted) || 0;
+  if (muted) {
+    const note = document.createElement("div");
+    note.className = "mutednote";
+    note.appendChild(document.createTextNode(
+      `${muted} ${muted === 1 ? "discussion" : "discussions"} hidden — `));
+    note.appendChild(btn("unmute everyone", "btn ghost", unmuteEveryone));
+    el.appendChild(note);
+  }
   if (!threads.length) {
-    el.appendChild(empty(local() ? "nobody else is reading this yet"
-                                 : "no discussions on this MR"));
+    el.appendChild(empty(muted ? "everything here is from someone you muted"
+                               : local() ? "nobody else is reading this yet"
+                                         : "no discussions on this MR"));
     return;
   }
 
@@ -3113,6 +3126,29 @@ function renderThreads(el) {
   const shown = threadFilter === "all" ? threads : threads.filter((t) => !t.resolved);
   if (!shown.length) { el.appendChild(empty("nothing unresolved — all threads addressed")); return; }
   shown.forEach((t) => el.appendChild(threadRow(t)));
+}
+
+// Muting is by author and by forge, so this asks the server to forget each voice it was told to
+// stop reading. The reviewer sees a count and not a list, which is the point — the one control
+// they need is the one that undoes it.
+// The one voice a discussion is, when it is only one. A thread with two writers is a conversation
+// and muting either would hide what the other said.
+function soleAuthor(t) {
+  const voices = new Set((t.comments || []).map((c) => c.author));
+  return voices.size === 1 ? [...voices][0] : null;
+}
+
+async function muteAuthor(author) {
+  const res = await cmd("author.mute", { session: SID, author });
+  setStatus(res.ok ? `muted ${author} — their discussions are hidden on every review`
+                   : "✕ " + res.reason);
+}
+
+async function unmuteEveryone() {
+  const view = threadsView();
+  for (const author of (view && view.muted_authors) || []) {
+    await cmd("author.unmute", { session: SID, author });
+  }
 }
 
 function threadRow(t) {
@@ -3245,6 +3281,15 @@ function threadConversationBlock(t) {
     if (t.anchor)  // only diff-anchored discussions are resolvable
       row.appendChild(btn(t.resolved ? "Reopen" : "Resolve", "btn ghost",
         () => resolveThread(t.id, !t.resolved)));
+    // Offered on the discussion because that is where the noise is seen. Not on your own voice,
+    // and not on a thread you are part of: muting is for a writer you never want to read, and
+    // the whole thread has to be theirs before it is hidden anyway.
+    const only = soleAuthor(t);
+    if (only && !t.comments.some((c) => c.mine)) {
+      const mute = btn(`Mute ${only}`, "btn ghost mute", () => muteAuthor(only));
+      mute.title = `stop showing discussions written only by ${only}, on every review`;
+      row.appendChild(mute);
+    }
     rwrap.appendChild(ta); rwrap.appendChild(row);
     wrap.appendChild(rwrap);
   }

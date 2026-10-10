@@ -517,3 +517,49 @@ def test_a_comment_box_sized_by_hand_keeps_its_height(diff, annotations, detail,
     assert box.evaluate("el => el.getBoundingClientRect().height") >= tall - 2, \
         "the box collapsed under the reviewer"
     assert "half a thought" in box.input_value(), "and it kept what they had written"
+
+
+# --- a voice the reviewer has stopped reading -------------------------------
+# A tracker integration posting on every push writes real comments from a bot account, not the
+# system notes a forge flags — which is why they survive the filter that drops those.
+
+def test_a_discussion_from_one_voice_offers_to_mute_it(diff, threads, staged, page):
+    staged.put(_discussed({"id": "d1", "said": [("linear_bot", "moved to In Review")]}))
+    diff.load("s1")
+    threads.row("moved to In Review").click()
+    expect(page.locator("#detail .draftbtns .btn", has_text="Mute linear_bot")).to_be_visible()
+
+
+def test_a_conversation_offers_no_mute(diff, threads, staged, page):
+    """Two writers is a conversation, and muting either hides what the other said."""
+    staged.put(_discussed({"id": "d1", "said": [("linear_bot", "moved to In Review"),
+                                                ("eric", "that is wrong, it is still blocked")]}))
+    diff.load("s1")
+    threads.row("moved to In Review").click()
+    expect(page.locator("#detail .draftbtns .btn", has_text="Mute")).to_have_count(0)
+
+
+def test_muting_hides_the_discussion_and_says_how_many(diff, threads, staged, page):
+    """The count is the honest part: the list silently shrinking leaves a number the reviewer
+    cannot reconcile with what the merge request shows."""
+    staged.put(_discussed({"id": "d1", "said": [("linear_bot", "moved to In Review")]},
+                          {"id": "d2", "said": [("eric", "prefer a guard here")]}))
+    diff.load("s1")
+    threads.row("moved to In Review").click()
+    page.locator("#detail .draftbtns .btn", has_text="Mute linear_bot").click()
+
+    expect(threads.row("moved to In Review")).to_have_count(0)
+    expect(threads.row("prefer a guard here")).to_be_visible()
+    expect(page.locator(".mutednote")).to_contain_text("1 discussion hidden")
+
+
+def test_unmuting_brings_them_back(diff, threads, staged, page):
+    staged.put(_discussed({"id": "d1", "said": [("linear_bot", "moved to In Review")]}))
+    diff.load("s1")
+    threads.row("moved to In Review").click()
+    page.locator("#detail .draftbtns .btn", has_text="Mute linear_bot").click()
+    expect(page.locator(".mutednote")).to_be_visible()
+
+    page.locator(".mutednote .btn", has_text="unmute everyone").click()
+    expect(threads.row("moved to In Review")).to_be_visible()
+    expect(page.locator(".mutednote")).to_have_count(0)

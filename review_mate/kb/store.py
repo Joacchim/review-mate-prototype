@@ -88,6 +88,33 @@ class ReviewKB:
     def get_pref(self, key: str, default=None):
         return self._data.prefs.get(key, default)
 
+    # --- authors the reviewer has muted -----------------------------------------------------
+    # A property of the reviewer and not of any one change: the integration that posts on every
+    # push is noise on every merge request, so muting it once is the whole of the ask. Qualified
+    # by host, because a name is only unique on the forge that issued it.
+
+    _MUTED = "muted_authors"
+
+    @staticmethod
+    def _voice(host: str, author: str) -> str:
+        return f"{host or ''}:{author or ''}"
+
+    def muted_authors(self) -> set[str]:
+        return set(self.get_pref(self._MUTED, []) or [])
+
+    def mute_author(self, host: str, author: str) -> None:
+        voices = self.muted_authors()
+        voices.add(self._voice(host, author))
+        self.set_pref(self._MUTED, sorted(voices))
+
+    def unmute_author(self, host: str, author: str) -> None:
+        voices = self.muted_authors()
+        voices.discard(self._voice(host, author))
+        self.set_pref(self._MUTED, sorted(voices))
+
+    def is_muted(self, host: str, author: str) -> bool:
+        return self._voice(host, author) in self.muted_authors()
+
     # --- reviewed watermark (diff-versions: the head SHA reviewed up to, per MR) -------------
 
     @staticmethod

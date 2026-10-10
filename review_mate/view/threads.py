@@ -41,25 +41,46 @@ class ThreadsView(BaseModel):
     threads: list[ThreadView] = Field(default_factory=list)
     unresolved: int = 0
     total: int = 0
+    muted: int = 0               # kept out of the list, said out loud so no count here lies
+    muted_authors: list[str] = Field(default_factory=list)   # whose, so undoing it needs no list
 
 
 class ThreadsTopic:
     """Builds the discussion list. Never reads the host: the session holds what the last re-sync
     mirrored, and re-syncing is a command rather than something a rebuild does behind the scenes."""
 
-    def __init__(self, manager, user: str = "") -> None:
+    def __init__(self, manager, user: str = "", kb=None) -> None:
         self._manager = manager
         self._user = user or ""
+        self._kb = kb               # where the reviewer's muted authors live, across every review
+
+    def _is_noise(self, thread, host: str) -> bool:
+        """Whether this discussion is only the voice the reviewer muted.
+
+        Every comment, not the first: an integration's thread that somebody answered is a
+        conversation about the change, and hiding it would take the answer with it.
+        """
+        if self._kb is None or not thread.comments:
+            return False
+        return all(self._kb.is_muted(host, c.author) for c in thread.comments)
 
     async def build(self, session_id: str) -> dict:
         snapshot = self._snapshot(session_id)
         if snapshot is None:
             return ThreadsView(session=session_id, state="unknown-session").model_dump(mode="json")
-        threads = [self._thread(t) for t in (snapshot.threads or [])]
+        host = snapshot.mr.host if snapshot.mr else ""
+        mirrored = list(snapshot.threads or [])
+        kept = [t for t in mirrored if not self._is_noise(t, host)]
+        threads = [self._thread(t) for t in kept]
+        # the counts describe the list the reviewer is given, and `muted` says what is not in it —
+        # a total that quietly shrank would be a number the reviewer cannot reconcile with the MR
+        silenced = {c.author for t in mirrored if self._is_noise(t, host) for c in t.comments}
         return ThreadsView(
             session=session_id, threads=threads,
             unresolved=sum(1 for t in threads if not t.resolved),
             total=len(threads),
+            muted=len(mirrored) - len(kept),
+            muted_authors=sorted(silenced),
         ).model_dump(mode="json")
 
     def _thread(self, thread) -> ThreadView:

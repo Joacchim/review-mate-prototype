@@ -24,12 +24,12 @@ def thread(id="t1", resolved=False, anchor=None, comments=(), capabilities=None)
 
 @pytest.fixture
 async def threads(tmp_path):
-    async def build(user="reviewer", staged=()):
+    async def build(user="reviewer", staged=(), kb=None):
         manager = SessionManager(root=tmp_path / "sessions", mr_source=HostStub())
         sid = await manager.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
         if staged:
             await manager.get(sid).submit(ReplaceThreads(threads=list(staged)), Origin.SYSTEM)
-        return manager, sid, ThreadsTopic(manager, user=user)
+        return manager, sid, ThreadsTopic(manager, user=user, kb=kb)
     yield build
 
 
@@ -111,4 +111,72 @@ async def test_a_re_sync_that_drops_a_discussion_drops_it_here(threads):
     await manager.get(sid).submit(ReplaceThreads(threads=[thread(id="t2")]), Origin.SYSTEM)
     view = await topic.build(sid)
     assert [t["id"] for t in view["threads"]] == ["t2"] and view["total"] == 1
+    await manager.shutdown()
+
+
+# --- a voice the reviewer has stopped reading -------------------------------
+# A tracker integration posts on every push, and its notes are real comments from a bot account —
+# not the system notes the host flags, which is why they survive every filter that looks correct.
+
+@pytest.fixture
+def kb(tmp_path):
+    from review_mate.kb.store import ReviewKB
+    return ReviewKB(root=tmp_path / "kb")
+
+
+async def test_a_muted_authors_discussion_is_kept_out_and_counted(threads, kb):
+    kb.mute_author("gitlab", "linear_bot")
+    manager, sid, topic = await threads(kb=kb, staged=[
+        thread(id="t1", comments=[("1", "linear_bot", "moved to In Review")]),
+        thread(id="t2", comments=[("2", "eric", "prefer a guard")])])
+
+    view = await topic.build(sid)
+    assert [t["id"] for t in view["threads"]] == ["t2"]
+    assert view["total"] == 1, "the counts describe the list the reviewer was given"
+    assert view["muted"] == 1, "and what is missing from it is said out loud"
+    await manager.shutdown()
+
+
+async def test_a_muted_thread_somebody_answered_stays(threads, kb):
+    """The answer is about the change, and hiding the thread would take it with the noise."""
+    kb.mute_author("gitlab", "linear_bot")
+    manager, sid, topic = await threads(kb=kb, staged=[
+        thread(id="t1", comments=[("1", "linear_bot", "moved to In Review"),
+                                  ("2", "eric", "which is wrong, it is still blocked")])])
+
+    view = await topic.build(sid)
+    assert [t["id"] for t in view["threads"]] == ["t1"]
+    assert view["muted"] == 0
+    await manager.shutdown()
+
+
+async def test_muting_is_per_forge(threads, kb):
+    """A username is only unique on the forge that issued it, so muting one elsewhere would
+    silence a stranger who happens to share the name."""
+    kb.mute_author("github.com", "linear_bot")
+    manager, sid, topic = await threads(kb=kb, staged=[
+        thread(id="t1", comments=[("1", "linear_bot", "moved to In Review")])])
+
+    view = await topic.build(sid)
+    assert [t["id"] for t in view["threads"]] == ["t1"], "this review is on gitlab"
+    await manager.shutdown()
+
+
+async def test_unmuting_brings_them_back(threads, kb):
+    kb.mute_author("gitlab", "linear_bot")
+    manager, sid, topic = await threads(kb=kb, staged=[
+        thread(id="t1", comments=[("1", "linear_bot", "moved to In Review")])])
+    assert (await topic.build(sid))["threads"] == []
+
+    kb.unmute_author("gitlab", "linear_bot")
+    assert [t["id"] for t in (await topic.build(sid))["threads"]] == ["t1"]
+    await manager.shutdown()
+
+
+async def test_a_review_with_no_preferences_hides_nothing(threads):
+    """The baseline this must not disturb: no kb, or nothing muted, and every discussion shows."""
+    manager, sid, topic = await threads(staged=[
+        thread(id="t1", comments=[("1", "linear_bot", "moved to In Review")])])
+    view = await topic.build(sid)
+    assert [t["id"] for t in view["threads"]] == ["t1"] and view["muted"] == 0
     await manager.shutdown()
