@@ -337,6 +337,9 @@
   .owed::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--line2);flex:none}
   .owed.claude{color:var(--warnfg)} .owed.claude::before{background:var(--warn)}
   .owed.you{color:var(--accent)} .owed.you::before{background:var(--accent)}
+  /* a double-check in flight is Claude owing an answer too, so it reads in the same colour — the
+     glyph is what tells them apart, because one was asked by writing and the other by doubting */
+  .owed.checking{color:var(--warnfg)} .owed.checking::before{background:var(--warn)}
   /* chat */
   .chat{margin-top:16px}
   .chathdr{display:flex;align-items:center;justify-content:space-between}

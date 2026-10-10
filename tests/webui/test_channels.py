@@ -193,3 +193,46 @@ def test_the_composer_still_sends_after_a_frame_rebuilt_the_panel(diff, annotati
     detail.ask("does this still reach the server?")
     expect(detail.messages).to_contain_text("does this still reach the server?")
     assert "PostMessage" in [name for name, _ in _commands(staged)]
+
+
+# --- a double-check in flight, seen from everywhere it matters -------------------------------
+# The reviewer asks from the review channel and the answer arrives in the Claude one, so a check
+# that shows only where the answer will land leaves the place it was asked from looking inert —
+# and pressing again is the obvious next move, which asks twice.
+
+def _checking(session_id="s1", highlight_id="h1"):
+    from review_mate.session.state import (CheckRequest, DraftComment, DraftStatus,
+                                           Subject, SubjectKind)
+    state = review_with_highlights(session_id)
+    state.drafts = [DraftComment(id="d1", highlight_id=highlight_id,
+                                 body="this reads as a retry but never retries",
+                                 status=DraftStatus.DRAFT)]
+    state.checks = [CheckRequest(id="c1", note="this reads as a retry but never retries",
+                                 subject=Subject(kind=SubjectKind.HIGHLIGHT, id=highlight_id))]
+    return state
+
+
+def test_a_draft_being_checked_says_so_where_it_was_asked(diff, annotations, detail, staged):
+    """On the review channel, next to the control that asked — not only on the channel the answer
+    will arrive on."""
+    staged.put(_checking())
+    diff.load("s1")
+    annotations.index_rows.first.click()
+    detail.tab("Review").click()
+    expect(detail.panel.locator(".draft .checkwait")).to_be_visible()
+
+
+def test_the_index_marks_a_subject_whose_check_is_outstanding(diff, annotations, staged):
+    """The panel on the right is where a reviewer looks to see what is in flight. A check with
+    nothing said yet is the case this missed: the server has always carried it on the row, and the
+    page gave up before reading it because the conversation was still empty."""
+    staged.put(_checking())
+    diff.load("s1")
+    expect(annotations.index_rows.first.locator(".owed")).to_be_visible()
+
+
+def test_a_subject_with_no_check_is_not_marked(diff, annotations, staged):
+    """The other direction, or the marker says nothing: it has to mean something is owed."""
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    expect(annotations.index_rows.first.locator(".owed")).to_have_count(0)

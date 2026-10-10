@@ -440,7 +440,13 @@ function conversationRow(sel) {
 // is read here from who spoke last and means only that: Claude spoke, your turn if you want it.
 function owedSide(sel) {
   const row = conversationRow(sel);
-  if (!row || !row.count) return null;
+  if (!row) return null;
+  // A double-check asked from the review channel has nothing said on it yet, so a count-first
+  // guard reads it as an idle subject and the panel shows nothing at all. The server has always
+  // carried it — `chat.py` seeds an empty row precisely so a doubt with no messages stays
+  // visible — and this gave up before looking.
+  if (row.checking) return "checking";
+  if (!row.count) return null;
   if (row.owed) return "claude";
   return row.last_role === "assistant" ? "you" : null;
 }
@@ -450,8 +456,10 @@ function owedMarker(sel) {
   if (!side) return null;
   const el = document.createElement("span");
   el.className = "owed " + side;
-  el.textContent = side === "claude" ? "Claude ▸" : "you ▸";
-  el.title = side === "claude" ? "you spoke last — Claude owes an answer"
+  el.textContent = side === "checking" ? "Claude ⟳"
+                 : side === "claude" ? "Claude ▸" : "you ▸";
+  el.title = side === "checking" ? "you asked Claude to double-check this — the answer arrives in Claude"
+           : side === "claude" ? "you spoke last — Claude owes an answer"
                                : "Claude spoke last — your turn, if you want it";
   return el;
 }
@@ -2933,6 +2941,14 @@ function draftEditor(key, anchor, draft) {
     delete draftBuffers[key]; delete suggBuf[key]; suggOpen[key] = false;
   }));
   wrap.appendChild(row);
+  // Asked from here, answered over in Claude. Without this the control that was just pressed looks
+  // inert, and pressing it again is the obvious move — which asks twice.
+  if (beingChecked(selected)) {
+    const wait = document.createElement("div");
+    wait.className = "checkwait";
+    wait.textContent = "Claude is double-checking this — the answer arrives in Claude";
+    wrap.appendChild(wait);
+  }
   return wrap;
 }
 
