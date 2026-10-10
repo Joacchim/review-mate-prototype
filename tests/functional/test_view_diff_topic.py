@@ -12,7 +12,7 @@ from time import monotonic
 
 from starlette.testclient import TestClient
 
-from conftest import HostStub, next_frame
+from conftest import HostStub, next_frame, ref_for
 from review_mate.contracts import MRPayload, MRRef, RepoUnreadable
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
@@ -79,7 +79,7 @@ def build(tmp_path, provider=None):
     provider = provider or TwoFileHost()
     manager = SessionManager(root=tmp_path / "sessions", mr_source=provider)
     return create_app(manager=manager, provider=provider, with_mcp=False,
-                      resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+                      resolve_ref=ref_for)
 
 
 def read_topic(ws, topic, limit=8):
@@ -90,9 +90,9 @@ def read_topic(ws, topic, limit=8):
     raise AssertionError(f"no message for {topic}")
 
 
-def open_session(tc):
+def open_session(tc, ref="g/p!1"):
     return tc.post("/api/cmd", json={"cmd": "session.open",
-                                     "args": {"ref": "g/p!1"}}).json()["session"]
+                                     "args": {"ref": ref}}).json()["session"]
 
 
 def test_the_diff_topic_lists_files_without_their_bodies(tmp_path):
@@ -228,7 +228,7 @@ class BlobHost(TwoFileHost):
 def build_with(tmp_path, provider):
     manager = SessionManager(root=tmp_path / "sessions", mr_source=provider)
     return create_app(manager=manager, provider=provider, with_mcp=False,
-                      resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+                      resolve_ref=ref_for)
 
 
 def test_a_blob_loads_then_arrives_numbered_and_tokenized(tmp_path):
@@ -387,8 +387,14 @@ def build_versioned(tmp_path, provider=None, workspace=None, watermark="reviewed
         kb.set_watermark("gitlab", "g/p", 1, watermark)
     manager = SessionManager(root=tmp_path / "sessions", mr_source=provider,
                              workspace=workspace or StubWorkspace())
+    # reads the number the caller wrote, so two references are two changes — a resolver that
+    # answered `iid=1` whatever it was given made every test open the same review
+    def resolve(raw):
+        _, _, number = str(raw).partition("!")
+        return MRRef(host="gitlab", project="g/p", iid=int(number) if number.isdigit() else 1)
+
     app = create_app(manager=manager, provider=provider, with_mcp=False, kb=kb,
-                     resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+                     resolve_ref=resolve)
     return app, provider
 
 
@@ -616,9 +622,12 @@ def test_closing_a_review_drops_what_it_resolved(tmp_path):
 
 
 def test_closing_one_review_leaves_another_alone(tmp_path):
+    """Two reviews, so two changes: opening the same one twice hands back the review that is
+    already open, which is what stops a change being listed — and worked on — twice."""
     app, _ = build_versioned(tmp_path)
     with TestClient(app) as tc:
-        first, second = open_session(tc), open_session(tc)
+        first, second = open_session(tc, "g/p!1"), open_session(tc, "g/p!2")
+        assert first != second
         for sid in (first, second):
             with tc.websocket_connect("/api/stream") as ws:
                 ws.send_json({"action": "subscribe", "topics": [f"diff:{sid}:since"]})

@@ -24,6 +24,18 @@ from review_mate.contracts import MRPayload, MRRef
 from review_mate.session.state import ChangeType, FileEntry, MRMetadata, ReviewThread
 
 
+
+def ref_for(raw) -> MRRef:
+    """Resolve a reference the way a forge's own parser would, for a server built in a test.
+
+    Reads the number the caller wrote. A resolver that answered the same number whatever it was
+    given made every reference in a test the same change — which was invisible while opening one
+    twice made two reviews, and became a hang the moment it stopped.
+    """
+    _, _, number = str(raw).partition("!")
+    return MRRef(host="gitlab", project="g/p", iid=int(number) if number.isdigit() else 1)
+
+
 class HostStub:
     username = "reviewer"
 

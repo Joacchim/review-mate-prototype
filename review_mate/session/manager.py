@@ -36,6 +36,29 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _change_key(thing) -> tuple | None:
+    """What makes two references, or two reviews, the same change.
+
+    Takes either a reference being opened or the metadata of a review already open, because the
+    question is asked from both sides and the answer has to agree. A merge request is its forge,
+    project and number. A branch on this machine has none of those — its number is zero and its
+    project is a directory name — so it is the repository and the branch, which is exactly what
+    `contracts.ref_of` rebuilds a local reference from.
+    """
+    if thing is None:
+        return None
+    host = getattr(thing, "host", None)
+    if host == "local":
+        return ("local", str(getattr(thing, "clone_url", "") or ""),
+                getattr(thing, "source_branch", "") or "")
+    if host is not None and getattr(thing, "project", None) is not None:
+        return ("mr", host, thing.project, getattr(thing, "iid", 0))
+    path = getattr(thing, "path", None)          # a LocalRef, before anything has been loaded
+    if path is not None:
+        return ("local", str(path), getattr(thing, "branch", "") or "")
+    return None
+
+
 class SessionManager:
     def __init__(self, root: Path | str | None = None, mr_source=None, workspace=None,
                  activity_broker=None, local_source=None):
@@ -48,10 +71,25 @@ class SessionManager:
         self._activity_broker = activity_broker  # ActivityBroker (optional) — review-fleet notify spine
         self._republishers: list[asyncio.Task] = []  # per-writer taps feeding the activity channel
         self._checkouts: dict[str, object] = {}   # session_id → CheckoutHandle, released on session end
+        # changes being opened right now, so two opens racing each other do not make two reviews of
+        # one change. A loaded session is found through its own metadata instead (`_opened_for`);
+        # this covers only the window before the metadata exists, which is where the twins came from.
+        self._opening: dict[tuple, str] = {}
 
     # --- lifecycle ----------------------------------------------------------
 
     async def create(self, ref=None) -> str:
+        """Open a review of `ref`, or hand back the one that is already open for it.
+
+        One change, one review. Two of them is not a tidiness problem: the marks, drafts and
+        watermark live on a session, so a reviewer who carries on in the twin is working in a
+        review that does not hold what they wrote.
+        """
+        key = _change_key(ref)
+        if key is not None:
+            already = self._opened_for(key) or self._opening.get(key)
+            if already is not None:
+                return already
         sid = uuid.uuid4().hex
         sdir = self.root / sid
         sdir.mkdir(parents=True, exist_ok=True)
@@ -68,14 +106,31 @@ class SessionManager:
         writer.start()
         self._writers[sid] = writer
 
-        if ref is not None and self.source_for(ref) is not None:
-            try:
-                await self.load(sid, ref)
-            except Exception:
-                await self._discard(sid)  # don't leave an orphaned, MR-less ACTIVE session
-                raise
+        # claimed before the first await, which is the whole point: `load` is where a second open
+        # used to slip through, because the metadata it writes is what `_opened_for` reads.
+        if key is not None:
+            self._opening[key] = sid
+        try:
+            if ref is not None and self.source_for(ref) is not None:
+                try:
+                    await self.load(sid, ref)
+                except Exception:
+                    await self._discard(sid)  # don't leave an orphaned, MR-less ACTIVE session
+                    raise
+        finally:
+            if key is not None:
+                self._opening.pop(key, None)
         self._attach_republisher(writer, sid)
         return sid
+
+    def _opened_for(self, key: tuple) -> str | None:
+        """The live review of this change, if there is one. Read off each session's own metadata
+        rather than a second index, which would be one more thing to keep in step with a restore."""
+        for sid, writer in self._writers.items():
+            snapshot = writer.snapshot()
+            if snapshot.status is SessionStatus.ACTIVE and _change_key(snapshot.mr) == key:
+                return sid
+        return None
 
     def _attach_republisher(self, writer: SessionWriter, sid: str) -> None:
         """Tap the writer's event stream and republish highlight/message events to the activity

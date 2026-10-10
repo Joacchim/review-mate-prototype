@@ -15,13 +15,13 @@ from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
 from review_mate.view.hub import HubTopic
 
-from conftest import HostStub, next_frame
+from conftest import HostStub, next_frame, ref_for
 
 
 def build(tmp_path, provider):
     manager = SessionManager(root=tmp_path / "sessions", mr_source=provider)
     app = create_app(manager=manager, provider=provider,
-                     resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+                     resolve_ref=ref_for)
     return app
 
 
@@ -240,7 +240,7 @@ def test_a_host_without_mr_summary_falls_back_to_versions(tmp_path):
     provider = VersionsOnly()
     manager = SessionManager(root=tmp_path / "sessions", mr_source=provider)
     app = create_app(manager=manager, provider=provider, with_mcp=False, kb=kb,
-                     resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+                     resolve_ref=ref_for)
     with TestClient(app) as tc:
         with tc.websocket_connect("/api/stream") as ws:
             ws.send_json({"action": "subscribe", "topics": ["hub"]})

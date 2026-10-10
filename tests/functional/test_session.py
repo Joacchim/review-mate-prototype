@@ -241,3 +241,113 @@ async def test_a_borrowed_working_repository_is_never_released(tmp_path):
     assert workspace.released == []              # their clone is still theirs
     assert repo.exists()
     await second.shutdown()
+
+
+# --- one change, one review -------------------------------------------------
+# Marks, drafts and the watermark live on a session, so a second review of the same change is not
+# an untidy list: it is a review that does not hold what the reviewer wrote, sitting next to one
+# that does, with nothing to tell them apart.
+
+class _Source:
+    """Loads whatever change it is asked for, slowly enough to race against itself."""
+
+    def __init__(self, delay: float = 0.0) -> None:
+        self.delay = delay
+        self.loads = 0
+
+    async def load(self, ref):
+        from review_mate.contracts import MRPayload
+        from review_mate.session.state import MRMetadata
+        self.loads += 1
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if getattr(ref, "path", None) is not None:          # a branch on this machine
+            mr = MRMetadata(host="local", project="repo", iid=0, title="t",
+                            source_branch=ref.branch, target_branch="main", sha="aa",
+                            author="a", url=ref.path, clone_url=ref.path)
+        else:
+            mr = MRMetadata(host=ref.host, project=ref.project, iid=ref.iid, title="t",
+                            source_branch="x", target_branch="m", sha="aa", author="a",
+                            url="u", clone_url="git@h:g/p.git")
+        return MRPayload(mr=mr, files=[], threads=[], clone_url=mr.clone_url)
+
+
+async def test_opening_the_same_change_twice_hands_back_the_review_you_have(tmp_path):
+    from review_mate.contracts import MRRef
+
+    source = _Source()
+    m = SessionManager(root=tmp_path / "s", mr_source=source)
+    ref = MRRef(host="gitlab", project="g/p", iid=1)
+    first = await m.create(ref=ref)
+    second = await m.create(ref=ref)
+    assert first == second
+    assert source.loads == 1, "and it did not go back to the forge for a change it had"
+    await m.shutdown()
+
+
+async def test_two_changes_are_two_reviews(tmp_path):
+    from review_mate.contracts import MRRef
+
+    m = SessionManager(root=tmp_path / "s", mr_source=_Source())
+    first = await m.create(ref=MRRef(host="gitlab", project="g/p", iid=1))
+    second = await m.create(ref=MRRef(host="gitlab", project="g/p", iid=2))
+    assert first != second
+    await m.shutdown()
+
+
+async def test_two_opens_racing_each_other_still_make_one_review(tmp_path):
+    """The case the reviewer actually hit: two reviews of one change, seconds apart. The check
+    cannot wait for the load, because the load is what writes the metadata the check reads — so
+    the change is claimed before the first await, and the second open finds the claim."""
+    from review_mate.contracts import MRRef
+
+    source = _Source(delay=0.05)
+    m = SessionManager(root=tmp_path / "s", mr_source=source)
+    ref = MRRef(host="gitlab", project="g/p", iid=1)
+    both = await asyncio.gather(m.create(ref=ref), m.create(ref=ref))
+    assert both[0] == both[1], f"two reviews of one change: {both}"
+    assert source.loads == 1
+    await m.shutdown()
+
+
+async def test_a_branch_is_the_repository_and_the_branch(tmp_path):
+    """A branch here has no number and its project is a directory name, so those cannot tell two
+    of them apart — two branches of one repository would collapse into one review."""
+    from review_mate.contracts import LocalRef
+
+    m = SessionManager(root=tmp_path / "s", local_source=_Source())
+    one = await m.create(ref=LocalRef(path="/w/repo", branch="feat/a", base="main"))
+    same = await m.create(ref=LocalRef(path="/w/repo", branch="feat/a", base="main"))
+    other = await m.create(ref=LocalRef(path="/w/repo", branch="feat/b", base="main"))
+    assert one == same
+    assert one != other, "two branches of one repository are two changes"
+    await m.shutdown()
+
+
+async def test_a_review_you_ended_can_be_opened_again(tmp_path):
+    """Resuming is for the review you still have. Ending one and starting over is the reviewer
+    saying they want a fresh reading, and a stale claim would refuse them."""
+    from review_mate.contracts import MRRef
+
+    m = SessionManager(root=tmp_path / "s", mr_source=_Source())
+    ref = MRRef(host="gitlab", project="g/p", iid=1)
+    first = await m.create(ref=ref)
+    await m.end(first)
+    assert await m.create(ref=ref) != first
+    await m.shutdown()
+
+
+async def test_a_review_being_ended_is_not_handed_back(tmp_path):
+    """`end` submits EndSession and then discards, and those are two awaits: in between, the
+    review is still in the map and already ended. Handing that one back gives the reviewer a
+    session that is about to be deleted under them, with whatever they write in it."""
+    from review_mate.contracts import MRRef
+
+    m = SessionManager(root=tmp_path / "s", mr_source=_Source())
+    ref = MRRef(host="gitlab", project="g/p", iid=1)
+    first = await m.create(ref=ref)
+
+    await m.get(first).submit(EndSession(), Origin.BROWSER)   # the window, held open
+    assert m.get(first).snapshot().status is SessionStatus.ENDED
+    assert await m.create(ref=ref) != first, "handed back a review that is being torn down"
+    await m.shutdown()

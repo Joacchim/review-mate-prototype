@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 import pytest
 import uvicorn
 
-from conftest import HostStub
+from conftest import HostStub, ref_for
 from review_mate.contracts import MRRef
 from review_mate.server.app import create_app
 from review_mate.session.manager import SessionManager
@@ -101,7 +101,7 @@ def build(tmp_path, provider, host_writer=None):
     return create_app(manager=manager, provider=provider, with_mcp=False,
                       writeback=Writeback(manager, host_writer) if host_writer is not None else None,
                       kb=ReviewKB(root=tmp_path / "kb"),
-                      resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+                      resolve_ref=ref_for)
 
 
 class SpyHostWriter:
@@ -483,7 +483,7 @@ async def test_the_terminal_reads_the_merge_requests_discussions(tmp_path):
     manager = SessionManager(root=tmp_path / "sessions", mr_source=host)
     app = create_app(manager=manager, provider=host, with_mcp=False,
                      kb=_tmp_kb(tmp_path),
-                     resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+                     resolve_ref=ref_for)
 
     async with serving(app) as base:
         async with connected(base) as (client, watcher):

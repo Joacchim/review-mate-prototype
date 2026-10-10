@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from starlette.testclient import TestClient
 
-from conftest import HostStub, next_frame
+from conftest import HostStub, next_frame, ref_for
 from review_mate.contracts import MRRef
 from review_mate.server.app import create_app
 from review_mate.session.commands import (
@@ -291,7 +291,7 @@ def test_an_agents_own_question_is_not_the_reviewers_debt():
 def test_a_message_republishes_its_own_conversation_and_the_index(tmp_path):
     manager = SessionManager(root=tmp_path / "sessions", mr_source=HostStub())
     app = create_app(manager=manager, provider=HostStub(), with_mcp=False,
-                     resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+                     resolve_ref=ref_for)
     with TestClient(app) as client:
         sid = client.post("/api/cmd", json={"cmd": "session.open",
                                             "args": {"ref": "g/p!1"}}).json()["session"]
@@ -318,7 +318,7 @@ def test_presence_reaches_a_client_with_no_event_behind_it(tmp_path, monkeypatch
     monkeypatch.setattr(app_module, "PRESENCE_TICK", 0.05)
     manager = SessionManager(root=tmp_path / "sessions", mr_source=HostStub())
     app = create_app(manager=manager, provider=HostStub(), with_mcp=False,
-                     resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+                     resolve_ref=ref_for)
     broker = manager._activity_broker
     with TestClient(app) as client:
         sid = client.post("/api/cmd", json={"cmd": "session.open",
@@ -343,7 +343,7 @@ def test_the_ticker_stops_with_the_last_watcher(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "PRESENCE_TICK", 0.05)
     manager = SessionManager(root=tmp_path / "sessions", mr_source=HostStub())
     app = create_app(manager=manager, provider=HostStub(), with_mcp=False,
-                     resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+                     resolve_ref=ref_for)
     with TestClient(app) as client:
         sid = client.post("/api/cmd", json={"cmd": "session.open",
                                             "args": {"ref": "g/p!1"}}).json()["session"]

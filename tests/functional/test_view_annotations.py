@@ -13,7 +13,7 @@ import json
 import pytest
 from starlette.testclient import TestClient
 
-from conftest import HostStub
+from conftest import HostStub, ref_for
 from review_mate.contracts import MRRef
 from review_mate.server.app import create_app
 from review_mate.session.commands import (
@@ -167,7 +167,7 @@ def test_the_annotations_republish_when_the_session_changes(tmp_path):
     provider = BlameHost()
     manager = SessionManager(root=tmp_path / "sessions", mr_source=provider)
     app = create_app(manager=manager, provider=provider, with_mcp=False,
-                     resolve_ref=lambda raw: MRRef(host="gitlab", project="g/p", iid=1))
+                     resolve_ref=ref_for)
     with TestClient(app) as tc:
         sid = tc.post("/api/cmd", json={"cmd": "session.open",
                                         "args": {"ref": "g/p!1"}}).json()["session"]
