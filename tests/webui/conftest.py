@@ -254,8 +254,10 @@ def staged(fake_manager, stub_host, stub_workspace, review_kb, staged_app, stub_
     # muting is a reviewer preference and outlives a review by design, so it outlives a
     # test too unless this says otherwise
     review_kb._data.prefs = {}
+    stub_host.roster = []
+    stub_host.members_fail = None
     for topic in (staged_app.state.hub, staged_app.state.diff_topics, staged_app.state.blob_topics,
-                  staged_app.state.annotations_topic):
+                  staged_app.state.annotations_topic, staged_app.state.people_topic):
         topic.reset()
     yield fake_manager
     fake_manager.reset()

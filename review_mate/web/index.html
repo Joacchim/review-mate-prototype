@@ -370,6 +370,18 @@
   .coderef:hover{text-decoration:underline}
   /* what is not in the list, where the counts for it are */
   .mutednote{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--fg2);margin:4px 0 2px}
+  /* naming somebody: the list sits under the box it is completing, over whatever is below */
+  .mentionable{position:relative}
+  .mentions{position:absolute;left:0;right:0;top:100%;z-index:30;max-height:190px;overflow-y:auto;
+            background:var(--panel);border:1px solid var(--line);border-radius:6px;
+            box-shadow:0 6px 18px rgba(0,0,0,.18);margin-top:2px}
+  .mentions .mhdr{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--fg2);
+                  padding:5px 8px 2px}
+  .mentions .mrow{display:flex;gap:8px;align-items:baseline;padding:4px 8px;cursor:pointer}
+  .mentions .mrow.on,.mentions .mrow:hover{background:var(--panel2)}
+  .mentions .mhandle{font-family:var(--mono);font-size:11px;color:var(--fg)}
+  .mentions .mname{font-size:10.5px;color:var(--fg2)}
+  .mentionwarn{font-size:10.5px;color:var(--warnfg);margin:3px 0 2px}
   /* landing / queue */
   .land{max-width:760px;margin:40px auto;padding:0 20px}
   .land h2{font-weight:600;margin:0 0 4px} .land p{color:var(--fg2);margin:0 0 18px}

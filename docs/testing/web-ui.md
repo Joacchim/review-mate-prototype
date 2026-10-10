@@ -112,6 +112,7 @@ tests/webui/
   test_reviewed_files.py
   test_help.py
   test_markdown.py
+  test_mentions.py
   test_protocol_edges.py
 ```
 
@@ -139,6 +140,7 @@ right command, and that a pushed update repaints. Review logic is the protocol s
 | Review | `test_review.py` | drafting per highlight and at MR level, editing one, the counts, batch submit and what landed, approve, the discussion list and its filter, jump to line, reply, resolve, and the review-pass control in all three of its states; muting a one-voice discussion, the conversation that offers no mute, the hidden count, and undoing it |
 | Reviewed files | `test_reviewed_files.py` | marking the open file read and unmarking it, the tree's tick and the progress count, a mark that arrived with the session, and one the author has changed under — stale rather than cleared, and settled by reading it again |
 | What Claude wrote | `test_markdown.py` | the structure of an agent's answer as the reviewer reads it — wrapped prose as one paragraph, blank lines parting them, numbered lists keeping their numbers, a nested list inside its own item, prose after a list escaping it, a heading that does not claim the panel's own, a fenced block keeping its lines and its language, and markup in an answer being shown rather than run; and a `path:line` becoming a link that goes there — in backticks too, never on a bare filename or on prose that merely looks like one, and opening the repository browser when the file is outside the change |
+| Naming somebody | `test_mentions.py` | the list opening on `@`, the people on the change offered without a host read, members behind them, searching by the name people say and inserting the handle, Escape giving the keys back, an address not opening it, and the note about an unknown name staying silent until the project's list has actually arrived |
 | Explaining the screen | `test_help.py` | the `?` turning the mode on and off, a surface explaining itself where it is pointed at, a control's tooltip and its explanation being one string, the landing page's own sections, an empty surface staying quiet, and the guard that every entry still matches something |
 | Consent | `test_consent.py` | what a cross-repo ask shows, allowing, refusing, an already-decided ask, and each repository answered on its own |
 | Full view | `test_full_view.py` | the panel taking the window, reading width, the toggle both ways, and what survives the diff view mode |

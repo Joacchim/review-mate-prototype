@@ -14,6 +14,8 @@ class StubHost:
         self.commit_list: list[dict] = []
         self.commit_files: dict[str, list] = {}
         self.repo_tree: list[str] = []
+        self.roster: list[dict] = []
+        self.members_fail = None
         self.fail_with: Exception | None = None
         self.search_hits: list[dict] = []
         self.search_fails: Exception | None = None
@@ -47,6 +49,13 @@ class StubHost:
 
     async def linked_issues(self, project: str, iid):
         return list(self.issues)
+
+    async def members(self, ref) -> list[dict]:
+        """Who is in the project, for completing a mention. Empty by default and set per test,
+        because the interesting cases are a forge that answers and one that refuses."""
+        if self.members_fail is not None:
+            raise self.members_fail
+        return list(self.roster)
 
     async def get_repo_tree(self, project: str, ref: str, max_pages: int = 30) -> list[str]:
         """Every path in the repository, for browsing beyond the diff."""

@@ -23,6 +23,8 @@ const blobWanted = new Set();        // paths whose whole-file content this page
 const expandedGaps = {};             // path -> Map of gap-start -> {top, bot, all} lines unfolded
 const mdRendered = new Set();        // .md paths currently shown rendered (vs raw diff)
 let viewingPath = null;              // a non-diff file currently shown (plain view)
+let mentioning = false;              // a mention has been started at least once in this review
+let mentionState = null;             // the open completion: {box, from, query, index}
 let annotationFilter = "all";              // index filter: all | context | comment | posted
 let annotationQuery = "";                  // index text search (file + comment + question)
 let selected = null;                 // {kind:"hl"|"insight"|"mr"|"thread", id} shown in the detail overlay
@@ -476,6 +478,9 @@ function diffTopics() {
   if (currentFile) topics.push(`${listing}:${currentFile}`);
   if (showAll) topics.push(`tree:${SID}`);        // the file browser, only while it is open
   if (commitsMode) topics.push(`commits:${SID}`); // and the commit list, only while reviewing one
+  // watching is what asks the forge who is in the project, so this starts at the first `@` and
+  // stays for the rest of the review: having asked once, the answer is kept rather than re-read
+  if (mentioning) topics.push(`people:${SID}`);
   if (selected) topics.push(chatTopic(selected));   // only the chat on screen
   blobWanted.forEach((path) => topics.push(`blob:${SID}:${mode}:${path}`));
   return topics;
@@ -2988,6 +2993,150 @@ function draftBox() {
   return ta;
 }
 
+// --- naming somebody ---------------------------------------------------------
+// A mention only reaches anyone if the handle is exact, so this is about inserting a real one.
+// The handle at the caret is what is being written: everything back to an `@` that starts a word,
+// with no whitespace in between.
+//
+// Held as state and drawn by whoever draws the box, rather than appended to it. Every panel here
+// is rebuilt or merged when a topic frame lands — including the frame that carries the people
+// this list is made of — so a list hung off the textarea disappears exactly when it fills in.
+
+const MENTION = /(^|[\s(])@([A-Za-z0-9._-]*)$/;
+
+function peopleView() {
+  const view = topicViews[`people:${SID}`];
+  return view && view.state === "ready" ? view : null;
+}
+
+// Searched by handle and by the name people actually say out loud: a reviewer types a first name
+// and the handle that has to be inserted may not contain it anywhere.
+function peopleMatching(query) {
+  const all = (peopleView() || {}).people || [];
+  const needle = (query || "").toLowerCase();
+  return all.filter((p) => p.username.toLowerCase().includes(needle)
+                        || (p.name || "").toLowerCase().includes(needle)).slice(0, 8);
+}
+
+function closeMentions() {
+  if (!mentionState) return;
+  mentionState = null;
+  renderDetail();
+}
+
+function mentionBox() {
+  return mentionState && document.querySelector(`[data-mkey="${mentionState.key}"]`);
+}
+
+// Called on every keystroke in a box whose words reach the forge. Starting a mention is what
+// subscribes to the people topic, which is what asks the forge for the project's members.
+function mentionTyping(box) {
+  const upto = box.value.slice(0, box.selectionStart);
+  const hit = upto.match(MENTION);
+  const was = mentionState && mentionState.query;
+  if (!hit) { closeMentions(); return; }
+  if (!mentioning) { mentioning = true; watchTopics(diffTopics()); }
+  mentionState = { key: box.dataset.mkey, from: box.selectionStart - hit[2].length - 1,
+                   query: hit[2], index: 0 };
+  if (was !== hit[2] || !document.getElementById("mentions")) renderDetail();
+}
+
+// The list for a box, or nothing — built by that box's own render, so it survives the frames that
+// bring the people it lists.
+function mentionList(key) {
+  if (!mentionState || mentionState.key !== key) return null;
+  const found = peopleMatching(mentionState.query);
+  const view = peopleView();
+  if (!found.length && !view) return null;      // the topic has not arrived; say nothing yet
+
+  const list = document.createElement("div");
+  list.id = "mentions";
+  list.className = "mentions";
+  if (!found.length) {
+    list.appendChild(empty("nobody here by that name"));
+    return list;
+  }
+  let group = null;
+  found.forEach((person, n) => {
+    const where = person.on_change ? "on this change" : "in this project";
+    if (where !== group) {
+      group = where;
+      const hdr = document.createElement("div");
+      hdr.className = "mhdr"; hdr.textContent = where;
+      list.appendChild(hdr);
+    }
+    const row = document.createElement("div");
+    row.className = "mrow" + (n === mentionState.index ? " on" : "");
+    row.innerHTML = `<span class="mhandle">${esc(person.username)}</span>`
+                  + (person.name ? `<span class="mname">${esc(person.name)}</span>` : "");
+    // mousedown, not click: the box loses focus first and the blur would close this under the
+    // pointer before the click ever landed
+    row.onmousedown = (e) => { e.preventDefault(); insertMention(person.username); };
+    list.appendChild(row);
+  });
+  return list;
+}
+
+function insertMention(username) {
+  const box = mentionBox();
+  if (!box) { closeMentions(); return; }
+  const { from, query } = mentionState;
+  const after = from + 1 + query.length;
+  box.value = box.value.slice(0, from) + "@" + username + " " + box.value.slice(after);
+  const caret = from + username.length + 2;
+  mentionState = null;
+  box.dispatchEvent(new Event("input"));    // the draft buffer is what survives the next render
+  renderDetail();
+  const again = document.querySelector(`[data-mkey="${box.dataset.mkey}"]`);
+  if (again) { again.focus(); again.setSelectionRange(caret, caret); }
+}
+
+// Arrow keys move through the list and Enter takes one, but only while it is open: the same keys
+// in a comment box are a reviewer writing, and stealing them is worse than having no list.
+function mentionKey(e) {
+  if (!mentionState || !document.getElementById("mentions")) return false;
+  const found = peopleMatching(mentionState.query);
+  if (e.key === "Escape") { closeMentions(); return true; }
+  if (!found.length) return false;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    mentionState.index = (mentionState.index + (e.key === "ArrowDown" ? 1 : -1) + found.length)
+                       % found.length;
+    renderDetail();
+    return true;
+  }
+  if (e.key === "Enter" || e.key === "Tab") {
+    insertMention(found[mentionState.index].username);
+    return true;
+  }
+  return false;
+}
+
+// Every name written in a box, for telling the reviewer about one nobody will be notified by.
+function mentionsIn(text) {
+  return [...String(text || "").matchAll(/(?:^|[\s(])@([A-Za-z0-9._-]+)/g)].map((m) => m[1]);
+}
+
+// Only when the project's list actually arrived. While it is coming, after a forge refused it, or
+// on a branch with nobody else on it, this knows nothing — and a note that fires then teaches the
+// reviewer to ignore the one that matters.
+function unknownMentions(text) {
+  const view = peopleView();
+  if (!view || view.members !== "ready") return [];
+  const known = new Set((view.people || []).map((p) => p.username.toLowerCase()));
+  return mentionsIn(text).filter((name) => !known.has(name.toLowerCase()));
+}
+
+function mentionWarning(text) {
+  const unknown = unknownMentions(text);
+  if (!unknown.length) return null;
+  const note = document.createElement("div");
+  note.className = "mentionwarn";
+  note.textContent = unknown.length === 1
+    ? `${unknown[0]} is not in this project — if that is a typo the mention reaches nobody`
+    : `${unknown.join(", ")} are not in this project`;
+  return note;
+}
+
 function draftEditor(key, anchor, draft) {
   const wrap = document.createElement("div");
   wrap.className = "draft";
@@ -3009,8 +3158,18 @@ function draftEditor(key, anchor, draft) {
     ? "write an MR-level review comment — a summary posted as a general note on the MR"
     : "prepare a review comment — your words (Claude's card is context, not posted)";
   ta.value = (key in draftBuffers) ? draftBuffers[key] : (draft ? draft.body : "");
-  ta.oninput = (e) => { draftBuffers[key] = e.target.value; };
-  wrap.appendChild(ta);
+  ta.dataset.mkey = `draft:${key}`;
+  ta.oninput = (e) => { draftBuffers[key] = e.target.value; mentionTyping(e.target); };
+  ta.onkeydown = (e) => { if (mentionKey(e)) e.preventDefault(); };
+  // the box is what the list is positioned against, so it has to be what the list sits inside
+  const taWrap = document.createElement("div");
+  taWrap.className = "mentionable";
+  taWrap.appendChild(ta);
+  const picker = mentionList(`draft:${key}`);
+  if (picker) taWrap.appendChild(picker);
+  wrap.appendChild(taWrap);
+  const warn = mentionWarning(ta.value);
+  if (warn) wrap.appendChild(warn);
 
   // an optional suggested change (line-anchored only) — coexists with the prose above
   const canSuggest = anchor !== null && (!state.mr || (state.mr.capabilities || {}).suggestions !== false);
@@ -3274,7 +3433,9 @@ function threadConversationBlock(t) {
     const ta = draftBox();
     ta.placeholder = "reply to this thread…";
     ta.value = threadReplyBuf[t.id] || "";
-    ta.oninput = (e) => { threadReplyBuf[t.id] = e.target.value; };
+    ta.dataset.mkey = `reply:${t.id}`;
+    ta.oninput = (e) => { threadReplyBuf[t.id] = e.target.value; mentionTyping(e.target); };
+    ta.onkeydown = (e) => { if (mentionKey(e)) e.preventDefault(); };
     const row = document.createElement("div");
     row.className = "draftbtns";
     row.appendChild(btn("Reply", "btn", () => replyThread(t.id)));
@@ -3290,7 +3451,15 @@ function threadConversationBlock(t) {
       mute.title = `stop showing discussions written only by ${only}, on every review`;
       row.appendChild(mute);
     }
-    rwrap.appendChild(ta); rwrap.appendChild(row);
+    const replyWrap = document.createElement("div");
+    replyWrap.className = "mentionable";
+    replyWrap.appendChild(ta);
+    const replyPicker = mentionList(`reply:${t.id}`);
+    if (replyPicker) replyWrap.appendChild(replyPicker);
+    rwrap.appendChild(replyWrap);
+    const replyWarn = mentionWarning(ta.value);
+    if (replyWarn) rwrap.appendChild(replyWarn);
+    rwrap.appendChild(row);
     wrap.appendChild(rwrap);
   }
   return wrap;
