@@ -59,25 +59,81 @@ function mdInline(s) {
     .replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<em>$2</em>")
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 }
+const MD_FENCE = /^\s*```(\w*)/;
+const MD_HEADING = /^(#{1,6})\s+(.*)$/;
+const MD_ITEM = /^(\s*)([-*]|\d+[.)])\s+(.*)$/;
+
+// Claude writes structured prose, so this renders the structure it writes. Escaped first and
+// parsed after: what the agent sends is text to be shown, never markup to be run, and that order
+// is what makes it safe to render at all.
+//
+// Wrapped prose is the case this exists for. Line-per-block turned one paragraph into a stack of
+// disconnected lines, which reads as a list of assertions rather than an argument.
 function md(src) {
   const lines = esc(src || "").split("\n");
-  let html = "", inList = false, inCode = false, code = "";
-  const closeList = () => { if (inList) { html += "</ul>"; inList = false; } };
-  for (const ln of lines) {
-    if (/^\s*```/.test(ln)) {
-      if (!inCode) { inCode = true; code = ""; }
-      else { html += `<pre class="md"><code>${code}</code></pre>`; inCode = false; }
+  let html = "", code = null, fence = "";
+  let para = [];
+  const stack = [];          // open lists, outermost first: {indent, tag, item}
+
+  const flushPara = () => {
+    if (!para.length) return;
+    html += `<p>${mdInline(para.join(" "))}</p>`;    // consecutive lines are one paragraph
+    para = [];
+  };
+  const closeTo = (indent) => {
+    while (stack.length && stack[stack.length - 1].indent >= indent) {
+      const open = stack.pop();
+      html += (open.item ? "</li>" : "") + `</${open.tag}>`;
+    }
+  };
+  const closeAll = () => closeTo(-1);
+
+  for (const line of lines) {
+    const fenced = line.match(MD_FENCE);
+    if (fenced) {
+      if (code === null) { flushPara(); closeAll(); code = []; fence = fenced[1]; }
+      else {
+        html += `<pre class="md"><code${fence ? ` class="lang-${fence}"` : ""}>`
+              + `${code.join("\n")}</code></pre>`;
+        code = null;
+      }
       continue;
     }
-    if (inCode) { code += (code ? "\n" : "") + ln; continue; }
-    const m = ln.match(/^\s*[-*]\s+(.*)/);
-    if (m) { if (!inList) { html += "<ul>"; inList = true; } html += `<li>${mdInline(m[1])}</li>`; continue; }
-    closeList();
-    if (ln.trim() === "") continue;
-    html += `<div>${mdInline(ln)}</div>`;
+    if (code !== null) { code.push(line); continue; }
+
+    const heading = line.match(MD_HEADING);
+    if (heading) {
+      flushPara(); closeAll();
+      const level = Math.min(heading[1].length + 3, 6);      // never competes with the panel's own
+      html += `<h${level} class="mdh">${mdInline(heading[2])}</h${level}>`;
+      continue;
+    }
+
+    const item = line.match(MD_ITEM);
+    if (item) {
+      flushPara();
+      const indent = item[1].length;
+      const tag = /^\d/.test(item[2]) ? "ol" : "ul";
+      closeTo(indent + 1);
+      const top = stack[stack.length - 1];
+      if (!top || indent > top.indent) {
+        stack.push({ indent, tag, item: false });            // deeper: nest inside the open item
+        html += `<${tag}>`;
+      } else if (top.item) {
+        html += "</li>"; top.item = false;
+      }
+      html += `<li>${mdInline(item[3])}`;
+      stack[stack.length - 1].item = true;
+      continue;
+    }
+
+    if (line.trim() === "") { flushPara(); continue; }       // a blank line ends a paragraph
+    closeAll();                                              // prose after a list ends the list
+    para.push(line.trim());
   }
-  closeList();
-  if (inCode) html += `<pre class="md"><code>${code}</code></pre>`;
+  flushPara();
+  closeAll();
+  if (code !== null) html += `<pre class="md"><code>${code.join("\n")}</code></pre>`;
   return html;
 }
 

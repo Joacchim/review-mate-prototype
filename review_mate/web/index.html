@@ -353,6 +353,12 @@
   .chatbox input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line2);color:var(--fg);border-radius:6px;padding:6px 9px;font:inherit}
   /* rendered markdown inside cards + chat */
   .md>div{margin:0 0 6px} .md>div:last-child{margin-bottom:0}
+  .md p{margin:0 0 8px} .md p:last-child{margin-bottom:0}
+  /* an agent's headings order its own answer; they must not read as the panel's own sections, so
+     they start below the headings this page uses and only ever get smaller */
+  .md .mdh{margin:10px 0 4px;font-size:11.5px;letter-spacing:.02em;color:var(--fg)}
+  .md>.mdh:first-child{margin-top:0}
+  .md ol{margin:4px 0;padding-left:20px} .md ol ul,.md ul ol,.md ul ul,.md ol ol{margin:2px 0}
   .md code{font-family:var(--mono);font-size:.85em;background:var(--bg);border:1px solid var(--line2);border-radius:4px;padding:0 4px}
   .md pre.md{background:var(--bg);border:1px solid var(--line2);border-radius:6px;padding:8px 10px;overflow-x:auto;margin:6px 0}
   .md pre.md code{border:0;background:none;padding:0;white-space:pre}

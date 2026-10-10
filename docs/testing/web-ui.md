@@ -111,6 +111,7 @@ tests/webui/
   test_review.py
   test_reviewed_files.py
   test_help.py
+  test_markdown.py
   test_protocol_edges.py
 ```
 
@@ -137,6 +138,7 @@ right command, and that a pushed update repaints. Review logic is the protocol s
 | Agent state | `test_agent_state.py` | what the server says is outstanding, and what it says once answered |
 | Review | `test_review.py` | drafting per highlight and at MR level, editing one, the counts, batch submit and what landed, approve, the discussion list and its filter, jump to line, reply, resolve, and the review-pass control in all three of its states |
 | Reviewed files | `test_reviewed_files.py` | marking the open file read and unmarking it, the tree's tick and the progress count, a mark that arrived with the session, and one the author has changed under — stale rather than cleared, and settled by reading it again |
+| What Claude wrote | `test_markdown.py` | the structure of an agent's answer as the reviewer reads it — wrapped prose as one paragraph, blank lines parting them, numbered lists keeping their numbers, a nested list inside its own item, prose after a list escaping it, a heading that does not claim the panel's own, a fenced block keeping its lines and its language, and markup in an answer being shown rather than run |
 | Explaining the screen | `test_help.py` | the `?` turning the mode on and off, a surface explaining itself where it is pointed at, a control's tooltip and its explanation being one string, the landing page's own sections, an empty surface staying quiet, and the guard that every entry still matches something |
 | Consent | `test_consent.py` | what a cross-repo ask shows, allowing, refusing, an already-decided ask, and each repository answered on its own |
 | Full view | `test_full_view.py` | the panel taking the window, reading width, the toggle both ways, and what survives the diff view mode |
