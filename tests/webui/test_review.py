@@ -485,3 +485,35 @@ def test_a_posted_line_comment_is_not_listed_twice(diff, threads, staged):
     diff.load("s1")
     expect(threads.row("the error handling reads well")).to_have_count(1)
     expect(threads.rows.filter(has_text="the error handling reads well")).to_have_count(0)
+
+
+# --- a comment box the reviewer sized by hand -------------------------------
+# The panel is merged rather than replaced, so a frame arriving mid-sentence must not take the box
+# back to the height it was built at. The height is not in the markup: the browser records a drag
+# as an inline style, which is why morph exempts `style` from the attributes it reconciles.
+
+def test_a_comment_box_sized_by_hand_keeps_its_height(diff, annotations, detail, staged, as_agent):
+    """Dragged taller, then Claude says something while the reviewer is still typing. Collapsing
+    the box under them mid-sentence loses the shape of what they were writing, and the text with
+    it if the frame also rebuilt the textarea."""
+    from review_mate.session.commands import EmitCard
+
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    annotations.index_rows.first.click()
+    detail.tab("Review").click()
+    box = detail.panel.locator("textarea.draftbox").first
+    expect(box).to_be_visible()
+
+    box.evaluate("el => el.style.height = '420px'")
+    tall = box.evaluate("el => el.getBoundingClientRect().height")
+    assert tall > 300, "the drag itself did not take"
+    box.click()
+    box.type("half a thought the reviewer is still writing")
+
+    as_agent("s1", EmitCard(highlight_id="h3", body="something arriving mid-sentence"))
+    expect(annotations.index_rows.first).to_be_visible()     # the frame landed
+
+    assert box.evaluate("el => el.getBoundingClientRect().height") >= tall - 2, \
+        "the box collapsed under the reviewer"
+    assert "half a thought" in box.input_value(), "and it kept what they had written"

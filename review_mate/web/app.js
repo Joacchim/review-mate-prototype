@@ -862,6 +862,16 @@ async function loadRef(ref) {
   const btn = $("load");
   btn.disabled = true; btn.textContent = "Loading…"; setStatus("resolving " + ref + "…");
   try {
+    // Resume rather than open, the way the queue's Track and a ?ref= link already do. Opening a
+    // review the reviewer already has makes a second session for one merge request — which is
+    // what a change listed twice in the hub is, and the one they carry on in is then not the one
+    // holding their marks.
+    const already = await findTracking(ref);
+    if (already) {
+      setStatus("resuming " + ref + " — it was already in your open reviews");
+      location.search = `?s=${already.id}`;
+      return;
+    }
     const res = await cmd("session.open", { ref });
     if (!res.ok) {
       setStatus("");

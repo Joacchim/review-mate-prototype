@@ -164,3 +164,20 @@ def test_a_github_result_is_written_and_opened_the_way_github_writes_it(search, 
 
     href = search.results.first.locator("a.rowlink").get_attribute("href")
     assert "github.com%2FJoacchim%2Ftryouts%2Fpull%2F1" in href, href
+
+
+# --- typing a reference for a change you already track ----------------------------------------
+# The search results learned to say what is open; the box above them did not. `trackRef` asks
+# first and `openRef` resumes, but `loadRef` — what pressing Load runs — goes straight to
+# session.open. Every duplicate row in the hub is one of these.
+
+def test_typing_a_tracked_reference_resumes_it_rather_than_opening_a_second(search, staged, page):
+    """Two sessions for one merge request is what a duplicate in the open-reviews list *is*, and
+    the review you carry on in is then not the one holding your marks."""
+    staged.put(review_with_highlights("s1"))       # an open review of HIT's merge request
+    search.look_for(f"{HIT['project']}!{HIT['iid']}")
+    page.locator("#load").click()
+    page.wait_for_url("**/*s=*", timeout=8000)
+    assert not staged.created, (
+        f"asked the server to open a review it already had: {staged.created}")
+    assert "s=s1" in page.url, f"did not resume the review it already had: {page.url}"
