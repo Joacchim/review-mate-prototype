@@ -96,7 +96,7 @@ troubleshooting: **[running it →](docs/running.md)**.
 
 ## Reading further
 
-- **[Features](docs/features.md)** — what it does, in screenshots of the web UI
+- **[Features](docs/features.md)** — what it does, in clips of the web UI being used
 - **[Running it](docs/running.md)** — credentials, the systemd unit, the terminal client, attaching
   Claude, troubleshooting
 - **[Architecture](docs/architecture.md)** — the view protocol and the two planes

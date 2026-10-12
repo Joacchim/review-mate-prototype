@@ -45,14 +45,17 @@ The browser suite needs the `webtest` extra (`uv sync --extra webtest`) and its 
 sessions, so a test failure is the product's, not a mock's —
 [how the web UI is tested](docs/testing/web-ui.md) explains the arrangement and what belongs there.
 
-Screenshots in the documentation are generated, not taken:
+The documentation's pictures are generated, not taken — stills of each screen, and clips answering
+"how do I do X?":
 
 ```bash
 uv run --extra webtest python tools/screenshots.py
+uv run --extra webtest python tools/clips.py
 ```
 
-That drives the real application too. Regenerate them when a screen changes rather than describing
-the difference in prose.
+Both drive the real application too. Regenerate them when a screen changes rather than describing
+the difference in prose — [how they are made](docs/testing/documentation-pictures.md) covers
+editing a clip, and the flags for slowing one down while you work on it.
 
 ## Dependencies
 
@@ -82,7 +85,7 @@ for `mcp`, where this has already cost an afternoon.
 | `review_mate/web/` | The browser UI (vanilla JS, no build step) |
 | `review_mate/tui/` | The terminal client — a renderer over the view protocol |
 | `docs/` | Architecture, features, running it, glossary, surprising behaviours, testing method |
-| `tools/` | Documentation machinery — the screenshot generator |
+| `tools/` | Documentation machinery — the stills, the clips, and the review they share |
 | `packaging/` | A systemd user unit |
 | `.claude/` | Claude Code skills (watching a fleet, reviewing your own branch), the worker agent, the startup hook |
 
