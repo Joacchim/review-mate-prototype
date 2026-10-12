@@ -115,6 +115,28 @@ class ReviewKB:
     def is_muted(self, host: str, author: str) -> bool:
         return self._voice(host, author) in self.muted_authors()
 
+    # --- what the forge last said about a merge request ---------------------------------------
+    # Kept because it stays true. A head, a lifecycle state and a count of open discussions are
+    # facts about the merge request, not about this process, so losing them to a restart makes the
+    # hub claim it knows nothing about reviews it checked an hour ago. They are stored with the
+    # moment they were read, which is what lets the hub say how old they are rather than present
+    # them as current — a merged request that still reads "approved" is worse than no label.
+
+    _FACTS = "mr_facts"
+
+    def mr_facts(self, host: str, project: str, iid) -> dict:
+        return dict((self.get_pref(self._FACTS, {}) or {}).get(self._wm_key(host, project, iid), {}))
+
+    def set_mr_facts(self, host: str, project: str, iid, facts: dict) -> None:
+        stored = dict(self.get_pref(self._FACTS, {}) or {})
+        stored[self._wm_key(host, project, iid)] = dict(facts)
+        self.set_pref(self._FACTS, stored)
+
+    def forget_mr_facts(self, host: str, project: str, iid) -> None:
+        stored = dict(self.get_pref(self._FACTS, {}) or {})
+        if stored.pop(self._wm_key(host, project, iid), None) is not None:
+            self.set_pref(self._FACTS, stored)
+
     # --- reviewed watermark (diff-versions: the head SHA reviewed up to, per MR) -------------
 
     @staticmethod

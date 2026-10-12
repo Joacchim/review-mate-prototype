@@ -30,6 +30,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _latest(sessions) -> str:
+    """The most recent moment any of these was checked.
+
+    So the hub says "checked an hour ago" after a restart rather than nothing at all — the facts
+    on the rows are the ones that were read then, and a reader cannot judge them without it.
+    """
+    return max((s.checked_at for s in sessions if s.checked_at), default="")
+
+
 def derive_state(*, mr_state: str, pending: int, posted: int, unresolved: int,
                  behind: bool, at_watermark: bool) -> str:
     """The landing-hub verdict for one open review, most-decisive first."""
@@ -75,6 +84,7 @@ class HubSession(BaseModel):
     cards: int = 0
     asks: int = 0                  # what this review is waiting on the agent for
     host_checked: bool = False
+    checked_at: str = ""           # when the forge last said so, which is what makes it readable
 
 
 class HubWatcher(BaseModel):
@@ -130,7 +140,7 @@ class HubTopic:
         return HubView(user=self._user, agent=HubWatcher(**(watcher or {})), sessions=sessions,
                        queue=list(self._queue), queue_state=self._queue_state,
                        queue_error=self._queue_error,
-                       host_checked_at=self._checked_at).model_dump(mode="json")
+                       host_checked_at=self._checked_at or _latest(sessions)).model_dump(mode="json")
 
     def _fold(self, sid: str, snap) -> HubSession:
         pending = sum(1 for d in snap.drafts if d.status is DraftStatus.DRAFT)
@@ -141,7 +151,7 @@ class HubTopic:
             return HubSession(id=sid, created_at=snap.created_at, **counts,
                               state=derive_state(mr_state="", pending=pending, posted=posted,
                                                  unresolved=0, behind=False, at_watermark=False))
-        host = self._host.get(sid, {})
+        host = self._host.get(sid) or self._remembered(snap)
         head = host.get("head") or snap.mr.sha
         mr_state = host.get("mr_state", "")
         unresolved = host.get("unresolved", 0)
@@ -163,8 +173,21 @@ class HubTopic:
             state=derive_state(mr_state=mr_state, pending=pending, posted=posted,
                                unresolved=unresolved, behind=behind, at_watermark=at_watermark),
             mr_state=mr_state, behind=behind, unresolved=unresolved,
-            host_checked=sid in self._host, **counts,
+            host_checked=bool(host), checked_at=host.get("checked_at", ""), **counts,
         )
+
+    def _remembered(self, snap) -> dict:
+        """What the forge last said about this merge request, from before this process started.
+
+        A head, a lifecycle state and a count of open discussions do not stop being true because
+        the server restarted — they stop being true when the merge request moves, which is a
+        different thing and one the reviewer can see from how old they are. Not kept for a branch
+        on this machine: its project is a directory name and its number is zero, so two branches
+        in two clones would share an entry, the same trap the watermark has.
+        """
+        if self._kb is None or snap.mr is None or snap.mr.host == "local":
+            return {}
+        return self._kb.mr_facts(snap.mr.host, snap.mr.project, snap.mr.iid)
 
     def ensure_queue(self, publish) -> asyncio.Task | None:
         """Start the one-shot queue read the first time a client watches the topic.
@@ -261,7 +284,10 @@ class HubTopic:
                         1 for t in await forge.fetch_threads(ref) if not t.resolved)
                 except Exception:
                     pass
+            facts["checked_at"] = _now()
             self._host[summ.id] = facts
+            if self._kb is not None and snap.mr.host != "local":
+                self._kb.set_mr_facts(snap.mr.host, snap.mr.project, snap.mr.iid, facts)
         self._checked_at = _now()
 
     def forget(self, session_id: str) -> None:
