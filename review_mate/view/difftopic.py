@@ -32,6 +32,8 @@ with a confident "no such file".
 """
 from __future__ import annotations
 
+import logging
+
 from collections import OrderedDict
 
 import asyncio
@@ -68,6 +70,8 @@ _FAILED_KEPT = 256
 # cannot be read should not be re-fetched several times a second. This is the interval between
 # those two mistakes. A reviewer retrying inside it still sees the error — the honest fix for that
 # is a retry the reviewer can ask for, which is a command, not a cache policy.
+logger = logging.getLogger(__name__)
+
 _FAILED_TTL = 30.0
 
 # A session id is opaque but must not carry the separator; a diff view mode is a closed set,
@@ -442,14 +446,21 @@ class DiffTopics:
             raise
         except CannotTell as why:
             # not an answer, so it is not cached as one: the next read asks again
+            logger.info("%s: cannot tell yet — %s", key, why)
             self._unresolved[key] = (str(why), monotonic())
         except RepoUnreadable as why:
+            # Logged, not only shown. A reviewer reports what the view said and the journal has
+            # nothing to match it against, which is how a repeating failure stayed a mystery for
+            # three sessions: every trace that existed came from some other path that happens to
+            # log, and this one — the one they are actually looking at — recorded nothing.
+            logger.warning("%s: repository unreadable — %s", key, why)
             # The one git failure a reviewer can act on, and the one that reads as something else:
             # the forge half of the review is fine, so the change loads and only what comes from
             # the repository is missing. Name the protocol, because that is what the reviewer has
             # to go and fix and it is the one thing git's own words never say plainly.
             self._failed[key] = (_no_credentials(snapshot, str(why)), monotonic())
         except Exception as exc:
+            logger.warning("%s: %s", key, exc, exc_info=True)
             self._failed[key] = (f"{type(exc).__name__}: {exc}", monotonic())
         if self._publish is not None:
             await self._publish(session_id, mode)

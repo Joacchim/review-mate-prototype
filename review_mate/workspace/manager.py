@@ -6,6 +6,8 @@ seed. Shells out to the system `git`, inheriting ambient credentials (D8). Imple
 """
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import os
 import re
@@ -14,6 +16,9 @@ from pathlib import Path
 
 from review_mate.config import review_mate_home
 from review_mate.contracts import CheckoutHandle, RepoRef, RepoUnreadable
+
+
+logger = logging.getLogger(__name__)
 
 
 class WorkspaceManager:
@@ -274,7 +279,29 @@ class WorkspaceManager:
         except RuntimeError:
             return False
 
+    # How long to wait before the second go, and how many goes there are. One: the window this
+    # exists for is a file being written, which is over in well under a second, and a failure that
+    # survives two attempts a second apart is a state rather than a moment.
+    _RETRY_AFTER = 1.2
+
     async def _git(self, *args: str, timeout: float = 120.0, stdin: str | None = None) -> str:
+        """Run git, and give a passing failure exactly one second chance.
+
+        Retried only for the handful of messages that mean "not right now" rather than "not
+        allowed" — see `_TRANSIENT`. Everything else fails on the first attempt, because waiting
+        to be told the same thing twice is worse than being told it once.
+        """
+        try:
+            return await self._run_git(*args, timeout=timeout, stdin=stdin)
+        except (RepoUnreadable, RuntimeError) as first:
+            if not _transient(str(first)):
+                raise
+            logger.info("git %s hit a passing failure, trying once more: %s",
+                        " ".join(args), str(first)[:160])
+            await asyncio.sleep(self._RETRY_AFTER)
+        return await self._run_git(*args, timeout=timeout, stdin=stdin)
+
+    async def _run_git(self, *args: str, timeout: float = 120.0, stdin: str | None = None) -> str:
         # Never let git block on an interactive credential prompt (no ambient creds → the request
         # would hang forever). Fail fast and bounded: prompts off, stdin closed, hard timeout.
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
@@ -299,6 +326,9 @@ class WorkspaceManager:
             raise RuntimeError(f"git {' '.join(args)} timed out after {timeout:.0f}s")
         if proc.returncode != 0:
             text = err.decode().strip()
+            # every git failure, with the command that produced it — the question asked of this
+            # three times now is "did it actually try again", and only the journal can answer it
+            logger.warning("git %s failed: %s", " ".join(args), text.replace("\n", " ")[:300])
             if _unreadable(text):
                 raise RepoUnreadable(f"git {' '.join(args)} failed: {text}")
             raise RuntimeError(f"git {' '.join(args)} failed: {text}")
@@ -344,6 +374,21 @@ def _ranges(by_line: dict[int, str]) -> list[dict]:
 # What git says when it could not reach the far end. Matched on text because git reports all of
 # these as exit 128 with no code of its own, and because the distinction a reviewer needs — "I
 # cannot get at the repository" against "that commit is not there" — is only in the words.
+# The subset that is a moment rather than a state. A VPN client rewriting a system ssh config
+# makes ssh refuse to start for every process on the machine, for about as long as it takes to
+# write a file — and a reviewer whose "since last review" turned itself off for the rest of the
+# afternoon because of that window has been told something untrue about their change.
+#
+# Narrow on purpose. A missing key or a refused host is a state, and retrying it only makes the
+# reviewer wait twice as long to be told the same thing.
+_TRANSIENT = (
+    "bad owner or permissions",        # a config file being rewritten under us
+    "connection closed by remote host",
+    "connection reset by peer",
+    "temporary failure in name resolution",
+    "operation timed out",
+)
+
 _UNREADABLE = (
     "could not read from remote repository",
     "correct access rights",
@@ -359,6 +404,12 @@ _UNREADABLE = (
 def _unreadable(stderr: str) -> bool:
     low = (stderr or "").lower()
     return any(mark in low for mark in _UNREADABLE)
+
+
+def _transient(stderr: str) -> bool:
+    """Whether this failure is worth one more go in a moment."""
+    low = (stderr or "").lower()
+    return any(mark in low for mark in _TRANSIENT)
 
 
 def _key(repo: RepoRef) -> str:

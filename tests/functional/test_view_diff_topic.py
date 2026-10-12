@@ -1098,3 +1098,20 @@ async def test_not_being_able_to_tell_is_not_remembered_as_an_answer(tmp_path):
         finally:
             difftopic._FAILED_TTL = 30.0
     assert view["state"] == "ready" and view["files"], "it never asked again"
+
+
+async def test_a_repository_that_could_not_be_read_is_written_down(tmp_path, caplog):
+    """Shown to the reviewer *and* recorded.
+
+    This failure was reported three times from a running server and the journal had nothing to
+    match it against — every trace that existed came from some other path that happens to log,
+    while the one the reviewer was looking at recorded nothing. A fault you cannot search for
+    afterwards is a fault that gets diagnosed by argument.
+    """
+    import logging
+    with caplog.at_level(logging.WARNING, logger="review_mate.view.difftopic"):
+        error = await _since_error(tmp_path, "git fetch failed: Please make sure you have the "
+                                             "correct access rights")
+    assert "correct access rights" in error
+    logged = [r.getMessage() for r in caplog.records]
+    assert any("repository unreadable" in line for line in logged), f"nothing logged: {logged}"

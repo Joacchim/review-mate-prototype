@@ -311,3 +311,75 @@ async def test_a_repository_that_cannot_be_reached_says_so_rather_than_naming_a_
     shutil.rmtree(src)                                 # the far end is now unreachable
     with pytest.raises(RepoUnreadable):
         await wm.since_diff(repo, None, first, None, "0" * 40)
+
+
+# --- a failure that is a moment rather than a state ---------------------------
+# A VPN client rewriting a system ssh config makes ssh refuse to start for every process on the
+# machine, for about as long as it takes to write a file. A reviewer whose "since last review"
+# turned itself off for the afternoon because of that window was told something untrue about
+# their change — three times, before this.
+
+@pytest.mark.parametrize("stderr", [
+    "Bad owner or permissions on /etc/ssh/ssh_config.d/99-vpn.conf",
+    "Connection closed by remote host",
+    "ssh: Could not resolve hostname: Temporary failure in name resolution",
+])
+def test_failures_worth_one_more_go(stderr):
+    from review_mate.workspace.manager import _transient
+    assert _transient(stderr)
+
+
+@pytest.mark.parametrize("stderr", [
+    "Permission denied (publickey)",
+    "fatal: Authentication failed for 'https://host/repo.git'",
+    "Host key verification failed.",
+    "fatal: couldn't find remote ref abc123",
+])
+def test_failures_that_are_a_state_and_not_worth_waiting_twice_for(stderr):
+    """Retrying a refused key only makes the reviewer wait twice as long to be told the same."""
+    from review_mate.workspace.manager import _transient
+    assert not _transient(stderr)
+
+
+async def test_a_passing_failure_gets_one_more_go(wm, monkeypatch):
+    """The whole point: the second attempt lands after the window has closed."""
+    attempts = []
+
+    async def flaky(self, *args, **kw):
+        attempts.append(args)
+        if len(attempts) == 1:
+            raise RepoUnreadable("git fetch failed: Bad owner or permissions on /etc/ssh/x.conf")
+        return "second time lucky"
+
+    monkeypatch.setattr(type(wm), "_run_git", flaky)
+    monkeypatch.setattr(type(wm), "_RETRY_AFTER", 0.01)
+    assert await wm._git("fetch", "origin") == "second time lucky"
+    assert len(attempts) == 2
+
+
+async def test_a_refusal_is_not_retried(wm, monkeypatch):
+    attempts = []
+
+    async def refusing(self, *args, **kw):
+        attempts.append(args)
+        raise RepoUnreadable("git fetch failed: Permission denied (publickey)")
+
+    monkeypatch.setattr(type(wm), "_run_git", refusing)
+    monkeypatch.setattr(type(wm), "_RETRY_AFTER", 0.01)
+    with pytest.raises(RepoUnreadable):
+        await wm._git("fetch", "origin")
+    assert len(attempts) == 1, "asked twice for an answer that cannot change"
+
+
+async def test_a_failure_that_survives_both_goes_is_reported(wm, monkeypatch):
+    attempts = []
+
+    async def always(self, *args, **kw):
+        attempts.append(args)
+        raise RepoUnreadable("git fetch failed: Bad owner or permissions on /etc/ssh/x.conf")
+
+    monkeypatch.setattr(type(wm), "_run_git", always)
+    monkeypatch.setattr(type(wm), "_RETRY_AFTER", 0.01)
+    with pytest.raises(RepoUnreadable):
+        await wm._git("fetch", "origin")
+    assert len(attempts) == 2
