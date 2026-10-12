@@ -57,6 +57,36 @@ Both drive the real application too. Regenerate them when a screen changes rathe
 the difference in prose — [how they are made](docs/testing/documentation-pictures.md) covers
 editing a clip, and the flags for slowing one down while you work on it.
 
+## Who can read it
+
+A thing is not explained if some of the people reading cannot get at it. The faults that keep
+turning up here are all the same shape — information carried in a form that only works for one
+kind of reader — so they are worth naming rather than rediscovering:
+
+- **Words belong in text, not in pixels.** A caption drawn into a picture cannot be translated,
+  searched, copied, enlarged, or read aloud, and it takes a re-render to fix a typo. The clips'
+  narration is prose above them for exactly this reason, and a test keeps the two in step.
+- **Motion has to be followable.** Something small crossing the screen quickly is noticed after it
+  has arrived, which is no use to a reader working out where a control is. The pointer in a clip
+  starts large, starts where the eye already is, and travels slowly on purpose.
+- **A large change in brightness is not free.** A page of light theme autoplaying at full strength
+  is hard on eyes that are sensitive to it. `dim=` on a clip turns the picture down; it stays the
+  product's own, at a lower setting.
+- **Never say it with colour alone.** Every state that is coloured also carries a mark — `✓` and
+  `✓!` and `○` for a file's reading state, `▸` and `⟳` for what is owed. Colour is the faster read
+  for people who get it, and the mark is what is left for everyone else.
+- **Hover is not a way to reach something.** It has no keyboard and no touch, so anything only
+  reachable by pointing is unreachable for some readers. Where that is still true it is a known
+  gap, not a decision — see the open question under *What the `?` cannot reach*, below.
+
+**What the `?` cannot reach.** The in-tool help is bound to `mouseover`, so a reader who does not
+use a mouse gets no explanation at all — and the clips in the documentation are GIFs, which
+autoplay and loop with nothing to pause them. Both are known, neither is fixed, and both are the
+kind of gap that is easy to leave alone because the people it stops do not file bugs.
+
+None of this is a checklist to pass. It is a list of mistakes already made here, written down so
+the next one is a new one.
+
 ## Dependencies
 
 `uv.lock` pins what a checkout gets. It does **not** pin what an install gets: `uv tool install`
