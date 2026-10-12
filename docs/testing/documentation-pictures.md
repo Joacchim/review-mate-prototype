@@ -29,11 +29,16 @@ def _marking_read(c):
     c.hold("A tick goes grey if the author changes that file again")
 ```
 
+`say` and `hold` are the clip's words, and they are **not drawn on it**. A caption burned into the
+picture is unreadable at the size a reader scrolls past, cannot be searched or translated, and
+needs a re-record to fix a typo — so they pace the clip and are printed after a run, to go above it
+as a numbered list. A test checks the documentation still says them.
+
 - **`asks`** is the question it answers, in the reader's words. Writing it first is what keeps a
   clip from becoming a tour of the screen.
 - **`shows`** must be on screen at the last frame. Without it a clip that silently stopped working
   still writes a file, and a file is what the documentation trusts.
-- **`c.say`** puts a line on screen, **`c.click`** moves a pointer there and presses it,
+- **`c.say`** is a step in words, **`c.click`** moves a pointer there and presses it,
   **`c.type`** writes, **`c.drag_lines`** marks a range, **`c.beat`** waits, **`c.hold`** ends.
 
 Every wait is counted in beats rather than milliseconds, and `--speed` multiplies all of them at
@@ -63,3 +68,7 @@ ones, because every keystroke is a frame no decimator can drop.
 
 `--width` and `--fps` are the two levers if the total needs to come down; legibility is what they
 spend, so check a frame before taking either far.
+
+`dim=` on a clip takes its brightness down a little. For one that is mostly a full page of light
+theme, which glares when it autoplays in a document — the picture is still the product's, only
+turned down the way a screen is.

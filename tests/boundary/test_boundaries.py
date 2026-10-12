@@ -122,3 +122,22 @@ def test_every_clip_the_tool_records_answers_a_question():
     recorded = {p.stem for p in (CORE.parent / "docs" / "images" / "clips").glob("*.gif")}
     assert {name for name, _ in registered} == recorded, (
         "the tool and the recordings disagree about which clips exist — rerun tools/clips.py")
+
+
+def test_the_steps_a_clip_performs_are_written_above_it():
+    """A clip's words are prose in the documentation, not pixels burned into the picture — so they
+    can be read at any size, searched, copied and translated, and a typo fixed without recording
+    anything again.
+
+    Which leaves them free to drift from the clip that performs them, and a numbered list that no
+    longer matches what the reader is watching is worse than none. `tools/clips.py` prints these
+    after a run; this is what makes keeping them in step mechanical rather than remembered.
+    """
+    source = (CORE.parent / "tools" / "clips.py").read_text()
+    features = (CORE.parent / "docs" / "features.md").read_text()
+    # each clip's own say()/hold() lines, in the order the script performs them
+    for block in re.split(r"@clip\(", source)[1:]:
+        name = re.match(r'\s*"([\w.-]+)"', block).group(1)
+        said = re.findall(r'c\.(?:say|hold)\("([^"]+)"\)', block.split("\n@clip(")[0])
+        missing = [line for line in said if line not in features]
+        assert not missing, f"{name}: performed but not written above the clip: {missing}"

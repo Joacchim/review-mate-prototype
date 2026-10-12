@@ -42,8 +42,9 @@ CLIPS_DIR = IMAGES / "clips"
 # One beat is the unit everything else is written in, so a clip reads as "wait a moment" rather
 # than as a pile of millisecond constants nobody dares change. `--speed` scales the lot.
 BEAT_MS = 420
-MOVE_MS = 520          # the pointer travelling to what it is about to press
-CLICK_MS = 260         # after a press, before the next thing — the UI has to be seen reacting
+MOVE_MS = 950          # the pointer travelling — slow enough to be followed, which is
+                       # the whole job of drawing one
+CLICK_MS = 360         # after a press, before the next thing — the UI has to be seen reacting
 TYPE_MS = 55           # per character
 READ_MS = 950          # a caption's own time, before whatever it introduces happens
 HOLD_MS = 1900         # the last frame, so the result is actually looked at
@@ -56,7 +57,7 @@ COLORS = 64            # a UI is flat colour, so a palette this size costs nothi
 CLIPS: list = []
 
 
-def clip(name: str, asks: str, shows: str):
+def clip(name: str, asks: str, shows: str, dim: float = 0.0):
     """Register a clip.
 
     `asks` is the question it answers, in the reader's words — it becomes the caption in the docs,
@@ -65,9 +66,13 @@ def clip(name: str, asks: str, shows: str):
     `shows` is a selector that must be on screen when the last frame is taken. Without it a clip
     that silently stopped working still produces a file, and a file is what the documentation
     trusts.
+
+    `dim` takes the brightness down a little, for a clip that is mostly a white screen. A full
+    page of light theme at full strength is unpleasant to have autoplay in a document, and the
+    picture is still the product's — only turned down, the way a screen is.
     """
     def register(fn):
-        CLIPS.append((name, asks, shows, fn))
+        CLIPS.append((name, asks, shows, dim, fn))
         return fn
     return register
 
@@ -80,40 +85,34 @@ _OVERLAY_JS = """
   const layer = document.createElement('div');
   layer.id = '__clipui';
   layer.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none';
+  // Starts in the middle of the screen rather than a corner: a pointer that enters from off-frame
+  // is already moving by the time it is noticed, and the first gesture of a clip is the one most
+  // worth following.
   layer.innerHTML = `
-    <div id="__caption" style="
-      position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(8px);
-      max-width:78%;padding:9px 16px;border-radius:9px;opacity:0;
-      background:rgba(14,16,22,.93);color:#f2f4f8;
-      font:500 15px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;
-      box-shadow:0 6px 24px rgba(0,0,0,.4);transition:opacity .22s,transform .22s"></div>
     <div id="__cursor" style="
-      position:fixed;left:0;top:0;width:19px;height:19px;border-radius:50%;
-      background:rgba(229,72,77,.32);border:2px solid #e5484d;
-      transform:translate(-50%,-50%);opacity:0;
-      transition:left .5s cubic-bezier(.4,.1,.2,1),top .5s cubic-bezier(.4,.1,.2,1),opacity .2s"></div>`;
+      position:fixed;left:50vw;top:50vh;width:22px;height:22px;border-radius:50%;
+      background:rgba(229,72,77,.3);border:2.5px solid #e5484d;
+      box-shadow:0 0 0 4px rgba(229,72,77,.14), 0 2px 10px rgba(0,0,0,.3);
+      transform:translate(-50%,-50%) scale(2.4);opacity:0;
+      transition:left MOVEms cubic-bezier(.33,.02,.2,1),top MOVEms cubic-bezier(.33,.02,.2,1),
+                 transform .45s ease-out,opacity .3s"></div>`;
   document.body.appendChild(layer);
 }
 """
 
-_SAY_JS = """
-(text) => {
-  const c = document.getElementById('__caption');
-  if (!c) return;
-  if (!text) { c.style.opacity = '0'; c.style.transform = 'translateX(-50%) translateY(8px)'; return; }
-  c.textContent = text;
-  c.style.opacity = '1';
-  c.style.transform = 'translateX(-50%) translateY(0)';
-}
-"""
-
+# Grows as it sets off and settles as it arrives, so where it is going is legible before it gets
+# there — a dot of constant size crossing a screenshot reads as a speck of dust.
 _POINT_JS = """
 ([x, y]) => {
   const cur = document.getElementById('__cursor');
   if (!cur) return;
   cur.style.opacity = '1';
-  cur.style.left = x + 'px';
-  cur.style.top = y + 'px';
+  cur.style.transform = 'translate(-50%,-50%) scale(2.4)';
+  requestAnimationFrame(() => {
+    cur.style.left = x + 'px';
+    cur.style.top = y + 'px';
+    setTimeout(() => { cur.style.transform = 'translate(-50%,-50%) scale(1)'; }, 90);
+  });
 }
 """
 
@@ -124,14 +123,14 @@ _PRESS_JS = """
   if (!cur) return;
   const ring = document.createElement('div');
   ring.style.cssText =
-    `position:fixed;left:${cur.style.left};top:${cur.style.top};width:19px;height:19px;` +
-    'border-radius:50%;border:2px solid #e5484d;transform:translate(-50%,-50%);' +
-    'transition:width .34s,height .34s,opacity .34s;opacity:.85';
+    `position:fixed;left:${cur.style.left};top:${cur.style.top};width:22px;height:22px;` +
+    'border-radius:50%;border:2.5px solid #e5484d;transform:translate(-50%,-50%);' +
+    'transition:width .42s,height .42s,opacity .42s;opacity:.9';
   document.getElementById('__clipui').appendChild(ring);
   requestAnimationFrame(() => {
-    ring.style.width = '52px'; ring.style.height = '52px'; ring.style.opacity = '0';
+    ring.style.width = '64px'; ring.style.height = '64px'; ring.style.opacity = '0';
   });
-  setTimeout(() => ring.remove(), 420);
+  setTimeout(() => ring.remove(), 500);
 }
 """
 
@@ -148,6 +147,7 @@ class Cue:
         self.base = base
         self._stage = stage
         self.speed = speed
+        self.steps: list[str] = []      # what `say` would have shown, for the prose above the clip
 
     # --- setting the scene ---
     def stage(self, state):
@@ -156,24 +156,32 @@ class Cue:
     def open(self, session: str = "s1", params: str = "") -> None:
         self.page.goto(f"{self.base}/?s={session}{params}")
         self.page.wait_for_selector("table.hunk tr, .land", timeout=15000)
-        self.page.evaluate(_OVERLAY_JS)
+        self._overlay()
         self._wait(BEAT_MS)
+
+    def _overlay(self) -> None:
+        """The pointer, with its travel time matched to the clip's. `--speed` slows the gesture as
+        well as the pauses, or a slowed-down clip is the same dart between longer silences."""
+        self.page.evaluate(_OVERLAY_JS.replace("MOVEms", f"{MOVE_MS * self.speed / 1000:.2f}s"))
 
     def land(self) -> None:
         """The landing page rather than a review — where finding something to read starts."""
         self.page.goto(self.base)
         self.page.wait_for_selector(".land", timeout=15000)
-        self.page.evaluate(_OVERLAY_JS)
+        self._overlay()
         self._wait(BEAT_MS)
 
     # --- what the reader is told ---
     def say(self, text: str) -> None:
-        self.page.evaluate(_SAY_JS, text)
-        self._wait(READ_MS + 26 * len(text))      # long lines get the time to be read
+        """A step, in words. Not drawn on the clip.
 
-    def quiet(self) -> None:
-        self.page.evaluate(_SAY_JS, "")
-        self._wait(BEAT_MS // 2)
+        A caption burned into the picture is unreadable at the size a reader scrolls past, cannot
+        be copied, searched or translated, and has to be re-recorded to fix a typo. So the words
+        go above the clip as prose and this only paces it — the pause a caption needed to be read
+        is the pause that makes the gesture after it legible.
+        """
+        self.steps.append(text)
+        self._wait(READ_MS + 26 * len(text))
 
     # --- what the reader is shown ---
     def click(self, selector: str, nth: int = 0) -> None:
@@ -231,8 +239,9 @@ class Cue:
         self._wait(BEAT_MS * n)
 
     def hold(self, text: str | None = None) -> None:
+        """The last frame, held long enough to be looked at. Its text is a step like any other."""
         if text:
-            self.page.evaluate(_SAY_JS, text)
+            self.steps.append(text)
         self._wait(HOLD_MS + (26 * len(text) if text else 0))
 
     def _wait(self, ms: float) -> None:
@@ -353,7 +362,8 @@ def _self_review(c):
     c.hold("…and what you asked for is marked as it lands")
 
 
-@clip("theme", asks="How do I switch between light and dark?", shows="#t-theme")
+@clip("theme", asks="How do I switch between light and dark?", shows="#t-theme",
+      dim=0.07)   # most of this one is a full page of light theme, which glares
 def _theme(c):
     c.stage(showcase())
     c.open()
@@ -379,7 +389,7 @@ def _help(c):
 
 # --- recording ----------------------------------------------------------------
 
-def _to_gif(webm: Path, gif: Path, fps: int, width: int) -> None:
+def _to_gif(webm: Path, gif: Path, fps: int, width: int, dim: float = 0.0) -> None:
     """webm out of the browser, GIF into the documentation.
 
     GIF because that is what renders inline wherever the docs are read — a merge request, a
@@ -397,7 +407,8 @@ def _to_gif(webm: Path, gif: Path, fps: int, width: int) -> None:
     #
     # `final_delay` because the last frame has no following gap to stretch into, so without it the
     # closing shot flashes past and the loop restarts on top of the thing it was meant to show.
-    chain = (f"fps={fps},mpdecimate=hi=5000:lo=2000:frac=0.002,"
+    soften = f"eq=brightness=-{dim:.3f}," if dim else ""
+    chain = (f"{soften}fps={fps},mpdecimate=hi=5000:lo=2000:frac=0.002,"
              f"scale={width}:-1:flags=lanczos,split[a][b];"
              f"[a]palettegen=max_colors={COLORS}:stats_mode=diff[p];"
              f"[b][p]paletteuse=dither=none")
@@ -425,7 +436,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.list:
-        for name, asks, _, _ in CLIPS:
+        for name, asks, _, _, _ in CLIPS:
             print(f"  {name:<14} {asks}")
         return 0
 
@@ -438,12 +449,13 @@ def main() -> int:
 
     with serving() as (base, stage), sync_playwright() as pw:
         browser = pw.chromium.launch()
-        for name, asks, shows, script in chosen:
+        for name, asks, shows, dim, script in chosen:
             context = browser.new_context(viewport=size, record_video_dir=str(raw),
                                           record_video_size=size)
             page = context.new_page()
+            cue = Cue(page, base, stage, args.speed)
             try:
-                script(Cue(page, base, stage, args.speed))
+                script(cue)
                 if not page.locator(shows).first.is_visible():
                     raise SystemExit(
                         f"{name}: nothing matching {shows!r} is on screen at the end, so the clip "
@@ -452,17 +464,26 @@ def main() -> int:
             finally:
                 context.close()          # the recording is only written out here
             gif = CLIPS_DIR / f"{name}.gif"
-            _to_gif(source, gif, args.fps, args.width)
+            _to_gif(source, gif, args.fps, args.width, dim)
             if args.keep_webm:
                 shutil.copy(source, CLIPS_DIR / f"{name}.webm")
             source.unlink(missing_ok=True)
-            written.append((name, asks, gif.stat().st_size))
+            written.append((name, asks, gif.stat().st_size, list(cue.steps)))
         browser.close()
     shutil.rmtree(raw, ignore_errors=True)
 
-    for name, asks, size_bytes in written:
+    for name, asks, size_bytes, _ in written:
         print(f"  docs/images/clips/{name}.gif  {size_bytes // 1024:>5} kB  — {asks}")
     print(f"{len(written)} clips written to {CLIPS_DIR}")
+
+    # The steps are the clip's own words and they belong above it, in prose a reader can search,
+    # copy and translate. Printed rather than written into the documentation: where they go is a
+    # judgement about the section they land in, and a tool that edits prose gets that wrong.
+    print("\nSteps, for the prose above each clip — a test checks the documentation still says them:")
+    for name, _, _, steps in written:
+        print(f"\n  {name}")
+        for n, step in enumerate(steps, 1):
+            print(f"    {n}. {step}")
     return 0
 
 

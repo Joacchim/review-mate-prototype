@@ -16,10 +16,11 @@ nobody filmed.
 
 **How do I switch between light and dark?**
 
+1. One control, and it is remembered on this machine
+
 ![How do I switch between light and dark?](images/clips/theme.gif)
 
-The choice is remembered on this machine, so it survives a reload and applies to every review you
-open.
+It survives a reload and applies to every review you open.
 
 ![The dark theme](images/dark.png)
 
@@ -29,6 +30,10 @@ The next picture is this same page in the light theme, and everything after it i
 
 **How do I find out what something on screen does?**
 
+1. Turn the question mark on…
+2. …then point at whatever you are unsure of
+3. Press it again, or Escape, to put them away
+
 ![How do I find out what something on screen does?](images/clips/help.gif)
 
 It is a mode, not a tour. The question someone has is about the thing in front of them, and a
@@ -37,6 +42,10 @@ walkthrough answers in its own order instead — so this one waits to be pointed
 ## Finding something to review
 
 **How do I find something to review?**
+
+1. What is waiting on you is already here
+2. Anything else is found by name
+3. Track flags one for later without leaving the list
 
 ![How do I find something to review?](images/clips/finding.gif)
 
@@ -70,6 +79,11 @@ answer you are reading.
 
 **How do I read the change?**
 
+1. Pick a file on the left
+2. Open the lines a hunk left out
+3. Side by side, when a rewrite reads better that way
+4. The same change, laid out to suit it
+
 ![How do I read the change?](images/clips/reading.gif)
 
 A change is read in three panels, side by side.
@@ -102,6 +116,9 @@ is why it is a control rather than a setting.
 ![Side by side](images/side-by-side.png)
 
 **One commit at a time.** Usually how work that arrived in several passes is easiest to follow.
+
+1. Step through the change the way it was written
+2. Oldest first, and lines a later commit writes over are marked as you read
 
 ![How do I read a change one commit at a time?](images/clips/per-commit.gif)
 
@@ -142,6 +159,10 @@ new files.
 **Files you have finished with.** Separate from the baseline above: that is one point in the
 change's history, this is a record of where you have got to.
 
+1. Mark a file read when you are done with it
+2. The tree ticks it, and the count says how far through you are
+3. A tick goes grey if the author changes that file again
+
 ![How do I keep track of what I have already read?](images/clips/marking-read.gif)
 
 ![Working through a change file by file](images/reviewed-files.png)
@@ -163,12 +184,16 @@ which file it is.
 
 **How do I ask Claude about a line?**
 
+1. Drag across the lines you are unsure about
+2. Marking collects them — it asks nobody anything yet
+3. Open the row, and ask
+4. The answer arrives on this subject, where you asked
+
 ![How do I ask Claude about a line?](images/clips/asking.gif)
 
-Marking a range collects it. Nobody is told anything yet — asking is the next step and a separate
-one, which is what lets you mark freely while you read.
+Marking freely while you read is the point of the two being separate steps.
 
-What the host already knows arrives with it: who last touched those lines, and any issue that
+What the host already knows arrives with a mark: who last touched those lines, and any issue that
 references them. Nothing was asked of anyone to get that.
 
 ![A card on a highlight, and the chat beneath it](images/claude-channel.png)
@@ -216,14 +241,18 @@ the first time.
 
 **How do I write a review comment?**
 
+1. The Review tab is the comment you are preparing
+2. Save keeps it; nothing is sent one comment at a time
+3. They go together when you send the review
+
 ![How do I write a review comment?](images/clips/writing.gif)
 
 ![The comment you are preparing](images/review-channel.png)
 
 > ① the comment, editable until you send it · ② who will see it, once you do
 
-Nothing reaches the forge as you write. You prepare the whole review, read it back, and send it in
-one go — which is what makes it a review rather than a running commentary.
+Preparing the whole thing, reading it back and sending it in one go is what makes it a review
+rather than a running commentary.
 
 ![What is written, what is sent](images/review-state.png)
 
@@ -246,6 +275,10 @@ thread to the line it is anchored to, reply, resolve, and edit or delete your ow
 ## Reviewing your own work first
 
 **How do I review my own branch before anyone sees it?**
+
+1. A branch on this machine reads the same way
+2. There is no merge request, so comments go to Claude instead
+3. …and what you asked for is marked as it lands
 
 ![How do I review my own branch before anyone sees it?](images/clips/self-review.gif)
 
