@@ -172,3 +172,5 @@ other's. Failure artifacts upload on red.
 
 Browser jobs are the slowest thing in the repo — if the matrix stops being tolerable, shard before
 dropping a browser. A Firefox-only regression found a day later costs more than the minutes saved.
+
+The pictures in `docs/features.md` are generated too — see [the documentation pictures](documentation-pictures.md).

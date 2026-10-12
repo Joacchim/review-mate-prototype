@@ -4,6 +4,7 @@ AC-12: the core carries no host/MCP/workspace/UI logic — those attach only thr
 AC-13: SessionState exposes exactly the design's contract document set.
 """
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -94,3 +95,30 @@ def test_the_agent_seam_pins_a_major_it_has_been_built_against():
     declared = re.findall(r'"(mcp[^"]*)"', pyproject)
     assert declared, "the mcp dependency is no longer declared under this name"
     assert any("<" in spec for spec in declared), f"mcp is unbounded above: {declared}"
+
+
+def test_every_clip_is_shown_and_every_clip_shown_exists():
+    """The clips answer "how do I do X?" and the documentation is where they are asked.
+
+    Both directions, because each fails silently on its own. A clip nothing links to was recorded
+    for nobody and still costs the repository its weight; a link to a clip that is not there
+    renders as a broken image under a heading promising to show you how.
+    """
+    docs = CORE.parent / "docs"
+    shown = set(re.findall(r"images/clips/([\w.-]+)\.gif", (docs / "features.md").read_text()))
+    recorded = {path.stem for path in (docs / "images" / "clips").glob("*.gif")}
+    assert not recorded - shown, f"recorded and never shown: {sorted(recorded - shown)}"
+    assert not shown - recorded, f"shown but never recorded: {sorted(shown - recorded)}"
+
+
+def test_every_clip_the_tool_records_answers_a_question():
+    """`asks` is the clip's reason to exist, in the reader's words. Writing it first is what keeps
+    a clip from drifting into a tour of the screen, so an empty one is a clip without a subject."""
+    source = (CORE.parent / "tools" / "clips.py").read_text()
+    registered = re.findall(r'@clip\(\s*"([\w.-]+)",\s*asks="([^"]*)"', source)
+    assert registered, "no clips are registered — the tool's own list has moved"
+    for name, asks in registered:
+        assert asks.strip().endswith("?"), f"{name}: {asks!r} is not a question a reader asks"
+    recorded = {p.stem for p in (CORE.parent / "docs" / "images" / "clips").glob("*.gif")}
+    assert {name for name, _ in registered} == recorded, (
+        "the tool and the recordings disagree about which clips exist — rerun tools/clips.py")
