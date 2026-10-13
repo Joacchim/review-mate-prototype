@@ -141,3 +141,35 @@ def test_the_steps_a_clip_performs_are_written_above_it():
         said = re.findall(r'c\.(?:say|hold)\("([^"]+)"\)', block.split("\n@clip(")[0])
         missing = [line for line in said if line not in features]
         assert not missing, f"{name}: performed but not written above the clip: {missing}"
+
+
+def test_every_step_still_is_shown_and_every_one_shown_exists():
+    """The clips play at the speed of somebody who already knows the answer. The stills are the
+    same steps standing still, for a reader following along — and for one who cannot watch a
+    moving picture at all, which is the half that makes them more than a convenience.
+
+    Both directions, as with the clips themselves: a still nothing links to was recorded for
+    nobody, and a link to one that is not there renders as a broken image inside a section that
+    offered to explain the step.
+    """
+    docs = CORE.parent / "docs"
+    features = (docs / "features.md").read_text()
+    shown = set(re.findall(r"images/clips/([\w.-]+)/(\d+)\.png", features))
+    on_disk = {(d.name, p.stem) for d in (docs / "images" / "clips").iterdir() if d.is_dir()
+               for p in d.glob("*.png")}
+    assert not on_disk - shown, f"recorded and never shown: {sorted(on_disk - shown)}"
+    assert not shown - on_disk, f"shown but never recorded: {sorted(shown - on_disk)}"
+
+
+def test_a_step_still_is_numbered_for_the_step_it_shows():
+    """The stills are numbered by step, not by position, so a step that changes nothing leaves a
+    gap rather than shifting everything after it onto the wrong words."""
+    docs = CORE.parent / "docs"
+    source = (CORE.parent / "tools" / "clips.py").read_text()
+    for block in re.split(r"@clip\(", source)[1:]:
+        name = re.match(r'\s*"([\w.-]+)"', block).group(1)
+        said = re.findall(r'c\.(?:say|hold)\("([^"]+)"\)', block.split("\n@clip(")[0])
+        folder = docs / "images" / "clips" / name
+        numbers = sorted(int(p.stem) for p in folder.glob("*.png")) if folder.exists() else []
+        assert all(1 <= n <= len(said) for n in numbers), (
+            f"{name}: stills {numbers} for {len(said)} steps — a reader would follow the wrong words")

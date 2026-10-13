@@ -148,6 +148,9 @@ class Cue:
         self._stage = stage
         self.speed = speed
         self.steps: list[str] = []      # what `say` would have shown, for the prose above the clip
+        self._frames: Path | None = None   # where this clip's step stills go, if any are wanted
+        self._pending = False              # a step is open and has not had its picture taken
+        self._last_shot: bytes | None = None   # so a step that changed nothing writes nothing
 
     # --- setting the scene ---
     def stage(self, state):
@@ -180,7 +183,9 @@ class Cue:
         go above the clip as prose and this only paces it — the pause a caption needed to be read
         is the pause that makes the gesture after it legible.
         """
+        self._capture()                 # the step that was running, now that it has finished
         self.steps.append(text)
+        self._pending = True
         self._wait(READ_MS + 26 * len(text))
 
     # --- what the reader is shown ---
@@ -241,11 +246,41 @@ class Cue:
     def hold(self, text: str | None = None) -> None:
         """The last frame, held long enough to be looked at. Its text is a step like any other."""
         if text:
+            self._capture()
             self.steps.append(text)
+            self._pending = True
         self._wait(HOLD_MS + (26 * len(text) if text else 0))
 
     def _wait(self, ms: float) -> None:
         self.page.wait_for_timeout(ms * self.speed)
+
+    # --- the same steps, standing still ---------------------------------------
+    # A clip answers "how do I" at the speed of someone who already knows. Somebody following
+    # along needs to stop on a step, and a reader who cannot watch a moving picture at all needs
+    # it to exist in another form — so each step is also a frame, taken from this same run rather
+    # than from a second script that would drift from it.
+
+    def _capture(self) -> None:
+        """One still for the step that has just finished, named by its number.
+
+        Not written when it would be the same picture as the step before. A step that is a remark
+        rather than an action — "they go together when you send the review" — changes nothing on
+        screen, and a second copy of the previous picture under a new number tells a reader
+        following along that they missed something.
+        """
+        if not (self._frames and self._pending):
+            return
+        self._pending = False
+        shot = self.page.screenshot()
+        if shot == self._last_shot:
+            return
+        self._last_shot = shot
+        self._frames.mkdir(parents=True, exist_ok=True)
+        (self._frames / f"{len(self.steps)}.png").write_bytes(shot)
+
+    def finish(self) -> None:
+        """Take the last step's picture. The runner calls this; a clip never has to remember."""
+        self._capture()
 
 
 # --- the clips ----------------------------------------------------------------
@@ -433,6 +468,8 @@ def main() -> int:
     parser.add_argument("--list", action="store_true", help="what exists, and what each answers")
     parser.add_argument("--keep-webm", action="store_true",
                         help="leave the raw recording beside the gif, for a closer look")
+    parser.add_argument("--no-frames", action="store_true",
+                        help="skip the per-step stills — faster, while working on the motion")
     args = parser.parse_args()
 
     if args.list:
@@ -454,8 +491,13 @@ def main() -> int:
                                           record_video_size=size)
             page = context.new_page()
             cue = Cue(page, base, stage, args.speed)
+            frames = CLIPS_DIR / name
+            if not args.no_frames:
+                shutil.rmtree(frames, ignore_errors=True)   # a renumbered clip leaves no orphans
+                cue._frames = frames
             try:
                 script(cue)
+                cue.finish()
                 if not page.locator(shows).first.is_visible():
                     raise SystemExit(
                         f"{name}: nothing matching {shows!r} is on screen at the end, so the clip "
@@ -468,19 +510,24 @@ def main() -> int:
             if args.keep_webm:
                 shutil.copy(source, CLIPS_DIR / f"{name}.webm")
             source.unlink(missing_ok=True)
-            written.append((name, asks, gif.stat().st_size, list(cue.steps)))
+            shots = sorted(frames.glob("*.png")) if frames.exists() else []
+            written.append((name, asks, gif.stat().st_size, list(cue.steps), len(shots)))
         browser.close()
     shutil.rmtree(raw, ignore_errors=True)
 
-    for name, asks, size_bytes, _ in written:
-        print(f"  docs/images/clips/{name}.gif  {size_bytes // 1024:>5} kB  — {asks}")
+    for name, asks, size_bytes, steps, shots in written:
+        print(f"  docs/images/clips/{name}.gif  {size_bytes // 1024:>5} kB  "
+              f"{shots} step stills  — {asks}")
+        if shots > len(steps):
+            raise SystemExit(f"{name}: {shots} stills for {len(steps)} steps — a reader following "
+                             f"along would run out of words before they ran out of pictures")
     print(f"{len(written)} clips written to {CLIPS_DIR}")
 
     # The steps are the clip's own words and they belong above it, in prose a reader can search,
     # copy and translate. Printed rather than written into the documentation: where they go is a
     # judgement about the section they land in, and a tool that edits prose gets that wrong.
     print("\nSteps, for the prose above each clip — a test checks the documentation still says them:")
-    for name, _, _, steps in written:
+    for name, _, _, steps, _ in written:
         print(f"\n  {name}")
         for n, step in enumerate(steps, 1):
             print(f"    {n}. {step}")

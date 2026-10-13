@@ -29,6 +29,13 @@ def _marking_read(c):
     c.hold("A tick goes grey if the author changes that file again")
 ```
 
+Each step is also photographed. The clip plays at the speed of somebody who already knows the
+answer; the stills are the same steps standing still, in a folded section under the clip, for a
+reader following along — and for one who cannot watch a moving picture at all, which is the half
+that makes them more than a convenience. They come from the same run, so they cannot drift from
+the clip, and a step that changes nothing on screen writes no still rather than a second copy of
+the one before. `--no-frames` skips them while you are working on the motion.
+
 `say` and `hold` are the clip's words, and they are **not drawn on it**. A caption burned into the
 picture is unreadable at the size a reader scrolls past, cannot be searched or translated, and
 needs a re-record to fix a typo — so they pace the clip and are printed after a run, to go above it
