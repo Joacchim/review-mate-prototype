@@ -2666,7 +2666,14 @@ function detailSubject() {
 // A thread came from the MR, so it opens where it already lives — unless something has been asked
 // about it here. Everything else opens on Claude, which is where its card is.
 function defaultDetailTab(subject) {
-  return subject.kind === "thread" && !conversationMessages(selected).length ? "host" : "claude";
+  // Where this subject's conversation already is. A discussion from the merge request opens on
+  // the merge request's side, and so does a comment of your own that has been posted — it became
+  // one of those discussions, and the replies to it land there rather than in the private channel.
+  // Opening Claude for a posted comment offered an empty page beside a conversation in progress.
+  //
+  // Unless you have asked Claude something about this subject, in which case that is the thing
+  // you came back for.
+  return hostThread(subject) && !conversationMessages(selected).length ? "host" : "claude";
 }
 
 function detailHead(subject, close) {

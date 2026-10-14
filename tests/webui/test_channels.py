@@ -5,6 +5,8 @@ channel is a session command only the reviewer sees, and the review channel is w
 host for everyone. They differ in authorship, durability and write path, so the tests that matter
 here are the ones that prove a message typed in one cannot leave by the other.
 """
+import re
+
 import pytest
 from playwright.sync_api import expect
 
@@ -236,3 +238,51 @@ def test_a_subject_with_no_check_is_not_marked(diff, annotations, staged):
     staged.put(review_with_highlights("s1"))
     diff.load("s1")
     expect(annotations.index_rows.first.locator(".owed")).to_have_count(0)
+
+
+# --- which channel a subject opens on ---------------------------------------
+# Where the conversation already is. A discussion from the merge request opens on the merge
+# request's side; so does a comment of your own that has been posted, because it became one of
+# those discussions and the replies land there.
+
+def _posted_with_thread(session_id="s1", highlight_id="h1", said="the retry never sleeps"):
+    from review_mate.session.state import (DraftComment, DraftStatus, ReviewThread, ThreadComment)
+    state = review_with_highlights(session_id)
+    state.drafts = [DraftComment(id="d1", highlight_id=highlight_id, body=said,
+                                 status=DraftStatus.POSTED, thread_id="t1")]
+    state.threads = [ReviewThread(id="t1", anchor={"file": "scheduler/capacity.py", "line": 45},
+                                 comments=[ThreadComment(id="c1", author="me", body=said),
+                                           ThreadComment(id="c2", author="jsmith",
+                                                         body="good catch, fixing")])]
+    return state
+
+
+def test_a_posted_comment_opens_where_the_replies_are(diff, annotations, detail, staged):
+    """It became a discussion on the merge request. Opening the private channel offered an empty
+    page beside a conversation already in progress."""
+    staged.put(_posted_with_thread())
+    diff.load("s1")
+    annotations.index_rows.first.click()
+    expect(detail.tab("Review")).to_have_class(re.compile(r"\bon\b"))
+    expect(detail.panel).to_contain_text("good catch, fixing")
+
+
+def test_a_comment_not_yet_posted_still_opens_on_claude(diff, annotations, detail, staged):
+    """Nothing has been posted, so there is no conversation on the other side to go to — and the
+    context you asked for is on this one."""
+    staged.put(review_with_highlights("s1"))
+    diff.load("s1")
+    annotations.index_rows.first.click()
+    expect(detail.tab("Claude")).to_have_class(re.compile(r"\bon\b"))
+
+
+def test_asking_claude_about_it_wins(diff, annotations, detail, staged):
+    """A question of your own is what you came back for, even once the comment has gone."""
+    state = _posted_with_thread()
+    from review_mate.session.state import ChatMessage, Subject, SubjectKind
+    state.messages = [ChatMessage(id="m1", role="user", body="is this the only caller?",
+                                  anchor=Subject(kind=SubjectKind.HIGHLIGHT, id="h1"))]
+    staged.put(state)
+    diff.load("s1")
+    annotations.index_rows.first.click()
+    expect(detail.tab("Claude")).to_have_class(re.compile(r"\bon\b"))
