@@ -563,3 +563,33 @@ def test_unmuting_brings_them_back(diff, threads, staged, page):
     page.locator(".mutednote .btn", has_text="unmute everyone").click()
     expect(threads.row("moved to In Review")).to_be_visible()
     expect(page.locator(".mutednote")).to_have_count(0)
+
+
+def test_approving_with_nothing_else_to_send_is_a_thing_you_can_do(
+        diff, review, shell, staged, stub_host_writer):
+    """The case the bar was built around and then would not serve: a review you have read, have
+    nothing left to say about, and want to approve. The button below the checkbox reads the
+    checkbox, so ticking it has to redraw the button — it stayed disabled from the render that
+    drew it, and the one action available did nothing."""
+    staged.put(_approvable(two_file_review("s1")))      # no drafts: approving is the whole action
+    diff.load("s1")
+    expect(review.counts).to_contain_text("0 pending")
+    expect(review.submit).to_be_disabled()
+
+    review.approve.check()
+    expect(review.submit).to_be_enabled()
+    expect(review.submit).to_have_text("Approve MR")
+
+    review.submit.click()
+    expect(shell.status).to_contain_text("approved")
+    assert stub_host_writer.approved is True
+    assert stub_host_writer.posted == [], "nothing was pending, so nothing should have been posted"
+
+
+def test_unticking_it_puts_the_button_back(diff, review, staged):
+    staged.put(_approvable(two_file_review("s1")))
+    diff.load("s1")
+    review.approve.check()
+    expect(review.submit).to_be_enabled()
+    review.approve.uncheck()
+    expect(review.submit).to_be_disabled()

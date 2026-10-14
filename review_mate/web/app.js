@@ -3556,7 +3556,10 @@ function renderReviewBar(el) {
     tog.className = "approve-tog";
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.checked = approveToggle;
-    cb.onchange = (e) => { approveToggle = e.target.checked; };
+    // Re-render, because the button below reads this. Setting the flag alone left it disabled
+    // from the render that drew it, so ticking Approve on a review with nothing else pending
+    // changed a checkbox and nothing else — the one case where approving is the whole action.
+    cb.onchange = (e) => { approveToggle = e.target.checked; renderAnnotations(); };
     tog.appendChild(cb);
     tog.appendChild(document.createTextNode(" Approve MR"));
     bar.appendChild(tog);
