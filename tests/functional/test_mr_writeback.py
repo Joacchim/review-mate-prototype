@@ -9,7 +9,7 @@ from review_mate.host.gitlab import GitLabWriter
 from review_mate.contracts import MRRef
 from review_mate.writeback.service import Writeback
 from review_mate.session.manager import SessionManager
-from review_mate.session.commands import ApplyMRMetadata, AddHighlight
+from review_mate.session.commands import ApplyFiles, ApplyMRMetadata, AddHighlight
 from review_mate.session.state import MRMetadata, Side, LineRange, Origin
 
 
@@ -34,6 +34,36 @@ def calls():
 def writer(calls):
     return GitLabWriter(base_url="https://gitlab/api/v4", token="t",
                         capabilities=dict(GITLAB_CAPABILITIES), client=_client_recording(calls))
+
+
+@pytest.fixture
+async def writeback_at(tmp_path, calls, writer):
+    """Post a comment on one line of a staged file, and hand back the position that went out.
+
+    Through the real Writeback over a real session, because the old side is worked out from the
+    diff the session holds — a writer test alone would only prove the adapter passes on whatever
+    it is given.
+    """
+    from review_mate.session.state import SessionStatus
+
+    async def post(entry, line: int):
+        manager = SessionManager(root=tmp_path / "sessions")
+        sid = await manager.create()
+        session = manager.get(sid)
+        await session.submit(ApplyMRMetadata(
+            mr=MRMetadata(host="gitlab", project="g/p", iid=42, title="t", source_branch="x",
+                          target_branch="main", sha="headsha", author="a", url="u",
+                          diff_refs={"base_sha": "b", "head_sha": "headsha", "start_sha": "s"})),
+            Origin.SYSTEM)
+        await session.submit(ApplyFiles(files=[entry]), Origin.SYSTEM)
+        result = await session.submit(
+            AddHighlight(file=entry.path, side=Side.NEW,
+                         line_range=LineRange(start=line, end=line)), Origin.BROWSER)
+        hl = next(h for h in session.snapshot().highlights)
+        await Writeback(manager, writer).post_comment(sid, hl.id, "needs a guard", REF)
+        await manager.shutdown()
+        return calls[-1][3]["position"]
+    yield post
 
 
 def test_writer_satisfies_protocol(writer):  # AC-7
@@ -188,3 +218,47 @@ async def test_an_ordinary_comment_names_no_commit(session):
     spy = _PositionSpy()
     await Writeback(m, spy).post_comment(sid, hid, "about the change", REF)
     assert spy.positions[-1]["commit_sha"] is None
+
+
+# --- where a line was before the change ---------------------------------------
+# A forge identifies a line by both its sides. A comment anchored on a line the change did not
+# touch — which is most of what a reviewer marks when quoting the code around a problem — was
+# refused with a bare 400 while one on an added line went through.
+
+DIFF_BOTH = ("@@ -103,6 +110,8 @@ def authorise(token):\n"
+             "     if token is None:\n"
+             "         return None\n"
+             "+    if token.expired:\n"
+             "+        return None\n"
+             "     return lookup(token)\n")
+
+
+def _staged_file():
+    from review_mate.session.state import ChangeType, FileEntry
+    return FileEntry(path="vmproxy/api/auth.py", change_type=ChangeType.MODIFIED,
+                     hunks=[{"diff": DIFF_BOTH}])
+
+
+async def test_a_comment_on_an_unchanged_line_carries_where_it_was(writeback_at):
+    """Line 110 is context: unchanged, present on both sides. Without its old number the forge
+    cannot build a line identifier, and the comment is refused."""
+    position = await writeback_at(_staged_file(), line=110)
+    assert position["old_line"] == 103, position
+    assert position["old_path"] == "vmproxy/api/auth.py"
+
+
+async def test_a_comment_on_an_added_line_says_it_has_no_old_side(writeback_at):
+    """Line 112 is added — there is no old line, and claiming one would place the comment on
+    whatever happened to be there before."""
+    position = await writeback_at(_staged_file(), line=112)
+    assert "old_line" not in position, position
+    assert position["old_path"] == "vmproxy/api/auth.py"
+
+
+async def test_a_renamed_file_is_named_by_both_of_its_names(writeback_at):
+    """The old side of a position is read against the old path, which is a different name."""
+    from review_mate.session.state import ChangeType, FileEntry
+    moved = FileEntry(path="vmproxy/api/auth.py", old_path="vmproxy/auth.py",
+                      change_type=ChangeType.RENAMED, hunks=[{"diff": DIFF_BOTH}])
+    position = await writeback_at(moved, line=110)
+    assert position["old_path"] == "vmproxy/auth.py" and position["new_path"] == "vmproxy/api/auth.py"

@@ -503,8 +503,18 @@ class GitLabWriter:
 
 
 def _position(position: dict) -> dict:
+    """The position as GitLab wants it.
+
+    `old_path` and `old_line` are passed through when the caller could work them out. GitLab
+    identifies a line by both of its sides, so for one the change did not touch it cannot place a
+    comment from the new side alone — it answers 400 and says nothing useful about why.
+    """
     pos = {"position_type": "text", "new_path": position.get("new_path"),
            "new_line": position.get("new_line")}
+    if position.get("old_path"):
+        pos["old_path"] = position["old_path"]
+    if position.get("old_line") is not None:
+        pos["old_line"] = position["old_line"]
     for key in ("base_sha", "head_sha", "start_sha"):
         if position.get(key):
             pos[key] = position[key]

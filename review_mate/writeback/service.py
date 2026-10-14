@@ -7,9 +7,28 @@ comment lands exactly where the reviewer was looking.
 from __future__ import annotations
 
 from review_mate.contracts import MRRef
+from review_mate.view.diffdoc import parse
 from review_mate.forges import Forges
 from review_mate.host.base import HostWriter
 from review_mate.session.manager import SessionManager
+
+
+def _old_side(entry, new_line: int) -> dict:
+    """`old_path` and `old_line` for a line, as far as the diff can say.
+
+    An added line has no old side and the keys are left out; an unchanged line has one and the
+    forge needs it. `old_path` travels with either, because a renamed file is a different name on
+    the two sides and the one a position is read against is the old one.
+    """
+    if entry is None:
+        return {}
+    old_path = getattr(entry, "old_path", None) or entry.path
+    for hunk in parse("\n".join(h.get("diff", "") for h in (entry.hunks or []))):
+        for line in hunk.lines:
+            if line.new == new_line:
+                return ({"old_path": old_path, "old_line": line.old}
+                        if line.old is not None else {"old_path": old_path})
+    return {"old_path": old_path}
 
 
 class Writeback:
@@ -37,9 +56,16 @@ class Writeback:
         if hl is None:
             raise KeyError(highlight_id)
         refs = snap.mr.diff_refs if snap.mr else {}
+        entry = next((f for f in (snap.files or []) if f.path == hl.file), None)
         position = {
             "new_path": hl.file,
             "new_line": hl.line_range.start,
+            # Where that line was before the change, when it was there before the change at all.
+            # A forge builds its line identifier from both sides, and for a line the change did
+            # not touch it cannot infer the old one — so a comment anchored on an unchanged line,
+            # which is most of what a reviewer marks when quoting the code around a problem, was
+            # refused outright while one on an added line went through.
+            **_old_side(entry, hl.line_range.start),
             "base_sha": refs.get("base_sha"),
             "head_sha": refs.get("head_sha"),
             "start_sha": refs.get("start_sha"),
