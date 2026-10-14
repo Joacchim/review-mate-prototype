@@ -470,3 +470,34 @@ async def test_a_mark_aimed_at_a_commit_does_not_go_stale_when_the_head_moves(tm
     assert aimed["stale"] is False        # about a commit, which has not moved
     assert ordinary["stale"] is True      # about the change, whose head has
     await manager.shutdown()
+
+
+async def test_a_pass_that_came_back_stops_reading_as_in_flight(session):
+    """The cue beside the control said "Claude working" from the first pass onwards, next to a
+    button already disabled because that same pass had landed. `requested` has to mean *still*
+    waiting, which is what the list the agent works from has always meant by it."""
+    manager, sid, provider = session
+    topic = annotations_for(manager, provider)
+    await manager.get(sid).submit(RequestInsights(), Origin.BROWSER)
+    assert (await topic.build(sid))["review_pass"]["requested"] is True
+
+    await manager.get(sid).submit(
+        EmitCard(highlight_id=None, body="## the pass\n\nthis widens a lock"), Origin.AGENT)
+    passed = (await topic.build(sid))["review_pass"]
+    assert passed["requested"] is False, "the pass came back and the cue stayed on"
+
+
+async def test_an_earlier_pass_does_not_answer_a_later_one(session):
+    """Ask again once the change has moved and the findings already on screen are about something
+    else. Counting them as the answer would leave the second ask with no cue at all."""
+    manager, sid, provider = session
+    topic = annotations_for(manager, provider)
+    await manager.get(sid).submit(RequestInsights(), Origin.BROWSER)
+    await manager.get(sid).submit(EmitCard(highlight_id=None, body="the first pass"), Origin.AGENT)
+    assert (await topic.build(sid))["review_pass"]["requested"] is False
+
+    snapshot = manager.get(sid).snapshot()
+    await manager.get(sid).submit(
+        ApplyMRMetadata(mr=snapshot.mr.model_copy(update={"sha": "moved-on"})), Origin.SYSTEM)
+    await manager.get(sid).submit(RequestInsights(), Origin.BROWSER)
+    assert (await topic.build(sid))["review_pass"]["requested"] is True

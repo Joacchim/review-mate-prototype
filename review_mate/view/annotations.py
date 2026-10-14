@@ -19,6 +19,7 @@ from contextlib import suppress
 from pydantic import BaseModel, Field
 
 from review_mate.forges import Forges
+from review_mate.view.asks import insights_answered
 from review_mate.session.state import DraftStatus, SessionStatus, SubjectKind
 
 
@@ -177,8 +178,11 @@ class AnnotationsTopic:
             return ReviewPass(available=True)
         sha = snapshot.insights_requested_sha
         stale = bool(sha and head and sha != head)
-        # the current code has not been passed over if the pass was about something else
-        return ReviewPass(requested=True, at=snapshot.insights_requested_at, sha=sha,
+        # `requested` is what the waiting cue reads, so it has to mean *still* waiting. Asked-ever
+        # left "Claude working" on screen from the first pass onwards, beside a button already
+        # disabled because that same pass had landed.
+        return ReviewPass(requested=not insights_answered(snapshot),
+                          at=snapshot.insights_requested_at, sha=sha,
                           stale=stale, available=stale)
 
     @staticmethod

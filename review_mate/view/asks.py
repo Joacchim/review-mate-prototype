@@ -48,6 +48,24 @@ def _key(anchor: Subject | None) -> tuple[str, str]:
     return ("review", "") if anchor is None else (anchor.kind.value, anchor.id)
 
 
+def insights_answered(snapshot) -> bool:
+    """Whether the pass that was asked for has come back.
+
+    An unanchored card is the answer — that is what a pass produces. Its arrival has to be *after*
+    the asking, though, or a second pass over moved code would read as answered by the first one's
+    findings, which were about something else.
+
+    One rule, read from two places: the list the agent works from, and the cue the reviewer reads.
+    They said different things about the same pass, and the reviewer's said "working" for ever.
+    """
+    asked = snapshot.insights_requested_at or ""
+    # A card with no time on it counts. It cannot be placed against the asking either way, and
+    # the two mistakes are not equal: counting it clears a cue a moment early, refusing it leaves
+    # "Claude working" on screen for ever, which is the fault this exists to fix.
+    return any(card.highlight_id is None and (not card.created_at or card.created_at >= asked)
+               for card in snapshot.cards)
+
+
 def outstanding(snapshot) -> list[Ask]:
     """Every ask this review is waiting on, oldest first.
 
@@ -76,7 +94,7 @@ def outstanding(snapshot) -> list[Ask]:
                             subject=Subject(kind=SubjectKind.HIGHLIGHT, id=highlight.id),
                             since=highlight.context_requested_at or highlight.created_at))
 
-    if snapshot.insights_requested and not any(c.highlight_id is None for c in snapshot.cards):
+    if snapshot.insights_requested and not insights_answered(snapshot):
         asks.append(Ask(kind="insights", since=snapshot.insights_requested_at))
 
     for check in snapshot.checks:
